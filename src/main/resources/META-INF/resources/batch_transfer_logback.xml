@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- For assistance related to logback-translator or configuration  -->
+<!-- files in general, please contact the logback user mailing list -->
+<!-- at http://www.qos.ch/mailman/listinfo/logback-user             -->
+<!--                                                                -->
+<!-- For professional support please see                            -->
+<!--    http://www.qos.ch/shop/products/professionalSupport         -->
+<!--                                                                -->
+<configuration>
+  <!-- Errors were reported during translation. -->
+  <!-- No root logger configuration was found -->
+  <appender name="batch_transfer" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <!--See http://logback.qos.ch/manual/appenders.html#RollingFileAppender-->
+    <!--and http://logback.qos.ch/manual/appenders.html#TimeBasedRollingPolicy-->
+    <!--for further documentation-->
+    <file>${xnat.home}/logs/batch-transfer.log</file>
+    <append>true</append>
+    <encoder>
+      <pattern>%d [%t] %-5p %c - %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>${xnat.home}/logs/batch-transfer.log.%d{yyyy-MM-dd}</fileNamePattern>
+    </rollingPolicy>
+  </appender>
+  <logger name="org.nrg.xnatx.plugins.transfer" additivity="false" level="ERROR">
+    <appender-ref ref="batch_transfer"/>
+  </logger>
+</configuration>
+

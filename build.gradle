@@ -1,0 +1,138 @@
+buildscript {
+    ext {
+        vXnat = "1.9.3.3"
+        pluginAppName = "Batch Transfer Plugin"
+    }
+}
+
+plugins {
+    id "idea"
+    id "java"
+    id "maven-publish"
+    id "io.spring.dependency-management" version "1.0.9.RELEASE"
+    id "io.franzbecker.gradle-lombok" version "4.0.0"
+    id "net.linguica.maven-settings" version "0.5"
+}
+
+group "org.nrg.xnatx.plugins"
+version "1.0.0-SNAPSHOT"
+description "XNAT Batch Transfer Plugin"
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+repositories {
+    mavenLocal()
+    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
+    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
+    maven { url "https://www.dcm4che.org/maven2" }
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.nrg:parent:${vXnat}")
+    }
+}
+configurations.all {
+    resolutionStrategy.capabilitiesResolution.withCapability("com.google.collections:google-collections") {
+        selectHighestVersion()
+    }
+    attributes {
+        attribute(
+                Attribute.of("org.gradle.jvm.environment", String),
+                "standard-jvm"
+        )
+    }
+}
+dependencies {
+    implementation platform("org.nrg:parent:${vXnat}")
+
+    annotationProcessor "org.nrg:framework"
+    implementation "org.nrg.xnat:web"
+    implementation "org.nrg.xdat:core"
+    implementation "org.nrg:dicom-xnat-util"
+    implementation "org.springframework:spring-beans"
+    implementation "org.springframework:spring-context"
+    implementation "org.springframework:spring-jms"
+    implementation "org.springframework:spring-tx"
+    implementation 'org.springframework:spring-webmvc'
+    implementation "io.springfox:springfox-swagger2"
+
+    testImplementation "log4j:log4j"
+    testImplementation "junit:junit"
+    testImplementation "org.hamcrest:hamcrest-library"
+    testImplementation "org.mockito:mockito-core:4.8.0"
+    testImplementation "org.mockito:mockito-inline:4.8.0"
+    testImplementation "org.springframework:spring-test"
+}
+
+test {
+    useJUnit()
+}
+
+task sourceJar(type: Jar, dependsOn: classes) {
+    classifier "sources"
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar) {
+    classifier "javadoc"
+    from javadoc.destinationDir
+}
+
+def buildDate = new Date()
+def buildNumber = System.getenv().BUILD_NUMBER?.toInteger() ?: "Manual"
+
+logger.info "Build-Date:   ${buildDate}"
+logger.info "Build-Number: ${buildNumber}"
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+
+            artifacts {
+                artifact sourceJar
+                artifact javadocJar
+                artifact jar
+            }
+
+            pom.withXml {
+                def root = asNode()
+                root.appendNode("name", "XNAT Batch Transfer Plugin")
+                root.appendNode("inceptionYear", "2021")
+
+                def license = root.appendNode("licenses").appendNode("license")
+                license.appendNode("name", "Simplified BSD 2-Clause License")
+                license.appendNode("url", "https://xnat.org/about/license.php")
+                license.appendNode("distribution", "repo")
+
+                def developers = root.appendNode("developers")
+                def tim = developers.appendNode("developer")
+                tim.appendNode("id", "timo")
+                tim.appendNode("name", "Timothy Olsen")
+                tim.appendNode("email", "tim@radiologics.com")
+
+                def kelsey = developers.appendNode("developer")
+                kelsey.appendNode("id", "kelseym")
+                kelsey.appendNode("name", "Matt Kelsey")
+                kelsey.appendNode("email", "kelseym@wustl.edu")
+            }
+        }
+    }
+    repositories {
+        maven {
+            if (project.version.endsWith("-SNAPSHOT")) {
+                url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot-local"
+            } else {
+                url "https://nrgxnat.jfrog.io/nrgxnat/libs-release-local"
+            }
+            // The value for name must match <id> in ~/.m2/settings.xml
+            name = "XNAT_Artifactory"
+        }
+    }
+}
+
+def propertyWithDefault(String name, Object value) {
+    hasProperty(name) ? property(name) : value
+}

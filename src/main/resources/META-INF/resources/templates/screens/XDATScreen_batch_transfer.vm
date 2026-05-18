@@ -1,0 +1,272 @@
+## Copyright (c) 2021 Radiologics
+## All Rights Reserved
+
+<script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransfer.js")"></script>
+<script type="text/javascript" src="$!content.getURI("scripts/subjectAssessorData/proj_tools.js")"></script>
+
+#if($msg)
+    <div class="info">$msg</div>
+#end
+
+#if((!$sharingItems || $sharingItems.size() == 0) && (!$copyingItems || $copyingItems.size() == 0))
+    <div class="info">$sharingMsg</div>
+    <br>
+    <input type="button" name="ok" value="Ok" onclick="goHome()"/>
+    <script type="text/javascript">
+        function goHome(){ window.location.href = serverRoot + "/"; }
+    </script>
+#else
+
+## Determine source project context
+#set($projectContext = false)
+#if($sharingItems && $sharingItems.size() == 1)
+    #foreach($proj in $sharingItems)
+        #set($projectContext = $proj.getId())
+    #end
+#end
+
+## Determine if we have a preset destination
+#set($hasPresetDest = false)
+#if($presetDestination && $presetDestination != "")
+    #set($hasPresetDest = true)
+#end
+
+<div class="bt-shell">
+    <!-- ═══════════ LEFT SIDEBAR ═══════════ -->
+    <div class="bt-sidebar">
+        <div class="bt-sidebar-header">
+            #if($projectContext)
+                <h2>Batch Transfer &mdash; $!projectContext</h2>
+            #else
+                <h2>Batch Transfer</h2>
+                <p>From multiple ${displayManager.getSingularDisplayNameForProject().toLowerCase()}s</p>
+            #end
+        </div>
+
+        <!-- Step 1: Destination Project -->
+        <div class="bt-sidebar-section">
+            <h4>1 &mdash; Destination $displayManager.getSingularDisplayNameForProject()</h4>
+            #if($hasPresetDest)
+                <div class="bt-proj-locked">
+                    <span class="bt-proj-locked-icon">&#128274;</span>
+                    <span class="bt-proj-locked-name">$!presetDestination</span>
+                </div>
+            #else
+                <select class="bt-proj-select" id="bt-project-select" disabled="disabled">
+                    <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
+                </select>
+            #end
+        </div>
+
+        <!-- Step 2: Operation -->
+        <div class="bt-sidebar-section">
+            <h4>2 &mdash; Operation</h4>
+            <div class="bt-op-card-sm selected" data-op="Share">
+                <div class="bt-radio-sm"></div>
+                <div>
+                    <div class="bt-op-label">Share</div>
+                    <div class="bt-op-desc">Add to destination without copying</div>
+                </div>
+            </div>
+            <div class="bt-op-card-sm" data-op="Clone">
+                <div class="bt-radio-sm"></div>
+                <div>
+                    <div class="bt-op-label">Clone</div>
+                    <div class="bt-op-desc">Full data duplication</div>
+                </div>
+            </div>
+            <div class="bt-op-card-sm" data-op="Reimport">
+                <div class="bt-radio-sm"></div>
+                <div>
+                    <div class="bt-op-label">Reimport</div>
+                    <div class="bt-op-desc">Re-anonymize image sessions</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- About this transfer (operation description + anon status) -->
+        <div class="bt-sidebar-section">
+            <h4>About this transfer</h4>
+            <p class="bt-op-detail-desc" id="bt-op-detail-desc"></p>
+            <div id="bt-op-detail-warning-area"></div>
+        </div>
+
+        <!-- Summary -->
+        <div class="bt-sidebar-section">
+            <h4>Summary</h4>
+            <div class="bt-summary-row">
+                <span class="bt-label">Destination</span>
+                <span class="bt-val" id="bt-sum-dest">#if($hasPresetDest)$!presetDestination#{else}&mdash;#end</span>
+            </div>
+            <div class="bt-summary-row">
+                <span class="bt-label">Operation</span>
+                <span class="bt-val" id="bt-sum-op">Share</span>
+            </div>
+            <div class="bt-summary-row">
+                <span class="bt-label">Subjects</span>
+                <span class="bt-val" id="bt-sum-subjects">0</span>
+            </div>
+            <div class="bt-summary-row">
+                <span class="bt-label">Sessions</span>
+                <span class="bt-val" id="bt-sum-sessions">0</span>
+            </div>
+            <div class="bt-summary-row">
+                <span class="bt-label">Assessors</span>
+                <span class="bt-val" id="bt-sum-assessors">0</span>
+            </div>
+        </div>
+
+        <!-- Submit -->
+        <div class="bt-sidebar-footer">
+            <button type="button" class="bt-btn bt-btn-success" id="bt-submit-btn"
+                    onclick="XNAT.plugin.batchtransfer.submitTransfer();">Share</button>
+            <button type="button" class="bt-btn bt-btn-secondary" onclick="history.go(-1);">Cancel</button>
+        </div>
+    </div>
+
+    <!-- ═══════════ RIGHT MAIN PANEL ═══════════ -->
+    <div class="bt-main">
+        <div class="bt-main-header">
+            <h3 id="bt-main-title">Select data to transfer</h3>
+        </div>
+        <div class="bt-main-scroll">
+            #if($sharingMsg && !$sharingItems.isEmpty())
+                <div class="bt-warning">
+                    <span class="bt-warn-icon">&#9888;</span>
+                    <div>$sharingMsg</div>
+                </div>
+            #end
+            #if($copyingMsg && !$copyingItems.isEmpty())
+                <div class="bt-warning" id="bt-copy-warning" style="display:none;">
+                    <span class="bt-warn-icon">&#9888;</span>
+                    <div>$copyingMsg</div>
+                </div>
+            #end
+
+            <div class="bt-data-toolbar">
+                <input class="bt-data-search" id="bt-data-search" type="text" placeholder="Filter subjects and sessions...">
+            </div>
+            <div class="bt-selection-bar">
+                <strong id="bt-sel-count">0</strong> items selected
+                <button type="button" class="bt-select-all-link">Select all</button>
+            </div>
+            <div class="bt-table-wrap">
+                <table class="bt-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px"><span class="bt-cb checked" id="bt-header-cb">&#10003;</span></th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bt-data-body">
+                        ## ── Share/Import pool (from $sharingItems) ──
+                        #if($sharingItems && $sharingItems.size() > 0)
+                            #foreach($proj in $sharingItems)
+                                #foreach($subj in $proj.getChildren())
+                                    <tr class="selected" data-pool="share" data-type="subject"
+                                        data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
+                                        data-project="$!proj.getId()">
+                                        <td><span class="bt-cb checked">&#10003;</span></td>
+                                        <td>
+                                            #if($subj.getChildren().size() > 0)
+                                                <button class="bt-expand expanded">&#9654;</button>
+                                            #end
+                                            $!subj.getLabel()
+                                        </td>
+                                        <td><span class="bt-type-badge subject">Subject</span></td>
+                                        <td class="bt-id-text">$!subj.getId()</td>
+                                    </tr>
+                                    #foreach($subj_assess in $subj.getChildren())
+                                        <tr class="bt-indent-1 selected" data-pool="share" data-type="assessor"
+                                            data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
+                                            data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()">
+                                            <td><span class="bt-cb checked">&#10003;</span></td>
+                                            <td>
+                                                #if($subj_assess.getChildren().size() > 0)
+                                                    <button class="bt-expand expanded">&#9654;</button>
+                                                #end
+                                                $!subj_assess.getLabel()
+                                            </td>
+                                            <td><span class="bt-type-badge assessor">$!subj_assess.getXsiType()</span></td>
+                                            <td class="bt-id-text">$!subj_assess.getId()</td>
+                                        </tr>
+                                        #foreach($img_assess in $subj_assess.getChildren())
+                                            <tr class="bt-indent-2 selected" data-pool="share" data-type="assessor"
+                                                data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
+                                                data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()">
+                                                <td><span class="bt-cb checked">&#10003;</span></td>
+                                                <td>$!img_assess.getLabel()</td>
+                                                <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>
+                                                <td class="bt-id-text">$!img_assess.getId()</td>
+                                            </tr>
+                                        #end
+                                    #end
+                                #end
+                            #end
+                        #end
+
+                        ## ── Copy pool (from $copyingItems) ──
+                        #if($copyingItems && $copyingItems.size() > 0)
+                            #foreach($proj in $copyingItems)
+                                #foreach($subj in $proj.getChildren())
+                                    <tr class="selected" data-pool="copy" data-type="subject"
+                                        data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
+                                        data-project="$!proj.getId()" style="display:none;">
+                                        <td><span class="bt-cb checked">&#10003;</span></td>
+                                        <td>
+                                            #if($subj.getChildren().size() > 0)
+                                                <button class="bt-expand expanded">&#9654;</button>
+                                            #end
+                                            $!subj.getLabel()
+                                        </td>
+                                        <td><span class="bt-type-badge subject">Subject</span></td>
+                                        <td class="bt-id-text">$!subj.getId()</td>
+                                    </tr>
+                                    #foreach($subj_assess in $subj.getChildren())
+                                        <tr class="bt-indent-1 selected" data-pool="copy" data-type="assessor"
+                                            data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
+                                            data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()"
+                                            style="display:none;">
+                                            <td><span class="bt-cb checked">&#10003;</span></td>
+                                            <td>
+                                                #if($subj_assess.getChildren().size() > 0)
+                                                    <button class="bt-expand expanded">&#9654;</button>
+                                                #end
+                                                $!subj_assess.getLabel()
+                                            </td>
+                                            <td><span class="bt-type-badge assessor">$!subj_assess.getXsiType()</span></td>
+                                            <td class="bt-id-text">$!subj_assess.getId()</td>
+                                        </tr>
+                                        #foreach($img_assess in $subj_assess.getChildren())
+                                            <tr class="bt-indent-2 selected" data-pool="copy" data-type="assessor"
+                                                data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
+                                                data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()"
+                                                style="display:none;">
+                                                <td><span class="bt-cb checked">&#10003;</span></td>
+                                                <td>$!img_assess.getLabel()</td>
+                                                <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>
+                                                <td class="bt-id-text">$!img_assess.getId()</td>
+                                            </tr>
+                                        #end
+                                    #end
+                                #end
+                            #end
+                        #end
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    $(function() {
+        XNAT.plugin.batchtransfer.init({
+            projectContext: #if($projectContext) '$!projectContext' #else null #end,
+            presetDestination: #if($hasPresetDest) '$!presetDestination' #else null #end
+        });
+    });
+</script>
+#end

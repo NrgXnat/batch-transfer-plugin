@@ -1,0 +1,809 @@
+package org.nrg.xnatx.plugins.transfer.service.impl;
+
+import org.nrg.xnatx.plugins.transfer.event.BatchTransferEvent;
+import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.util.FileUtil;
+import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang.StringUtils;
+import org.nrg.framework.services.ContextService;
+import org.nrg.framework.services.NrgEventService;
+import org.nrg.xdat.model.XnatAbstractresourceI;
+import org.nrg.xdat.model.XnatImagescandataI;
+import org.nrg.xdat.model.XnatReconstructedimagedataI;
+import org.nrg.xdat.model.XnatSubjectassessordataI;
+import org.nrg.xdat.om.*;
+import org.nrg.xdat.security.helpers.Features;
+import org.nrg.xdat.security.helpers.Permissions;
+import org.nrg.xft.ItemI;
+import org.nrg.xft.event.EventDetails;
+import org.nrg.xft.event.EventUtils;
+import org.nrg.xft.security.UserI;
+import org.nrg.xft.utils.FileUtils;
+import org.nrg.xft.utils.SaveItemHelper;
+import org.nrg.xnat.DicomObjectIdentifier;
+import org.nrg.xnat.archive.DicomZipImporter;
+import org.nrg.xnat.archive.Operation;
+import org.nrg.xnat.helpers.merge.AnonUtils;
+import org.nrg.xnat.helpers.prearchive.PrearcSession;
+import org.nrg.xnat.helpers.prearchive.PrearcUtils;
+import org.nrg.xnat.helpers.uri.URIManager;
+import org.nrg.xnat.restlet.util.FileWriterWrapperI;
+import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
+import org.nrg.xnat.turbine.utils.ArchivableItem;
+import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
+import org.nrg.xnatx.plugins.transfer.model.TransferMode;
+import org.nrg.xnatx.plugins.transfer.model.EventInfo;
+import org.nrg.xnatx.plugins.transfer.model.Fields;
+import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Nonnull;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+import java.util.zip.Deflater;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+@Service
+@Slf4j
+public class BatchTransferServiceImpl implements BatchTransferService {
+    private final NrgEventService eventService;
+    private final ExecutorService executorService;
+    private final AnonUtils anonUtils;
+    private final DicomObjectIdentifier identifier;
+
+    @Autowired
+    public BatchTransferServiceImpl(final NrgEventService eventService,
+                                 final ExecutorService executorService,
+                                 final AnonUtils anonUtils,
+                                 final ContextService contextService) {
+        this.eventService = eventService;
+        this.executorService = executorService;
+        this.anonUtils = anonUtils;
+        this.identifier = contextService.getBean("dicomObjectIdentifier", DicomObjectIdentifier.class);
+    }
+
+    public void submitTransferRequest(BatchTransfer batchTransferRequest, UserI user) {
+        if (batchTransferRequest.getRequests() == null || batchTransferRequest.getRequests().size() == 0) {
+            return;
+        }
+
+        if (StringUtils.isBlank(batchTransferRequest.getTrackingId())) {
+            batchTransferRequest.setTrackingId(String.format("batch_transfer_%s", System.currentTimeMillis()));
+        }
+
+        final String queuedMsg = String.format("Transfer Queued (%s items)", batchTransferRequest.getRequests().size());
+        eventService.triggerEvent(BatchTransferEvent.waiting(user.getID(), batchTransferRequest.getTrackingId(), queuedMsg));
+        executorService.submit(() -> batchTransfer(batchTransferRequest, user));
+    }
+
+    private void batchTransfer(BatchTransfer batchTransferRequest, UserI user) {
+        final List<String> failures = new ArrayList<>();
+        final String trackingId = batchTransferRequest.getTrackingId();
+        final int numRequests = batchTransferRequest.getRequests().size();
+        int count = 0;
+
+        for (TransferRequest request : batchTransferRequest.getRequests()) {
+            count++;
+            String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
+            final int progress = Math.round(((float) count / numRequests) * 100) - 1;
+            try {
+                final String message = String.format("%s %s into project: %s", modeAction, request.getId(), request.getDestinationProject());
+                eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, batchTransferRequest.getTrackingId(), message));
+
+                validateRequest(request);
+                final EventInfo eventInfo = new EventInfo(trackingId, progress);
+                final XnatProjectdata destinationProjectData = XnatUtils.getProject(request.getDestinationProject(), user);
+                final ArchivableItem item = XnatUtils.getArchivableItem(request.getId(), null);
+
+                // We need to retrieve the item outside of the user's context so we can access archive path, etc.
+                // This means we need to carefully check our permissions on it.
+                if (!Permissions.canRead(user, item)) {
+                    throw new Exception("You do not have permission to read " + item.getId());
+                }
+
+                final String sourceProject = item.getProject();
+                if (sourceProject.equals(request.getDestinationProject())) {
+                    throw new Exception("Destination project cannot be the same as the source project.");
+                }
+
+                if (request.getMode() == TransferMode.SHARE) {
+                    if (!Features.checkRestrictedFeature(user, item.getProject(), Features.PROJECT_SHARING_FEATURE)) {
+                        throw new Exception("You do not have permission to share this data.");
+                    }
+                } else {
+                    if (!Features.checkRestrictedFeature(user, item.getProject(), Fields.PROJECT_COPYING_FEATURE)) {
+                        throw new Exception("You do not have permission to clone this data.");
+                    }
+                }
+
+                if (!Permissions.canCreate(user, item.getXSIType() + "/project", destinationProjectData.getId())) {
+                    throw new Exception("You do not have permission to create " + item.getXSIType() + " in " +
+                            destinationProjectData.getId());
+                }
+
+                if (item instanceof XnatSubjectdata) {
+                    final XnatSubjectdata sourceSubject = (XnatSubjectdata) item;
+                    final XnatSubjectdata existingSubject = XnatSubjectdata.GetSubjectByProjectIdentifier(destinationProjectData.getId(),
+                            sourceSubject.getLabel(), null, false);
+
+                    if (request.getMode().equals(TransferMode.SHARE)) {
+                        shareSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+                    } else if (request.getMode().equals(TransferMode.CLONE)) {
+                        getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+                    } else if (request.getMode().equals(TransferMode.REIMPORT)) {
+                        log.warn("Reimport operation is not supported for subjects.");
+                    } else {
+                        throw new Exception(String.format("Unsupported mode %s", request.getMode()));
+                    }
+                } else if (item instanceof XnatExperimentdata) {
+                    final XnatExperimentdata sourceExperiment = (XnatExperimentdata) item;
+                    final XnatExperimentdata existingExperiment = XnatExperimentdata.GetExptByProjectIdentifier(destinationProjectData.getId(),
+                            sourceExperiment.getLabel(), null, false);
+
+                    if (request.getMode().equals(TransferMode.SHARE)) {
+                        shareExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+                    } else if (request.getMode().equals(TransferMode.CLONE)) {
+                        getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+                    } else if (request.getMode().equals(TransferMode.REIMPORT)) {
+                        importExperiment(sourceExperiment, destinationProjectData, user, eventInfo);
+                    } else {
+                        throw new Exception(String.format("Unsupported mode %s", request.getMode()));
+                    }
+                } else {
+                    throw new Exception(String.format("Unsupported xsiType %s", item.getXSIType()));
+                }
+            } catch (Exception e) {
+                log.debug(e.getMessage(), e);
+                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+                failures.add(err);
+                eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
+            }
+        }
+
+        if (!failures.isEmpty()) {
+            eventService.triggerEvent(BatchTransferEvent.warn(user.getID(), 100, batchTransferRequest.getTrackingId(), String.format("Transfer Complete with %s %s. Please review this log carefully.", failures.size(), failures.size() == 1 ? "warning" : "warnings")));
+        } else {
+            eventService.triggerEvent(BatchTransferEvent.complete(user.getID(), batchTransferRequest.getTrackingId(), "Transfer Complete"));
+        }
+    }
+
+    private void shareExperiment(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (existingExperiment != null) {
+            throwForLabelConflictExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+        } else {
+            XnatUtils.shareExperimentToProject(destinationProjectData, sourceExperiment, user);
+        }
+    }
+
+    private void shareSubject(XnatSubjectdata sourceSubject, XnatSubjectdata existingSubject, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (existingSubject != null) {
+            throwForLabelConflictSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+        } else {
+            XnatUtils.shareSubjectToProject(destinationProjectData, sourceSubject, user);
+        }
+    }
+
+    private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (sourceExperiment instanceof XnatImageassessordata) {
+            throw new Exception("Reimport operation is not supported for assessors.");
+        }
+        final Path sourcePath = Paths.get(sourceExperiment.getCurrentSessionFolder(true));
+        final Map<String, Object> params = new HashMap<>();
+        params.put("Ignore-Unparsable", "true");
+        params.put("rename", "true");
+        params.put("project", destinationProjectData.getId());
+
+        final StreamingZipFileWriter wrapper = new StreamingZipFileWriter(sourcePath, sourceExperiment.getId() + ".zip");
+        final AtomicReference<List<String>> uriRef = new AtomicReference<>();
+        XnatUtils.doActionWithWorkflow(user, sourceExperiment, "Streaming experiment for import.", () -> {
+            final List<String> result = runImporter(user, wrapper, params);
+            if (result == null || result.isEmpty()) {
+                throw new Exception("No DICOM files found in source experiment " + sourceExperiment.getId() + "; nothing to reimport.");
+            }
+            uriRef.set(result);
+            return true;
+        });
+        final List<String> uris = uriRef.get();
+        if (log.isDebugEnabled()) {
+            final StringBuilder message = new StringBuilder("Processed ").append(uris.size()).append(" URIs:\n");
+            for (final String uri : uris) {
+                message.append(" * ").append(uri).append("\n");
+            }
+            log.debug(message.toString());
+        }
+        commitUris(uris, params, user);
+    }
+
+    /** How often the heartbeat thread logs while {@code importer.call()} is running. */
+    static final long IMPORTER_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000L;
+
+    /**
+     * Runs a {@link DicomZipImporter} against the given streaming wrapper and
+     * returns the prearchive URIs it produced. Extracted as a protected seam
+     * so unit tests can stub importer behaviour without loading
+     * DicomZipImporter (whose supertype static initialisers require
+     * XDAT/Spring wiring). On exit, drains the streaming producer so any
+     * producer-side error surfaces here instead of being swallowed.
+     *
+     * <p>A daemon heartbeat thread logs at INFO every
+     * {@link #IMPORTER_HEARTBEAT_INTERVAL_MS}ms while the importer is running,
+     * so a stuck import is visible in {@code batch-transfer.log} instead of
+     * being a silent hang.
+     */
+    protected List<String> runImporter(final UserI user, final FileWriterWrapperI wrapper, final Map<String, Object> params) throws Exception {
+        final Thread heartbeat = startImporterHeartbeat(wrapper.getName());
+        try (DicomZipImporter importer = new DicomZipImporter(null, user, wrapper, params)) {
+            importer.setIdentifier(this.identifier);
+            return importer.call();
+        } finally {
+            heartbeat.interrupt();
+            if (wrapper instanceof StreamingZipFileWriter) {
+                final StreamingZipFileWriter s = (StreamingZipFileWriter) wrapper;
+                s.shutdown();
+                s.awaitProducer(30_000L);
+            }
+        }
+    }
+
+    private static Thread startImporterHeartbeat(final String name) {
+        final long startMs = System.currentTimeMillis();
+        final Thread t = new Thread(() -> {
+            try {
+                while (true) {
+                    Thread.sleep(IMPORTER_HEARTBEAT_INTERVAL_MS);
+                    final long elapsedMin = (System.currentTimeMillis() - startMs) / 60_000L;
+                    log.info("DicomZipImporter for {} still running after {} min", name, elapsedMin);
+                }
+            } catch (InterruptedException ignored) {
+                // expected — interrupted by runImporter's finally when the importer returns
+            }
+        }, "batch-transfer-importer-heartbeat-" + name);
+        t.setDaemon(true);
+        t.start();
+        return t;
+    }
+
+    private void commitUris(List<String> uris, Map<String, Object> parameters, UserI user) throws Exception {
+        for (final String uri : uris) {
+            final Map<String, Object> properties = PrearcUtils.parseURI(uri);
+            final String              project    = (String) properties.get(URIManager.PROJECT_ID);
+            final String              timestamp  = (String) properties.get(PrearcUtils.PREARC_TIMESTAMP);
+            final String              session    = (String) properties.get(PrearcUtils.PREARC_SESSION_FOLDER);
+
+            final Map<String, Object> rebuildParameters = new HashMap<>(parameters);
+            rebuildParameters.put(URIManager.PROJECT_ID, project);
+            rebuildParameters.put(PrearcUtils.PREARC_TIMESTAMP, timestamp);
+            rebuildParameters.put(PrearcUtils.PREARC_SESSION_FOLDER, session);
+            //rebuildParameters.put(DicomInboxImportRequest.IMPORT_REQUEST_ID, request.getId());
+
+            PrearcUtils.queuePrearchiveOperation(new PrearchiveOperationRequest(user, Operation.Rebuild, new PrearcSession(project, timestamp, session, rebuildParameters, user)));
+        }
+    }
+
+    /**
+     * Streams a DICOM zip of {@code sourceDir} into {@link DicomZipImporter}
+     * without writing the zip to disk.
+     *
+     * <p>A daemon producer thread, started lazily on the first (and only)
+     * call to {@link #getInputStream()}, walks the source tree, filters for
+     * DICOM files (skipping {@code catalog.xml}), zips entries into a
+     * {@link PipedOutputStream}, and the importer reads from the paired
+     * {@link PipedInputStream}. Producer errors are captured into an
+     * {@link AtomicReference} and surfaced by {@link #awaitProducer(long)},
+     * which the consumer must call after the importer returns so that silent
+     * truncation cannot masquerade as a successful import.
+     *
+     * <p>Path iteration is intentionally lazy — never collected to a list —
+     * so memory does not scale with file count.
+     */
+    static final class StreamingZipFileWriter implements FileWriterWrapperI, AutoCloseable {
+        private final Path sourceDir;
+        private final String displayName;
+        private final PipedInputStream pipedIn;
+        private final PipedOutputStream pipedOut;
+        private final AtomicReference<Throwable> error = new AtomicReference<>();
+        private final AtomicBoolean started = new AtomicBoolean(false);
+        private volatile Thread producer;
+
+        StreamingZipFileWriter(final Path sourceDir, final String displayName) throws IOException {
+            this.sourceDir = sourceDir;
+            this.displayName = displayName;
+            this.pipedIn = new PipedInputStream(64 * 1024);
+            this.pipedOut = new PipedOutputStream(this.pipedIn);
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            if (!started.compareAndSet(false, true)) {
+                throw new IllegalStateException("getInputStream() called more than once on StreamingZipFileWriter");
+            }
+            producer = new Thread(this::produce, "batch-transfer-zip-producer-" + displayName);
+            producer.setDaemon(true);
+            producer.start();
+            return pipedIn;
+        }
+
+        private void produce() {
+            try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(pipedOut, 65536));
+                 Stream<Path> paths = Files.walk(sourceDir)) {
+                zos.setLevel(Deflater.BEST_SPEED);
+                final byte[] buffer = new byte[65536];
+                paths.filter(Files::isRegularFile)
+                     .filter(p -> StreamSupport.stream(p.spliterator(), false)
+                             .anyMatch(part -> part.toString().equals("DICOM")))
+                     .filter(p -> !p.getFileName().toString().toLowerCase().endsWith("catalog.xml"))
+                     .forEach(p -> writeEntry(zos, p, buffer));
+            } catch (Throwable t) {
+                // Unwrap UncheckedIOException for cleaner error messages.
+                final Throwable recorded = (t instanceof UncheckedIOException) ? t.getCause() : t;
+                error.set(recorded);
+                log.warn("Streaming zip producer for {} failed", displayName, recorded);
+            }
+        }
+
+        private void writeEntry(final ZipOutputStream zos, final Path filePath, final byte[] buffer) {
+            try {
+                zos.putNextEntry(new ZipEntry(sourceDir.relativize(filePath).toString()));
+                try (InputStream in = Files.newInputStream(filePath)) {
+                    int len;
+                    while ((len = in.read(buffer)) > 0) {
+                        zos.write(buffer, 0, len);
+                    }
+                }
+                zos.closeEntry();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        /**
+         * Close the producer side of the pipe so a producer parked on
+         * {@code pipedOut.write(...)} unblocks with a "Pipe closed" IOException
+         * after the consumer has stopped reading. Safe to call multiple times.
+         */
+        void shutdown() {
+            try {
+                pipedOut.close();
+            } catch (IOException e) {
+                log.debug("Closing PipedOutputStream raised {}", e.getMessage());
+            }
+        }
+
+        /**
+         * Join the producer thread up to {@code timeoutMs}, then rethrow any
+         * producer-captured exception. If the producer is still alive after
+         * the timeout, interrupt it and log a warning (the daemon-flag keeps
+         * the JVM clean either way).
+         */
+        void awaitProducer(final long timeoutMs) throws IOException {
+            if (producer == null) {
+                return;
+            }
+            try {
+                producer.join(timeoutMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while waiting for streaming zip producer " + displayName, e);
+            }
+            final boolean timedOut = producer.isAlive();
+            if (timedOut) {
+                log.warn("Streaming zip producer {} did not finish within {}ms; interrupting", displayName, timeoutMs);
+                producer.interrupt();
+            }
+            // Producer-captured error takes precedence — it's the more specific cause.
+            final Throwable t = error.get();
+            if (t != null) {
+                if (t instanceof IOException) {
+                    throw (IOException) t;
+                }
+                if (t instanceof RuntimeException) {
+                    throw (RuntimeException) t;
+                }
+                if (t instanceof Error) {
+                    throw (Error) t;
+                }
+                throw new IOException("Streaming zip producer " + displayName + " failed", t);
+            }
+            if (timedOut) {
+                throw new IOException("Streaming zip producer " + displayName
+                        + " did not finish within " + timeoutMs + "ms");
+            }
+        }
+
+        @Override public String getName() { return displayName; }
+        @Override public String getNestedPath() { return null; }
+        @Override public void write(final File f) { /* unused — DicomZipImporter only calls getName / getInputStream */ }
+        @Override public void delete() { /* unused */ }
+        @Override public UPLOAD_TYPE getType() { return null; }
+
+        @Override public void close() { shutdown(); }
+    }
+
+    private void getOrCopyExperimentOrAssessor(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (sourceExperiment instanceof XnatImageassessordata) {
+            checkOrCopyAssessor((XnatImageassessordata) sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+        } else {
+            getOrCopyExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+        }
+    }
+
+    private void checkOrCopyAssessor(XnatImageassessordata sourceAssess, XnatExperimentdata existingAssessor, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (existingAssessor != null) {
+            throwForLabelConflictAssessor(sourceAssess, existingAssessor, destinationProjectData, user, eventInfo);
+        } else {
+            copyAssessor(sourceAssess, destinationProjectData, user);
+        }
+    }
+
+    private void copyAssessor(XnatImageassessordata sourceAssess, XnatProjectdata destinationProjectData, UserI user) throws Exception {
+        final XnatExperimentdata sourceExperiment = sourceAssess.getImageSessionData();
+        final XnatExperimentdata existingExperiment = XnatExperimentdata.GetExptByProjectIdentifier(destinationProjectData.getId(), sourceExperiment.getLabel(), null, false);
+        final XnatExperimentdata destinationExperiment = getOrCopyExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, null);
+        final String sourceProject = sourceAssess.getProject();
+        final String filepath = sourceExperiment.getArchiveRootPath() + "arc001/" + sourceExperiment.getArchiveDirectoryName() + "/ASSESSORS/" + sourceAssess.getArchiveDirectoryName();
+        final String newFilepath = filepath.replace("/" + sourceProject + "/", "/" + destinationProjectData.getId() + "/");
+
+        // Remove shares prior to copy (not strictly necessary to do this before rather than after copying, but why
+        // copy something only to remove it?)
+        int nshare = sourceAssess.getSharing_share().size();
+        for (int i = nshare - 1; i >= 0; i--) {
+            sourceAssess.removeSharing_share(i);
+        }
+
+        final ItemI copy = sourceAssess.getItem().copy();
+        final String newId = XnatExperimentdata.CreateNewID();
+        final XnatImageassessordata newAssessor = new XnatImageassessordata(copy);
+
+
+        setOriginalProjectField(newAssessor, getOriginalProject(sourceAssess));
+        newAssessor.setProject(destinationProjectData.getId());
+        newAssessor.setImagesessionId(destinationExperiment.getId());
+        newAssessor.setId(newId);
+
+        for (final XnatAbstractresourceI res : newAssessor.getResources_resource()) {
+            fixPaths(res, filepath, newFilepath);
+        }
+        for (final XnatAbstractresourceI res : newAssessor.getIn_file()) {
+            fixPaths(res, filepath, newFilepath);
+        }
+        for (final XnatAbstractresourceI res : newAssessor.getOut_file()) {
+            fixPaths(res, filepath, newFilepath);
+        }
+
+        XnatUtils.doActionWithWorkflow(user, sourceAssess, "Cloned into project: " + newAssessor.getProject(), () -> {
+            saveItemAndCopyFiles(user, sourceAssess, newAssessor, filepath, newFilepath);
+            return true;
+        });
+    }
+
+    private XnatExperimentdata getOrCopyExperiment(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        XnatExperimentdata destinationExperiment;
+        if (existingExperiment != null) {
+            throwForLabelConflictExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+            destinationExperiment = existingExperiment;
+        } else {
+            destinationExperiment = copyExperiment(sourceExperiment, destinationProjectData, user);
+        }
+        return destinationExperiment;
+    }
+
+    private XnatExperimentdata copyExperiment(XnatExperimentdata sourceExpt, XnatProjectdata destinationProjectData, UserI user) throws Exception {
+        final String sourceProject = sourceExpt.getProject();
+        final String filepath = sourceExpt.getArchiveRootPath() + "arc001/" + sourceExpt.getArchiveDirectoryName();
+        final String newFilepath = filepath.replace("/" + sourceProject + "/", "/" + destinationProjectData.getId() + "/");
+        final String newId = XnatExperimentdata.CreateNewID();
+
+        // Note: we need to remove children from source prior to making a copy to avoid permissions issues that arise if
+        // children haven't been shared. We never save the modified source object, we just copy it and save the copy.
+        if (sourceExpt instanceof XnatImagesessiondata) {
+            // Remove child assessors, which will be copied separately
+            List<XnatImageassessordata> assessors = ((XnatImagesessiondata) sourceExpt).getAssessors_assessor();
+            if (assessors != null) {
+                for (int i = assessors.size() - 1; i >= 0; --i) {
+                    ((XnatImagesessiondata) sourceExpt).removeAssessors_assessor(i);
+                }
+            }
+        }
+
+        // Remove shares
+        int nshare = sourceExpt.getSharing_share().size();
+        for (int i = nshare - 1; i >= 0; i--) {
+            sourceExpt.removeSharing_share(i);
+        }
+
+        final ItemI copy = sourceExpt.getItem().copy();
+        final XnatExperimentdata newExperiment = sourceExpt instanceof XnatImagesessiondata ? new XnatImagesessiondata(copy) : new XnatExperimentdata(copy);
+        final XnatSubjectdata sourceSubject = XnatUtils.getSubject((String) newExperiment.getProperty("subject_ID"), user);
+        final XnatSubjectdata existingSubject = XnatSubjectdata.GetSubjectByProjectIdentifier(destinationProjectData.getId(), sourceSubject.getLabel(), null, false);
+        final XnatSubjectdata destinationSubject = getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, null);
+
+        newExperiment.setProperty("subject_ID", destinationSubject.getId());
+        newExperiment.setProject(destinationProjectData.getId());
+        newExperiment.setId(newId);
+        setOriginalProjectField(newExperiment, getOriginalProject(sourceExpt));
+
+        if (newExperiment instanceof XnatImagesessiondata) {
+            // Update scans and recons
+            for (final XnatImagescandataI scan : ((XnatImagesessiondata) newExperiment).getScans_scan()) {
+                scan.setImageSessionId(newId);
+                for (final XnatAbstractresourceI res : scan.getFile()) {
+                    fixPaths(res, filepath, newFilepath);
+                }
+            }
+
+            for (final XnatReconstructedimagedataI recon :
+                    ((XnatImagesessiondata) newExperiment).getReconstructions_reconstructedimage()) {
+                recon.setImageSessionId(newId);
+                for (final XnatAbstractresourceI res : recon.getIn_file()) {
+                    fixPaths(res, filepath, newFilepath);
+                }
+                for (final XnatAbstractresourceI res : recon.getOut_file()) {
+                    fixPaths(res, filepath, newFilepath);
+                }
+            }
+        }
+
+        // Update resource paths
+        for (final XnatAbstractresourceI res : newExperiment.getResources_resource()) {
+            fixPaths(res, filepath, newFilepath);
+        }
+
+        XnatUtils.doActionWithWorkflow(user, sourceExpt, "Cloned into project: " + newExperiment.getProject(), () -> {
+            saveItemAndCopyFiles(user, sourceExpt, newExperiment, filepath, newFilepath);
+            return true;
+        });
+        return newExperiment;
+    }
+
+    private XnatSubjectdata getOrCopySubject(XnatSubjectdata sourceSubject, XnatSubjectdata existingSubject, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        XnatSubjectdata destinationSubject;
+        if (existingSubject != null) {
+            throwForLabelConflictSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+            destinationSubject = existingSubject;
+        } else {
+            destinationSubject = copySubject(sourceSubject, destinationProjectData, user);
+        }
+        return destinationSubject;
+    }
+
+    private XnatSubjectdata copySubject(XnatSubjectdata sourceSubject, XnatProjectdata destinationProjectData, UserI user) throws Exception {
+        final String filepath = sourceSubject.getArchiveRootPath() + "subjects/" + sourceSubject.getArchiveDirectoryName();
+        final String newFilepath = filepath.replace("/" + sourceSubject.getProject() + "/", "/" + destinationProjectData.getId() + "/");
+
+        // Note: we need to remove children from source prior to making a copy to avoid permissions issues that arise if
+        // children haven't been shared. We never save the modified source object, we just copy it and save the copy.
+        List<XnatSubjectassessordataI> experiments = sourceSubject.getExperiments_experiment();
+        if (experiments != null) {
+            for (int i = experiments.size() - 1; i >= 0; --i) {
+                sourceSubject.removeExperiments_experiment(i);
+            }
+        }
+
+        // Remove shares
+        int nshare = sourceSubject.getSharing_share().size();
+        for (int i = nshare - 1; i >= 0; i--) {
+            sourceSubject.removeSharing_share(i);
+        }
+
+        ItemI copy = sourceSubject.getItem().copy();
+        XnatSubjectdata newSubject = new XnatSubjectdata(copy);
+        newSubject.setId(XnatSubjectdata.CreateNewID());
+        newSubject.setLabel(sourceSubject.getLabel());
+        newSubject.setProject(destinationProjectData.getId());
+        setOriginalProjectField(newSubject, getOriginalProject(sourceSubject));
+
+        // Update resource paths
+        for (final XnatAbstractresourceI res : newSubject.getResources_resource()) {
+            fixPaths(res, filepath, newFilepath);
+        }
+
+        XnatUtils.doActionWithWorkflow(user, sourceSubject, "Cloned into project: " + newSubject.getProject(), () -> {
+            saveItemAndCopyFiles(user, sourceSubject, newSubject, filepath, newFilepath);
+            return true;
+        });
+        return newSubject;
+    }
+
+    /**
+     * Saves the new item, links the source item's files into the new item's archive directory, and will run the destination
+     * project's anonymization script if the item is an image session.
+     *
+     * @param user       - The user doing the action.
+     * @param sourceItem - The source item the new item was copied from.
+     * @param newItem    - The new item we are saving
+     * @param source     - The source filepath
+     * @param dest       - The destination filepath
+     * @throws Exception
+     */
+    private void saveItemAndCopyFiles(final UserI user, final ArchivableItem sourceItem, final ArchivableItem newItem, final String source, final String dest) throws Exception {
+        try {
+            EventDetails details = EventUtils.newEventInstance(EventUtils.CATEGORY.DATA, EventUtils.TYPE.WEB_SERVICE, "Item Saved");
+            SaveItemHelper.authorizedSave(newItem, user, false, false, details);
+        } catch (Exception e) {
+            throw new Exception("Failed to save item", e);
+        }
+
+        try {
+            XnatUtils.doActionWithWorkflow(user, newItem, "Files Cloned", () -> {
+                FileUtil.linkFiles(source, dest);
+                return true;
+            });
+        } catch (Exception e) {
+            XnatUtils.deleteItemWithoutSecurity(newItem);
+            final Path destDir = Paths.get(dest);
+            final Path parentDir = destDir.getParent();
+            final File parentFile = parentDir.toFile();
+            FileUtil.deleteDirectoryWithoutException(destDir.toFile());
+            if (Files.isDirectory(parentDir)) {
+                if (!FileUtils.HasFiles(parentFile)) {
+                    FileUtil.deleteDirectoryWithoutException(parentFile);
+                }
+            }
+            throw e;
+        }
+    }
+    
+    /**
+     * Throw an exception if the existing assessor or experiment is NOT the assessor we would be creating by proceeding with the share/copy
+     *
+     * @param sourceAssess           the source
+     * @param existingAssess         the existing expt
+     * @param destinationProjectData the destination project
+     * @param user                   the user
+     * @param eventInfo              event info for tracking
+     * @throws Exception when existing expt with this label came from a different project or is not an assessor
+     */
+    private void throwForLabelConflictAssessor(XnatImageassessordata sourceAssess, @Nonnull XnatExperimentdata existingAssess, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        if (!(existingAssess instanceof XnatImageassessordata)) {
+            // If the project already has an experiment with this label (non image assessor). We are unable to share due to conflict.
+            final String msg = String.format("An experiment with the same label (%s) already exists in project %s.", sourceAssess.getLabel(), destinationProjectData.getId());
+            throw new Exception(msg);
+        }
+        throwForLabelConflictExperiment(sourceAssess, existingAssess, destinationProjectData, user, eventInfo);
+    }
+
+    /**
+     * Throw an exception if the existing expt is NOT the expt we would be creating by proceeding with the share/copy
+     *
+     * @param sourceExperiment       the source
+     * @param existingExperiment     the existing expt
+     * @param destinationProjectData the destination project
+     * @param user                   the user
+     * @param eventInfo              event info for tracking
+     * @throws Exception when existing expt with this label came from a different project
+     */
+    private void throwForLabelConflictExperiment(XnatExperimentdata sourceExperiment, @Nonnull XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        // If the experiment already exists, try to figure out where it came from.
+        if (getOriginalProject(sourceExperiment).equals(getOriginalProject(existingExperiment))) {
+            // If the primary project matches the source project, we know this experiment was previously shared using this copy method.
+            if (eventInfo != null) {
+                final String msg = String.format("%s has already been cloned into the destination project %s. Skipping ... ", existingExperiment.getLabel(), destinationProjectData.getId());
+                eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), eventInfo.getProgress(), eventInfo.getTrackingId(), msg));
+            }
+        } else {
+            // If the primary project field doesn't match, this experiment was either shared from a different project, or this project
+            // contains an experiment with the same label.  So we are unable to copy the experiment due to a conflict.
+            final String msg = String.format("An experiment with the same label (%s) already exists in project %s.",
+                    sourceExperiment.getLabel(), destinationProjectData.getId());
+            log.debug(msg);
+            throw new Exception(msg);
+        }
+    }
+
+    /**
+     * Throw an exception if the existing subject is NOT the subject we would be creating by proceeding with the share/copy
+     *
+     * @param sourceSubject          the source
+     * @param existingSubject        the existing subject
+     * @param destinationProjectData the destination project
+     * @param user                   the user
+     * @param eventInfo              event info for tracking
+     * @throws Exception when existing subject with this label came from a different project
+     */
+    private void throwForLabelConflictSubject(XnatSubjectdata sourceSubject, @Nonnull XnatSubjectdata existingSubject, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+        // If the subject already exists, try to figure out where it came from.
+        if (getOriginalProject(sourceSubject).equals(getOriginalProject(existingSubject))) {
+            // If the original project matches the source project, we know this subject was previously shared using this copy method.
+            if (eventInfo != null) {
+                final String msg = String.format("%s has already been cloned into the destination project %s. Skipping ... ", existingSubject.getLabel(), destinationProjectData.getId());
+                eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), eventInfo.getProgress(), eventInfo.getTrackingId(), msg));
+            }
+        } else {
+            // If the primary project field doesn't match, this subject was either shared from a different project, or this project
+            // contains a subject with the same label.  So we are unable to copy the subject due to a conflict.
+            final String msg = String.format("A subject with the same label (%s) already exists in project %s.",
+                    sourceSubject.getLabel(), destinationProjectData.getId());
+            log.debug(msg);
+            throw new Exception(msg);
+        }
+    }
+
+    private void validateRequest(TransferRequest request) throws Exception {
+        if (StringUtils.isBlank(request.getId())) {
+            throw new Exception("Id must not be empty.");
+        }
+
+        if (StringUtils.isBlank(request.getDestinationProject())) {
+            throw new Exception("Destination project cannot be empty.");
+        }
+
+        if (null == request.getMode()) {
+            throw new Exception("Mode must not be null.");
+        }
+    }
+
+    private void setOriginalProjectField(ArchivableItem item, String primaryProject) throws Exception {
+        try {
+            if (item instanceof XnatExperimentdata) {
+                if (null == ((XnatExperimentdata) item).getFieldByName(Fields.ORIGINAL_PROJECT)) {
+                    XnatExperimentdataField field = new XnatExperimentdataField();
+                    field.setName(Fields.ORIGINAL_PROJECT);
+                    field.setField(primaryProject);
+                    ((XnatExperimentdata) item).setFields_field(field);
+                }
+            } else if (item instanceof XnatSubjectdata) {
+                if (null == ((XnatSubjectdata) item).getFieldByName(Fields.ORIGINAL_PROJECT)) {
+                    XnatSubjectdataField field = new XnatSubjectdataField();
+                    field.setName(Fields.ORIGINAL_PROJECT);
+                    field.setField(primaryProject);
+                    ((XnatSubjectdata) item).setFields_field(field);
+                }
+            } else {
+                final String msg = String.format("I don't know how to set the primary project field for item: %s", item.getId());
+                log.error(msg);
+                throw new Exception(msg);
+            }
+        } catch (Exception e) {
+            final String msg = String.format("Failed to set primary project for new item: %s", item.getId());
+            log.debug(msg, e);
+            throw new Exception(msg, e);
+        }
+    }
+
+    private String getOriginalProject(ArchivableItem item) throws Exception {
+        String originalProject;
+        if (item instanceof XnatExperimentdata) {
+            originalProject = (String) ((XnatExperimentdata) item).getFieldByName(Fields.ORIGINAL_PROJECT);
+        } else if (item instanceof XnatSubjectdata) {
+            originalProject = (String) ((XnatSubjectdata) item).getFieldByName(Fields.ORIGINAL_PROJECT);
+        } else {
+            final String msg = String.format("I don't know how to get the original project field for item: %s", item.getId());
+            log.error(msg);
+            throw new Exception(msg);
+        }
+        return StringUtils.defaultIfBlank(originalProject, item.getProject());
+    }
+
+    private void fixPaths(XnatAbstractresourceI resource, String filepath, String newFilepath) throws Exception {
+        if (!Files.exists(Paths.get(filepath))) {
+            throw new Exception("Unable to locate files for abstract resource " + resource.getXnatAbstractresourceId() +
+                    ", parent likely stored in non-standard location.");
+        }
+        if (resource instanceof XnatResource) {
+            String path = ((XnatResource) resource).getUri();
+            String newURI = path.replace(filepath, newFilepath);
+            ((XnatResource) resource).setUri(newURI);
+        } else if (resource instanceof XnatResourceseries) {
+            String path = ((XnatResourceseries) resource).getPath();
+            String newURI = path.replace(filepath, newFilepath);
+            ((XnatResourceseries) resource).setPath(newURI);
+        }
+    }
+}

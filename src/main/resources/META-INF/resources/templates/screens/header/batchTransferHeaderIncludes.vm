@@ -1,0 +1,2 @@
+<link rel="stylesheet" type="text/css" href="$content.getURI("style/xnat/plugin/batchTransfer/batchTransfer.css")"/>
+<script src="$content.getURI("/scripts/xnat/plugin/batchTransfer/activityMonitoring.js")"></script>

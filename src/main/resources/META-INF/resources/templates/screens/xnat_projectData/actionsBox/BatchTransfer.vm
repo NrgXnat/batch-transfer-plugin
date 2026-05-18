@@ -1,0 +1,13 @@
+#* @vtlvariable name="data" type="org.apache.turbine.util.RunData" *#
+#* @vtlvariable name="project" type="org.nrg.xdat.om.XnatProjectdata" *#
+#* @vtlvariable name="userHelper" type="org.nrg.xdat.security.services.UserHelperServiceI" *#
+
+#set ($SITE_ROOT = $content.getURI(""))
+#set ($projectId = $project.getId())
+#set ($userHelper = $data.getSession().getAttribute("userHelper"))
+
+#if ($userHelper.canEdit("xnat:subjectData/project", $projectId))
+    <li id="batch-transfer-action" class="yuimenuitem">
+        <a class="yuimenuitemlabel" href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm?sourceProject=${projectId}">Batch Transfer</a>
+    </li>
+#end

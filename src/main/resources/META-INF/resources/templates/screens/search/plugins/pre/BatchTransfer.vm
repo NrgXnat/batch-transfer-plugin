@@ -1,0 +1,27 @@
+## Copyright (c) 2021 Radiologics
+## All Rights Reserved
+
+#* @vtlvariable name="ed" type="org.nrg.xdat.display.ElementDisplay" *#
+<script type="text/javascript">
+	if (!XNAT.app.typeBasedListingOptions) {
+		XNAT.app.typeBasedListingOptions = {};
+	}
+
+	function addProcDashOption(type) {
+		if (!XNAT.app.typeBasedListingOptions[type]) {
+			XNAT.app.typeBasedListingOptions[type] = [];
+		}
+		XNAT.app.typeBasedListingOptions[type].push({
+			action: 'BatchTransferAction',
+			display: 'Batch Transfer'
+		});
+	}
+
+	$(window.available_elements).each(function() {
+		if (this.isExperiment || this.isSubject) {
+			addProcDashOption(this.elementName);
+		}
+	});
+	addProcDashOption("xnat:projectData");
+	addProcDashOption("xnat:subjectData");
+</script>
