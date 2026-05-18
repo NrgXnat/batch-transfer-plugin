@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+
+  release:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build JAR
+        uses: ./.github/actions/build-plugin-jar
+        with:
+          java-version: '8'
+          gradle-version: '7.0'
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.jar-path }}
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          body: The plugin JAR is attached to this release.

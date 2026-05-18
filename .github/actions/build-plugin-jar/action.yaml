@@ -1,0 +1,51 @@
+name: 'Build XNAT Plugin Jar'
+description: 'Builds the XNAT plugin JAR file with Gradle'
+inputs:
+  java-version:
+    description: 'The version of Java to set up'
+    required: true
+    default: '8'
+  gradle-version:
+    description: 'The version of Gradle to set up'
+    required: true
+    default: '7.0'
+outputs:
+  jar-path:
+    description: 'The path to the built JAR file'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: 'zulu'
+        java-package: 'jdk'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: ${{ inputs.gradle-version }}
+
+    - name: Build with Gradle
+      shell: bash
+      run: ./gradlew clean build --stacktrace
+
+    - name: Test Summary
+      if: always()
+      uses: test-summary/action@v2
+      with:
+        paths: '**/build/test-results/test/*.xml'
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: '**/build/test-results/test/*.xml'
+        retention-days: 30
+
+    - name: Set output
+      id: set-output
+      shell: bash
+      run: echo "jar-path=build/libs/*.jar" >> "$GITHUB_ENV"

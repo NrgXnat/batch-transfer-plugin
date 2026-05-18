@@ -1,3 +1,5 @@
+import org.gradle.api.attributes.java.TargetJvmEnvironment
+
 buildscript {
     ext {
         vXnat = "1.9.3.3"
@@ -40,8 +42,8 @@ configurations.all {
     }
     attributes {
         attribute(
-                Attribute.of("org.gradle.jvm.environment", String),
-                "standard-jvm"
+                TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+                objects.named(TargetJvmEnvironment, TargetJvmEnvironment.STANDARD_JVM)
         )
     }
 }
