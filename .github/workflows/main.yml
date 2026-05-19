@@ -20,7 +20,7 @@ jobs:
         uses: ./.github/actions/build-plugin-jar
         with:
           java-version: '8'
-          gradle-version: '7.0'
+          gradle-version: '7.6.4'
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4

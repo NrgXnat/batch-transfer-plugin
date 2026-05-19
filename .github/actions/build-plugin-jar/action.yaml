@@ -8,7 +8,7 @@ inputs:
   gradle-version:
     description: 'The version of Gradle to set up'
     required: true
-    default: '7.0'
+    default: '7.6.4'
 outputs:
   jar-path:
     description: 'The path to the built JAR file'
@@ -22,6 +22,15 @@ runs:
         distribution: 'zulu'
         java-package: 'jdk'
 
+    # setup-java auto-writes ~/.m2/settings.xml. Whether the body has
+    # ${env.GITHUB_TOKEN} placeholders or empty <id>/<username>/<password>
+    # elements, net.linguica.maven-settings rejects it (encrypted-password
+    # false positive, or "id missing" validation). Plugin is irrelevant in
+    # CI anyway — it's for local Artifactory publishing. Wipe the file.
+    - name: Remove auto-generated Maven settings
+      shell: bash
+      run: rm -f ~/.m2/settings.xml
+
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
@@ -29,7 +38,7 @@ runs:
 
     - name: Build with Gradle
       shell: bash
-      run: ./gradlew clean build --stacktrace
+      run: ./gradlew clean build --stacktrace --debug
 
     - name: Test Summary
       if: always()
