@@ -3,7 +3,6 @@
 
 package org.nrg.xnat.turbine.modules.screens;
 
-import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.Fields;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -30,8 +29,6 @@ import java.util.stream.Collectors;
 @SuppressWarnings("unused")
 @Slf4j
 public class XDATScreen_batch_transfer extends SecureScreen {
-    private final List<String> nonSharingProjects = new ArrayList<>();
-    private final List<String> nonCopyingProjects = new ArrayList<>();
     private static final String FIELD_ID = "BATCH_TRANSFER_ID";
 
     private static final String READABLE_SUBJECTS = "SELECT field_value,read_element,field,element_name,grp.tag, xdat_user_id\n" +
@@ -70,7 +67,8 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         //  (2) default — DisplaySearch in the session from a bulk action on a search results table.
         String sourceProject = data.getParameters().getString("sourceProject");
         String column;
-        List<String> itemIds;
+        List<String> itemIds = null;     // search-results entry point only
+        String sourceProjectId = null;   // sourceProject entry point only
         DisplaySearch search = null;
 
         if (StringUtils.isNotBlank(sourceProject)) {
@@ -80,15 +78,10 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 context.put("msg", "Project not found or access denied.");
                 return;
             }
-            String validatedProjectId = proj.getId();
+            sourceProjectId = proj.getId();
             context.put("searchType", "subject");
-            context.put("projectContext", validatedProjectId);
+            context.put("projectContext", sourceProjectId);
             column = "subj.id";
-            itemIds = getSubjectIdsInProject(validatedProjectId, user);
-            if (itemIds.isEmpty()) {
-                context.put("sharingMsg", "None of the requested data is available for sharing or cloning.");
-                return;
-            }
         } else {
             // retrieve passed search object
             search = TurbineUtils.getSearch(data);
@@ -118,6 +111,12 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             itemIds = table.convertColumnToArrayList(FIELD_ID);
         }
 
+        boolean byProject  = (sourceProjectId != null);
+        String safeProj    = byProject ? sourceProjectId.replaceAll("[^A-Za-z0-9_\\-]", "") : "";
+        String ownedScope  = byProject ? "WHERE subj.project='" + safeProj + "'\n" : "";
+        String sharedScope = byProject ? "WHERE pp.project='" + safeProj + "'\n" : "";
+        String finalFilter = byProject ? "" : ("WHERE " + column + " IN ('" + buildWhereClause(itemIds) + "')");
+
         // Build the query to retrieve information about the items we want listed.
         String query = "SELECT DISTINCT ON (SUBJ.ID, SADS.ID, IAD.ID) secondary_id AS project_label,subj.id AS subject_id, subj.label AS subject_label, subj.project AS subject_project, SADS.id AS session_id, SADS.label AS session_label, SADS.project AS session_project, SADS.date AS session_expt_date, SADS.element_name as session_element, IAD.id AS assessor_id, IAD.label AS assessor_label, IAD.project AS assessor_project, IAD.date AS assess_expt_date, IAD.element_name AS assessor_element\n" +
                 "FROM (\n" +
@@ -126,6 +125,7 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 "JOIN (\n" +
                 READABLE_SUBJECTS +
                 "WHERE xdat_user_id={USER_ID} AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/project') OWNED ON subj.project=OWNED.tag\n" +
+                ownedScope +
                 "UNION\n" +
                 "SELECT subj.id, pp.label, subj.project\n" +
                 "FROM xnat_subjectData subj\n" +
@@ -133,6 +133,7 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 "JOIN (\n" +
                 READABLE_SUBJECTS +
                 "WHERE xdat_user_id={USER_ID} AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/sharing/share/project' ) SHARED ON pp.project=SHARED.tag\n" +
+                sharedScope +
                 ")  SUBJ\n" +
                 "LEFT JOIN (\n" +
                 " SELECT expt.id, expt.label, expt.project, sad.subject_id, expt.date, xme.element_name\n" +
@@ -165,40 +166,49 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 "JOIN xnat_imageAssessorData sad ON shared.id=sad.id\n" +
                 ") IAD ON SADS.id=IAD.imagesession_id\n" +
                 "LEFT JOIN xnat_projectData ON subj.project=xnat_projectData.id " +
-                "WHERE " +
-                column +
-                " IN ('" +
-                buildWhereClause(itemIds) +
-                "');";
+                finalFilter +
+                ";";
 
         query = query.replace("{USER_ID}", ((XDATUser) user).getXdatUserId().toString());
 
         // Execute the query to get a list of experiments
         XFTTable experiments = XFTTable.Execute(query, user.getDBName(), user.getUsername());
 
-        // Insert the items into the context.
-        Map<String, ItemContainer> sharingItems = getItems(experiments, search, TransferMode.SHARE);
-
-        Map<String, ItemContainer> copyingItems = getItems(experiments, search, TransferMode.CLONE);
-
-        if (sharingItems.isEmpty() && copyingItems.isEmpty()) {
-            context.put("sharingMsg", "None of the requested data is available for sharing or cloning.");
+        // Build ONE item set (all readable items), then compute per-project eligibility once.
+        // Share/Clone are feature-gated; Reimport is always allowed, so the set is unfiltered.
+        Map<String, ItemContainer> items = buildItems(experiments, search);
+        if (items.isEmpty()) {
+            context.put("sharingMsg", "None of the requested data is available.");
             return;
         }
 
-        if (sharingItems.isEmpty()) {
-            context.put("sharingMsg", "There is no data available to share. Please try another operation to proceed.");
-        } else if (!nonSharingProjects.isEmpty()) {
-            context.put("sharingMsg", "Some of the data requested is not available for sharing and has been excluded from the table below.");
+        UserI details = XDAT.getUserDetails();
+        Set<String> shareableProjects = new HashSet<>();
+        Set<String> cloneableProjects = new HashSet<>();
+        for (String proj : items.keySet()) {
+            if (Features.checkRestrictedFeature(details, proj, Features.PROJECT_SHARING_FEATURE)) {
+                shareableProjects.add(proj);
+            }
+            if (Features.checkRestrictedFeature(details, proj, Fields.PROJECT_COPYING_FEATURE)) {
+                cloneableProjects.add(proj);
+            }
         }
 
-        if (copyingItems.isEmpty()) {
-            context.put("copyingMsg", "There is no data available to clone. Please try another operation to proceed.");
-        } else if (!nonCopyingProjects.isEmpty()) {
-            context.put("copyingMsg", "Some of the data requested is not available for cloning and has been excluded from the table below.");
+        // Per-operation availability warnings, derived from eligibility (Reimport always has data).
+        if (shareableProjects.isEmpty()) {
+            context.put("sharingMsg", "No data is available to share. Try another operation to proceed.");
+        } else if (shareableProjects.size() < items.size()) {
+            context.put("sharingMsg", "Some data is not available for sharing and is hidden while Share is selected.");
         }
-        context.put("sharingItems", sharingItems);
-        context.put("copyingItems", copyingItems);
+        if (cloneableProjects.isEmpty()) {
+            context.put("copyingMsg", "No data is available to clone. Try another operation to proceed.");
+        } else if (cloneableProjects.size() < items.size()) {
+            context.put("copyingMsg", "Some data is not available for cloning and is hidden while Clone is selected.");
+        }
+
+        context.put("items", items);
+        context.put("shareableProjects", shareableProjects);
+        context.put("cloneableProjects", cloneableProjects);
         context.put("turbineUtils", TurbineUtils.GetInstance());
     }
 
@@ -221,28 +231,18 @@ public class XDATScreen_batch_transfer extends SecureScreen {
      * @param search - DisplaySearch
      * @return Hashtable<String, ItemContainer>
      */
-    private Map<String, ItemContainer> getItems(XFTTable t, DisplaySearch search, TransferMode operation) {
+    private Map<String, ItemContainer> buildItems(XFTTable t, DisplaySearch search) {
         Map<String, ItemContainer> items = new HashMap<>();
 
-        // For each experiment in the hashtable.
+        // For each experiment row, build the project→subject→session→assessor tree. The set is
+        // unfiltered — per-project Share/Clone eligibility is computed once in doBuildTemplate,
+        // and Reimport is always allowed.
         for(Hashtable exp : t.rowHashs()){
 
             String project = (String) exp.get("subject_project");
             String subject_id = (String) exp.get("subject_id");
             if (project == null || subject_id == null) {
                 continue;
-            }
-
-            if (operation == TransferMode.SHARE) {
-                if(!Features.checkRestrictedFeature(XDAT.getUserDetails(), project, Features.PROJECT_SHARING_FEATURE)){
-                    nonSharingProjects.add(project);
-                    continue;
-                }
-            } else {
-                if(!Features.checkRestrictedFeature(XDAT.getUserDetails(), project, Fields.PROJECT_COPYING_FEATURE)){
-                    nonCopyingProjects.add(project);
-                    continue;
-                }
             }
 
             ItemContainer projectContainer = items.get(project);
@@ -297,22 +297,6 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         return StringUtils.join(ids, "','");
     }
 
-    /**
-     * Returns all subject IDs belonging to the given project, including subjects shared into it.
-     * Permission filtering is applied downstream by the main hierarchy query's READABLE_* joins.
-     * @param projectId - validated project id (already checked via XnatProjectdata.getProjectByIDorAlias)
-     * @param user - current user
-     * @return list of subject ids
-     */
-    private List<String> getSubjectIdsInProject(String projectId, UserI user) throws Exception {
-        String safeProjectId = projectId.replaceAll("[^A-Za-z0-9_\\-]", "");
-        String query = "SELECT DISTINCT subj.id AS id FROM xnat_subjectData subj " +
-                "LEFT JOIN xnat_projectParticipant pp ON subj.id=pp.subject_id " +
-                "WHERE subj.project = '" + safeProjectId + "' OR pp.project = '" + safeProjectId + "';";
-        XFTTable table = XFTTable.Execute(query, user.getDBName(), user.getUsername());
-        return table.convertColumnToArrayList("id");
-    }
-
     private static Map<String, ItemContainer> sortItemContainersByLabel(Map<String, ItemContainer> items) {
         items.forEach((key, value) -> value.sortChildren());
         return items.entrySet().stream()
@@ -361,6 +345,14 @@ public class XDATScreen_batch_transfer extends SecureScreen {
 
         public String getXsiType() {
             return this.xsiType;
+        }
+
+        /**
+         * Reimport is session-only: only image sessions (xsiType ending in "SessionData") are
+         * reimportable — subjects and (image) assessors are not. Drives data-reimportable in the UI.
+         */
+        public boolean isReimportable() {
+            return this.xsiType != null && this.xsiType.toLowerCase().endsWith("sessiondata");
         }
     }
 }
