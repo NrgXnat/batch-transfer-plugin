@@ -249,17 +249,35 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      */
     protected List<String> runImporter(final UserI user, final FileWriterWrapperI wrapper, final Map<String, Object> params) throws Exception {
         final Thread heartbeat = startImporterHeartbeat(wrapper.getName());
+        List<String> result = null;
+        Exception importerError = null;
         try (DicomZipImporter importer = new DicomZipImporter(null, user, wrapper, params)) {
             importer.setIdentifier(this.identifier);
-            return importer.call();
+            result = importer.call();
+        } catch (Exception e) {
+            importerError = e;
         } finally {
             heartbeat.interrupt();
             if (wrapper instanceof StreamingZipFileWriter) {
                 final StreamingZipFileWriter s = (StreamingZipFileWriter) wrapper;
                 s.shutdown();
-                s.awaitProducer(30_000L);
+                try {
+                    s.awaitProducer(30_000L);
+                } catch (IOException producerError) {
+                    // The importer's own failure is the user-facing cause; a producer-side error
+                    // (genuine source truncation) must never mask it — attach it as suppressed.
+                    if (importerError == null) {
+                        importerError = producerError;
+                    } else {
+                        importerError.addSuppressed(producerError);
+                    }
+                }
             }
         }
+        if (importerError != null) {
+            throw importerError;
+        }
+        return result;
     }
 
     private static Thread startImporterHeartbeat(final String name) {
@@ -341,35 +359,86 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         }
 
         private void produce() {
-            try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(pipedOut, 65536));
-                 Stream<Path> paths = Files.walk(sourceDir)) {
-                zos.setLevel(Deflater.BEST_SPEED);
-                final byte[] buffer = new byte[65536];
+            final ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(pipedOut, 65536));
+            zos.setLevel(Deflater.BEST_SPEED);
+            final byte[] buffer = new byte[65536];
+            try (Stream<Path> paths = Files.walk(sourceDir)) {
+                // writeEntry returns false once the consumer closes the pipe; allMatch then stops
+                // streaming. Real source-read failures throw and are caught (and recorded) below.
                 paths.filter(Files::isRegularFile)
                      .filter(p -> StreamSupport.stream(p.spliterator(), false)
                              .anyMatch(part -> part.toString().equals("DICOM")))
                      .filter(p -> !p.getFileName().toString().toLowerCase().endsWith("catalog.xml"))
-                     .forEach(p -> writeEntry(zos, p, buffer));
-            } catch (Throwable t) {
-                // Unwrap UncheckedIOException for cleaner error messages.
-                final Throwable recorded = (t instanceof UncheckedIOException) ? t.getCause() : t;
-                error.set(recorded);
-                log.warn("Streaming zip producer for {} failed", displayName, recorded);
+                     .allMatch(p -> writeEntry(zos, p, buffer));
+            } catch (UncheckedIOException e) {
+                recordError(e.getCause());   // a source DICOM file could not be read
+            } catch (IOException e) {
+                recordError(e);              // the source tree could not be walked
+            } finally {
+                finishZip(zos);
             }
         }
 
-        private void writeEntry(final ZipOutputStream zos, final Path filePath, final byte[] buffer) {
-            try {
-                zos.putNextEntry(new ZipEntry(sourceDir.relativize(filePath).toString()));
-                try (InputStream in = Files.newInputStream(filePath)) {
-                    int len;
-                    while ((len = in.read(buffer)) > 0) {
-                        zos.write(buffer, 0, len);
+        private void recordError(final Throwable cause) {
+            error.set(cause);
+            log.warn("Streaming zip producer for {} failed", displayName, cause);
+        }
+
+        /**
+         * Copy one source file into the zip, streaming through the shared fixed-size buffer.
+         * Returns {@code false} — not an error — when a write to the pipe fails: that means the
+         * consumer (importer) closed the read end after taking the DICOM it needed, so there is
+         * nothing left to stream. A failure to <em>read</em> the source file is a genuine producer
+         * error, rethrown as {@link UncheckedIOException} so it surfaces via {@link #awaitProducer(long)}.
+         *
+         * <p>Streaming in fixed-size chunks (which block and drain through the 64&nbsp;KB pipe)
+         * keeps producer memory constant regardless of slice size — a large multi-frame instance
+         * is never buffered whole.
+         */
+        private boolean writeEntry(final ZipOutputStream zos, final Path filePath, final byte[] buffer) {
+            try (InputStream in = Files.newInputStream(filePath)) {
+                try {
+                    zos.putNextEntry(new ZipEntry(sourceDir.relativize(filePath).toString()));
+                } catch (IOException consumerClosedPipe) {
+                    return false;
+                }
+                while (true) {
+                    final int len;
+                    try {
+                        len = in.read(buffer);                 // read from source
+                    } catch (IOException sourceReadError) {
+                        throw new UncheckedIOException(sourceReadError);
+                    }
+                    if (len <= 0) {
+                        break;
+                    }
+                    try {
+                        zos.write(buffer, 0, len);             // write to the pipe (sink)
+                    } catch (IOException consumerClosedPipe) {
+                        return false;
                     }
                 }
-                zos.closeEntry();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
+                try {
+                    zos.closeEntry();
+                } catch (IOException consumerClosedPipe) {
+                    return false;
+                }
+                return true;
+            } catch (IOException sourceOpenError) {
+                throw new UncheckedIOException(sourceOpenError);
+            }
+        }
+
+        /**
+         * Flush and close the zip, writing its central directory. The consumer never reads past
+         * the last entry, so for a large session this final write can fail once the consumer has
+         * closed the pipe — that is the normal end of streaming, not an error.
+         */
+        private void finishZip(final ZipOutputStream zos) {
+            try {
+                zos.close();
+            } catch (IOException consumerClosedPipe) {
+                log.debug("Streaming zip producer for {}: consumer closed before the zip finished (benign)", displayName);
             }
         }
 
