@@ -8,7 +8,7 @@
     <div class="info">$msg</div>
 #end
 
-#if((!$sharingItems || $sharingItems.size() == 0) && (!$copyingItems || $copyingItems.size() == 0))
+#if(!$items || $items.size() == 0)
     <div class="info">$sharingMsg</div>
     <br>
     <input type="button" name="ok" value="Ok" onclick="goHome()"/>
@@ -19,8 +19,8 @@
 
 ## Determine source project context
 #set($projectContext = false)
-#if($sharingItems && $sharingItems.size() == 1)
-    #foreach($proj in $sharingItems)
+#if($items && $items.size() == 1)
+    #foreach($proj in $items)
         #set($projectContext = $proj.getId())
     #end
 #end
@@ -130,13 +130,13 @@
             <h3 id="bt-main-title">Select data to transfer</h3>
         </div>
         <div class="bt-main-scroll">
-            #if($sharingMsg && !$sharingItems.isEmpty())
+            #if($sharingMsg)
                 <div class="bt-warning">
                     <span class="bt-warn-icon">&#9888;</span>
                     <div>$sharingMsg</div>
                 </div>
             #end
-            #if($copyingMsg && !$copyingItems.isEmpty())
+            #if($copyingMsg)
                 <div class="bt-warning" id="bt-copy-warning" style="display:none;">
                     <span class="bt-warn-icon">&#9888;</span>
                     <div>$copyingMsg</div>
@@ -161,13 +161,18 @@
                         </tr>
                     </thead>
                     <tbody id="bt-data-body">
-                        ## ── Share/Import pool (from $sharingItems) ──
-                        #if($sharingItems && $sharingItems.size() > 0)
-                            #foreach($proj in $sharingItems)
+                        ## ── Single item set; per-project share/clone eligibility drives op visibility ──
+                        ## ── (Reimport is never feature-gated — all sessions are reimportable). ──
+                        #if($items && $items.size() > 0)
+                            #foreach($proj in $items)
+                                #set($projShareable = $shareableProjects.contains($proj.getId()))
+                                #set($projCloneable = $cloneableProjects.contains($proj.getId()))
                                 #foreach($subj in $proj.getChildren())
-                                    <tr class="selected" data-pool="share" data-type="subject"
+                                    <tr class="selected" data-type="subject"
                                         data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
-                                        data-project="$!proj.getId()">
+                                        data-project="$!proj.getId()"
+                                        data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                        data-reimportable="$!subj.isReimportable()">
                                         <td><span class="bt-cb checked">&#10003;</span></td>
                                         <td>
                                             #if($subj.getChildren().size() > 0)
@@ -179,56 +184,11 @@
                                         <td class="bt-id-text">$!subj.getId()</td>
                                     </tr>
                                     #foreach($subj_assess in $subj.getChildren())
-                                        <tr class="bt-indent-1 selected" data-pool="share" data-type="assessor"
-                                            data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
-                                            data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()">
-                                            <td><span class="bt-cb checked">&#10003;</span></td>
-                                            <td>
-                                                #if($subj_assess.getChildren().size() > 0)
-                                                    <button class="bt-expand expanded">&#9654;</button>
-                                                #end
-                                                $!subj_assess.getLabel()
-                                            </td>
-                                            <td><span class="bt-type-badge assessor">$!subj_assess.getXsiType()</span></td>
-                                            <td class="bt-id-text">$!subj_assess.getId()</td>
-                                        </tr>
-                                        #foreach($img_assess in $subj_assess.getChildren())
-                                            <tr class="bt-indent-2 selected" data-pool="share" data-type="assessor"
-                                                data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
-                                                data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()">
-                                                <td><span class="bt-cb checked">&#10003;</span></td>
-                                                <td>$!img_assess.getLabel()</td>
-                                                <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>
-                                                <td class="bt-id-text">$!img_assess.getId()</td>
-                                            </tr>
-                                        #end
-                                    #end
-                                #end
-                            #end
-                        #end
-
-                        ## ── Copy pool (from $copyingItems) ──
-                        #if($copyingItems && $copyingItems.size() > 0)
-                            #foreach($proj in $copyingItems)
-                                #foreach($subj in $proj.getChildren())
-                                    <tr class="selected" data-pool="copy" data-type="subject"
-                                        data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
-                                        data-project="$!proj.getId()" style="display:none;">
-                                        <td><span class="bt-cb checked">&#10003;</span></td>
-                                        <td>
-                                            #if($subj.getChildren().size() > 0)
-                                                <button class="bt-expand expanded">&#9654;</button>
-                                            #end
-                                            $!subj.getLabel()
-                                        </td>
-                                        <td><span class="bt-type-badge subject">Subject</span></td>
-                                        <td class="bt-id-text">$!subj.getId()</td>
-                                    </tr>
-                                    #foreach($subj_assess in $subj.getChildren())
-                                        <tr class="bt-indent-1 selected" data-pool="copy" data-type="assessor"
+                                        <tr class="bt-indent-1 selected" data-type="assessor"
                                             data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
                                             data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()"
-                                            style="display:none;">
+                                            data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                            data-reimportable="$!subj_assess.isReimportable()">
                                             <td><span class="bt-cb checked">&#10003;</span></td>
                                             <td>
                                                 #if($subj_assess.getChildren().size() > 0)
@@ -240,10 +200,11 @@
                                             <td class="bt-id-text">$!subj_assess.getId()</td>
                                         </tr>
                                         #foreach($img_assess in $subj_assess.getChildren())
-                                            <tr class="bt-indent-2 selected" data-pool="copy" data-type="assessor"
+                                            <tr class="bt-indent-2 selected" data-type="assessor"
                                                 data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
                                                 data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()"
-                                                style="display:none;">
+                                                data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                                data-reimportable="$!img_assess.isReimportable()">
                                                 <td><span class="bt-cb checked">&#10003;</span></td>
                                                 <td>$!img_assess.getLabel()</td>
                                                 <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>

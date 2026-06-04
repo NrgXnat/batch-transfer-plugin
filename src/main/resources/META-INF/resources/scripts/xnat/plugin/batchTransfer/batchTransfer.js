@@ -13,12 +13,16 @@ var XNAT = getObject(XNAT || {});
 
     var projectAnonCache = {};
     var selectedOp = 'Share';
+    var lastOp = 'Share';          // previous operation, to detect leaving Reimport
     var selectedProject = null;
     var selectedAnon = null;
     var config = {};
     var submitInFlight = false;
-    var selectionByItem = {};
-    var activePool = 'share';
+
+    // Row index, built once after load (rows are static — only classes/visibility change).
+    // Replaces per-row `$('#bt-data-body tr[data-id=…]')` scans that made tree walks O(n²).
+    var rowById = {};              // data-id  -> DOM <tr>
+    var childrenByParent = {};     // data-parent -> [DOM <tr>, ...]
 
     var operationDetails = {
         Share: 'Shares the selected data into the destination project. ' +
@@ -37,6 +41,7 @@ var XNAT = getObject(XNAT || {});
     XNAT.plugin.batchtransfer.init = function(cfg) {
         config = cfg || {};
         selectedOp = 'Share';
+        lastOp = 'Share';
 
         if (config.presetDestination) {
             selectedProject = config.presetDestination;
@@ -50,16 +55,47 @@ var XNAT = getObject(XNAT || {});
             loadProjects();
         }
 
+        buildRowIndex();
         bindOperationCards();
         bindProjectSelect();
         bindTableInteractions();
+        // One item set is rendered (all readable items). Apply the default operation's
+        // eligibility so rows whose project can't be shared are hidden/excluded on load.
+        applyOperationEligibility('Share');
         updateOperationDetail();
-        // The table rows are pre-selected server-side (class="selected"), so prime the
-        // selection bar on load too — otherwise it keeps the template's hardcoded
-        // "0 items selected" / "Select all" until the user's first interaction.
-        updateSelectionCount();
         updateSummary();
     };
+
+    // Build the id/parent indexes once. The server renders a fixed row set; rows are never
+    // added or removed (only .selected / .bt-import-* classes and visibility toggle), so the
+    // index stays valid for the page lifetime.
+    function buildRowIndex() {
+        rowById = {};
+        childrenByParent = {};
+        var rows = document.querySelectorAll('#bt-data-body tr');
+        for (var i = 0; i < rows.length; i++) {
+            var el = rows[i];
+            var id = el.getAttribute('data-id');
+            var parent = el.getAttribute('data-parent');
+            if (id) rowById[id] = el;
+            if (parent) {
+                (childrenByParent[parent] || (childrenByParent[parent] = [])).push(el);
+            }
+            // Cache lowercased row text once for the filter (label/type/id are static; the only
+            // volatile part is the checkmark glyph, which never matters for a text query).
+            el._btFilterText = (el.textContent || '').toLowerCase();
+        }
+    }
+
+    function rowFor(id) {
+        var el = rowById[id];
+        return el ? $(el) : $();
+    }
+
+    function childrenOf(parentId) {
+        var arr = childrenByParent[parentId];
+        return (arr && arr.length) ? $(arr) : $();
+    }
 
     // ── Project Loading ──
 
@@ -79,7 +115,6 @@ var XNAT = getObject(XNAT || {});
 
     // Cache each project's anonymization state up-front so the operation-detail
     // panel banner can render synchronously when the user picks a destination.
-    // No visual decoration is applied to the dropdown options themselves.
     function fetchAnonForProjects(projects) {
         projects.forEach(function(p) {
             XNAT.plugin.batchtransfer.checkProjectAnon(p.id, function(anonEnabled) {
@@ -179,127 +214,98 @@ var XNAT = getObject(XNAT || {});
     }
 
     function toggleOperation(op) {
-        // Remember the selection of the currently visible pool before switching, so the
-        // user's choices carry over to the operation they're switching to.
-        captureSelection(activePool);
-
         var opLabels = { Share: 'share', Clone: 'clone', Reimport: 'reimport' };
         $('#bt-main-title').text('Select data to ' + (opLabels[op] || 'transfer'));
 
-        // Update filter placeholder
         $('#bt-data-search').attr('placeholder',
             op === 'Reimport' ? 'Filter sessions by name or datatype...' : 'Filter subjects and sessions by name or datatype...');
 
-        // Show/hide data pools (Clone uses the 'copy' pool internally; data-pool values are unchanged in Phase 1)
-        var showPool = (op === 'Clone') ? 'copy' : 'share';
-        var hidePool = (op === 'Clone') ? 'share' : 'copy';
-        $('#bt-data-body tr[data-pool="' + hidePool + '"]').hide();
-        showPoolRows(showPool);
+        // Single row set persists across operations, so selection carries naturally.
+        // Reset any prior op's hide/disable, then apply the new op's eligibility.
+        enableAllRows();
+        applyOperationEligibility(op);
 
-        // For Reimport, disable subject-level checkboxes and non-session assessors
-        if (op === 'Reimport') {
-            disableImportSubjects();
-        } else {
-            enableAllRows();
+        // Leaving Reimport: subjects follow their session selections (a subject with no
+        // selected sessions becomes deselected, rather than staying stuck at its old value).
+        if (lastOp === 'Reimport' && op !== 'Reimport') {
+            reconcileSubjectsFromSessions();
         }
+        lastOp = op;
 
-        // Restore the remembered selection onto the now-visible pool (matched by data-id),
-        // then record it as the active pool for the next switch.
-        applySelection(showPool);
-        activePool = showPool;
-
-        // Reapply the current filter to the newly visible pool
-        var currentFilter = $('#bt-data-search').val() || '';
-        filterData(currentFilter);
+        // Restore visibility (expand state) / reapply the current filter. filterData() also
+        // refreshes the counts + summary, so no separate count call is needed here.
+        filterData($('#bt-data-search').val() || '');
 
         updateAnonBanner();
         updateOperationDetail();
-        updateSelectionCount();
-        updateSummary();
     }
 
-    function isSessionData(xsiType) {
-        return xsiType && /SessionData$/i.test(xsiType);
-    }
-
-    function disableImportSubjects() {
-        $('#bt-data-body tr[data-pool="share"]').each(function() {
-            var xsi = $(this).attr('data-xsi') || '';
-            var type = $(this).attr('data-type') || '';
-
-            // Hide subjects entirely in Reimport mode and exclude them from submission.
-            // Their selection state stays in selectionByItem and is restored on the way out.
-            if (type === 'subject') {
+    // Hide+disable rows not eligible for the chosen operation (excluded from counts/submission
+    // and from view). Eligibility is a per-row data attribute, uniform across operations:
+    //   Share    → data-shareable    (per project's sharing feature)
+    //   Clone    → data-cloneable    (per project's copying feature)
+    //   Reimport → data-reimportable (per item type — only image sessions; never feature-gated)
+    // A non-reimportable subject is hidden, but its (reimportable) sessions still render:
+    // showRows() treats a bt-import-hidden parent as logically visible.
+    function applyOperationEligibility(op) {
+        var attr = (op === 'Clone') ? 'data-cloneable'
+                 : (op === 'Reimport') ? 'data-reimportable'
+                 : 'data-shareable';
+        $('#bt-data-body tr').each(function() {
+            if (this.getAttribute(attr) !== 'true') {
                 $(this).addClass('bt-import-disabled bt-import-hidden');
-                return;
-            }
-
-            // Non-SessionData assessors can't be reimported: disable and clear them.
-            // SessionData assessors stay enabled; applySelection() sets their checked state
-            // from the per-item store, so the user's session selections are retained.
-            if (type === 'assessor') {
-                if (isSessionData(xsi)) {
-                    $(this).removeClass('bt-import-disabled');
-                } else {
-                    $(this).addClass('bt-import-disabled');
-                    $(this).find('.bt-cb').removeClass('checked').html('');
-                    $(this).removeClass('selected');
-                }
             }
         });
     }
 
+    // Re-enable everything an operation disabled/hid, and re-sync each checkmark to its
+    // (preserved) .selected state. Selection itself is untouched.
     function enableAllRows() {
-        // Re-enable rows that Reimport mode disabled/hid. Selection is restored separately
-        // by applySelection() from the per-item store, so we don't force-select here.
         $('#bt-data-body tr.bt-import-disabled').each(function() {
             $(this).removeClass('bt-import-disabled bt-import-hidden');
+            syncCheckbox($(this));
         });
+        $('#bt-data-body tr.bt-import-hidden').removeClass('bt-import-hidden');
     }
 
-    // ── Selection persistence across operation switches ──
-    // The 'share' pool (Share/Reimport) and 'copy' pool (Clone) are separate row sets that
-    // represent the same underlying items, matched by data-id. To keep the user's selection
-    // stable when they switch operations, capture the visible pool's selection into a
-    // per-item store before switching and re-apply it to whichever pool becomes visible.
-    // bt-import-disabled rows (Reimport's hidden subjects / non-session assessors) are
-    // skipped: their submittable state is fixed by the operation, while their underlying
-    // selection stays in the store and is restored when leaving Reimport.
-
-    function captureSelection(pool) {
-        $('#bt-data-body tr[data-pool="' + pool + '"]').each(function() {
-            var id = $(this).data('id');
-            if (id == null) return;
-            if ($(this).hasClass('bt-import-disabled')) {
-                // Reimport hides/disables subjects. Derive a subject's stored selection from
-                // its sessions so that leaving Reimport reflects the session choices — a
-                // subject with no selected sessions becomes deselected rather than staying
-                // stuck "selected" at its pre-Reimport value.
-                if ($(this).data('type') === 'subject') {
-                    selectionByItem[id] = getAllDescendants(id, pool).not('.bt-import-disabled').filter('.selected').length > 0;
-                }
-                // Non-session assessors keep their previously stored selection.
-                return;
-            }
-            selectionByItem[id] = $(this).hasClass('selected');
-        });
+    // Does any selected, still-eligible descendant exist under parentId? Raw-DOM walk via the
+    // index, short-circuiting on the first hit — no jQuery set building.
+    function subtreeHasSelected(parentId) {
+        var kids = childrenByParent[parentId];
+        if (!kids) return false;
+        for (var i = 0; i < kids.length; i++) {
+            var el = kids[i];
+            if (!el.classList.contains('bt-import-disabled') && el.classList.contains('selected')) return true;
+            var cid = el.getAttribute('data-id');
+            if (cid && subtreeHasSelected(cid)) return true;
+        }
+        return false;
     }
 
-    function applySelection(pool) {
-        $('#bt-data-body tr[data-pool="' + pool + '"]').each(function() {
-            if ($(this).hasClass('bt-import-disabled')) return;
-            var id = $(this).data('id');
-            if (id == null) return;
-            // Items the user hasn't touched default to selected.
-            var selected = selectionByItem.hasOwnProperty(id) ? selectionByItem[id] : true;
-            if (selected) {
-                $(this).addClass('selected');
-                $(this).find('.bt-cb').addClass('checked').html('&#10003;');
-            } else {
-                $(this).removeClass('selected');
-                $(this).find('.bt-cb').removeClass('checked').html('');
-            }
-        });
+    // A subject is selected iff it has at least one selected, eligible descendant. Used when
+    // leaving Reimport so the (hidden) subjects reflect the session choices made there.
+    // Raw DOM + short-circuit + write only on an actual flip, so the common (unchanged) case
+    // costs nothing — this is what removes the Reimport→Share/Clone lag at ~1,000 subjects.
+    function reconcileSubjectsFromSessions() {
+        var subs = document.querySelectorAll('#bt-data-body tr[data-type="subject"]');
+        for (var i = 0; i < subs.length; i++) {
+            var el = subs[i];
+            var id = el.getAttribute('data-id');
+            if (!id) continue;
+            var want = subtreeHasSelected(id);
+            if (want === el.classList.contains('selected')) continue;   // unchanged → no DOM write
+            el.classList.toggle('selected', want);
+            syncCheckbox($(el));
+        }
+    }
+
+    function syncCheckbox($row) {
+        var $cb = $row.find('.bt-cb');
+        if (!$cb.length) return;
+        var want = $row.hasClass('selected');
+        if (want === $cb.hasClass('checked')) return;   // checkmark already correct — skip the DOM write
+        if (want) $cb.addClass('checked').html('&#10003;');
+        else $cb.removeClass('checked').html('');
     }
 
     // ── Project Selection ──
@@ -355,9 +361,12 @@ var XNAT = getObject(XNAT || {});
             toggleSelectAll();
         });
 
-        // Filter
+        // Filter — debounced so fast typing doesn't run the filter on every keystroke.
+        var filterTimer = null;
         $(document).on('input', '#bt-data-search', function() {
-            filterData($(this).val());
+            var val = this.value;
+            clearTimeout(filterTimer);
+            filterTimer = setTimeout(function() { filterData(val); }, 150);
         });
     }
 
@@ -365,92 +374,72 @@ var XNAT = getObject(XNAT || {});
         var $cb = $(cb);
         var $row = $cb.closest('tr');
         var isChecked = $cb.hasClass('checked');
-        var rowId = $row.data('id');
-        var pool = getVisiblePool();
+        var rowId = $row.attr('data-id');
 
         if (isChecked) {
             $cb.removeClass('checked').html('');
             $row.removeClass('selected');
-            // Deselect all children
-            if (rowId) {
-                deselectChildren(rowId, pool);
-            }
+            if (rowId) deselectChildren(rowId);
         } else {
             $cb.addClass('checked').html('&#10003;');
             $row.addClass('selected');
-            // Select all eligible children
-            if (rowId) {
-                selectChildren(rowId, pool);
-            }
-            // Select parent chain
+            if (rowId) selectChildren(rowId);
             selectParentChain($row);
         }
-        updateSelectionCount();
         updateSummary();
     }
 
     // Toggle children of a subject in Reimport mode (subject itself stays disabled)
     function toggleSubjectChildren($row) {
-        var rowId = $row.data('id');
-        var pool = getVisiblePool();
+        var rowId = $row.attr('data-id');
         if (!rowId) return;
 
-        // Check if children are currently selected
-        var $eligibleChildren = getAllDescendants(rowId, pool).not('.bt-import-disabled');
+        var $eligibleChildren = getAllDescendants(rowId).not('.bt-import-disabled');
         var allSelected = $eligibleChildren.length > 0 &&
             $eligibleChildren.filter('.selected').length === $eligibleChildren.length;
 
-        if (allSelected) {
-            deselectChildren(rowId, pool);
-        } else {
-            selectChildren(rowId, pool);
-        }
-        updateSelectionCount();
+        if (allSelected) deselectChildren(rowId);
+        else selectChildren(rowId);
+
         updateSummary();
     }
 
-    function getAllDescendants(parentId, pool) {
+    function getAllDescendants(parentId) {
         var $result = $();
-        var $children = $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]');
-        $children.each(function() {
-            $result = $result.add($(this));
-            var childId = $(this).data('id');
+        childrenOf(parentId).each(function() {
+            $result = $result.add(this);
+            var childId = this.getAttribute('data-id');
             if (childId) {
-                $result = $result.add(getAllDescendants(childId, pool));
+                $result = $result.add(getAllDescendants(childId));
             }
         });
         return $result;
     }
 
-    function deselectChildren(parentId, pool) {
-        $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]').each(function() {
-            if ($(this).hasClass('bt-import-disabled')) return;
+    function deselectChildren(parentId) {
+        childrenOf(parentId).each(function() {
+            if (this.classList.contains('bt-import-disabled')) return;
             $(this).removeClass('selected');
             $(this).find('.bt-cb').removeClass('checked').html('');
-            var childId = $(this).data('id');
-            if (childId) {
-                deselectChildren(childId, pool);
-            }
+            var childId = this.getAttribute('data-id');
+            if (childId) deselectChildren(childId);
         });
     }
 
-    function selectChildren(parentId, pool) {
-        $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]').each(function() {
-            if ($(this).hasClass('bt-import-disabled')) return;
+    function selectChildren(parentId) {
+        childrenOf(parentId).each(function() {
+            if (this.classList.contains('bt-import-disabled')) return;
             $(this).addClass('selected');
             $(this).find('.bt-cb').addClass('checked').html('&#10003;');
-            var childId = $(this).data('id');
-            if (childId) {
-                selectChildren(childId, pool);
-            }
+            var childId = this.getAttribute('data-id');
+            if (childId) selectChildren(childId);
         });
     }
 
     function selectParentChain($row) {
-        var parentId = $row.data('parent');
-        var pool = $row.data('pool');
+        var parentId = $row.attr('data-parent');
         if (!parentId) return;
-        var $parent = $('#bt-data-body tr[data-id="' + parentId + '"][data-pool="' + pool + '"]');
+        var $parent = rowFor(parentId);
         if ($parent.length && !$parent.hasClass('bt-import-disabled')) {
             $parent.addClass('selected');
             $parent.find('.bt-cb').first().addClass('checked').html('&#10003;');
@@ -458,91 +447,91 @@ var XNAT = getObject(XNAT || {});
         }
     }
 
-    // Show rows for a pool respecting expand/collapse state
-    function showPoolRows(pool) {
-        // Show top-level rows (no parent), then recursively show children of expanded parents
-        $('#bt-data-body tr[data-pool="' + pool + '"]').each(function() {
-            var parentId = $(this).data('parent');
+    // Show rows respecting expand/collapse state — WITHOUT reading layout. The previous version
+    // called jQuery :visible on each parent, which forces a reflow; interleaved with the
+    // show/hide writes that is layout thrashing (O(n) reflows), and it's what made clearing the
+    // filter lag badly (clearing transitions ~all rows from display:none → shown). Here we
+    // compute each row's visibility top-down from the index + expand classes into a map and
+    // write `display` in a single pass, so the browser reflows once.
+    // Rows render in parent-before-child document order, so a parent's visibility is already
+    // known when we reach its children. (.bt-import-hidden still hides reimport-hidden /
+    // ineligible rows via CSS regardless of the inline display we set.)
+    function showRows() {
+        var shown = {};   // data-id -> did we set this row to display (independent of CSS !important hides)
+        var rows = document.querySelectorAll('#bt-data-body tr');
+        for (var i = 0; i < rows.length; i++) {
+            var el = rows[i];
+            var parentId = el.getAttribute('data-parent');
+            var show;
             if (!parentId) {
-                // Top-level row: always show (CSS class .bt-import-hidden keeps subjects hidden in Reimport mode)
-                $(this).show();
+                show = true;
             } else {
-                // Child row: only show if parent is visible and expanded.
-                // Treat parents hidden by Reimport mode as logically visible so their session children still render.
-                var $parent = $('#bt-data-body tr[data-id="' + parentId + '"][data-pool="' + pool + '"]');
-                var parentIsVisible = $parent.length && ($parent.is(':visible') || $parent.hasClass('bt-import-hidden'));
-                if (parentIsVisible) {
-                    var expandBtn = $parent.find('.bt-expand');
-                    if (expandBtn.length && expandBtn.hasClass('expanded')) {
-                        $(this).show();
-                    } else {
-                        $(this).hide();
-                    }
-                } else {
-                    $(this).hide();
-                }
+                var parentEl = rowById[parentId];
+                // Treat a bt-import-hidden parent (e.g. a Reimport-hidden subject) as logically
+                // visible so its sessions still render.
+                var parentVisible = !!parentEl && (shown[parentId] || parentEl.classList.contains('bt-import-hidden'));
+                var expandBtn = parentEl ? parentEl.querySelector('.bt-expand') : null;
+                var parentExpanded = !!expandBtn && expandBtn.classList.contains('expanded');
+                show = parentVisible && parentExpanded;
             }
-        });
+            el.style.display = show ? '' : 'none';
+            var id = el.getAttribute('data-id');
+            if (id) shown[id] = show;
+        }
     }
 
     function toggleChildren(btn) {
         var $btn = $(btn);
         var $row = $btn.closest('tr');
-        var parentId = $row.data('id');
-        var pool = $row.data('pool');
+        var parentId = $row.attr('data-id');
         var isExpanded = $btn.hasClass('expanded');
         $btn.toggleClass('expanded');
 
-        var $children = $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]');
         if (isExpanded) {
-            // Collapse: hide children and all descendants
-            hideDescendants(parentId, pool);
+            hideDescendants(parentId);
         } else {
-            // Expand: show direct children, respect their own expand state
-            $children.each(function() {
+            childrenOf(parentId).each(function() {
                 $(this).show();
-                var childId = $(this).data('id');
+                var childId = this.getAttribute('data-id');
                 var childBtn = $(this).find('.bt-expand');
                 if (childBtn.length && childBtn.hasClass('expanded') && childId) {
-                    showDescendants(childId, pool);
+                    showDescendants(childId);
                 }
             });
         }
     }
 
-    function hideDescendants(parentId, pool) {
-        $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]').each(function() {
+    function hideDescendants(parentId) {
+        childrenOf(parentId).each(function() {
             $(this).hide();
-            var childId = $(this).data('id');
-            if (childId) hideDescendants(childId, pool);
+            var childId = this.getAttribute('data-id');
+            if (childId) hideDescendants(childId);
         });
     }
 
-    function showDescendants(parentId, pool) {
-        $('#bt-data-body tr[data-parent="' + parentId + '"][data-pool="' + pool + '"]').each(function() {
+    function showDescendants(parentId) {
+        childrenOf(parentId).each(function() {
             $(this).show();
-            var childId = $(this).data('id');
+            var childId = this.getAttribute('data-id');
             var childBtn = $(this).find('.bt-expand');
             if (childBtn.length && childBtn.hasClass('expanded') && childId) {
-                showDescendants(childId, pool);
+                showDescendants(childId);
             }
         });
     }
 
     function toggleSelectAll() {
-        var pool = getVisiblePool();
-        var $rows = getVisibleRows(pool);
+        var $rows = getVisibleRows();
         var allChecked = $rows.length > 0 && $rows.filter('.selected').length === $rows.not('.bt-import-disabled').length;
 
         $rows.each(function() {
-            var $cb = $(this).find('.bt-cb');
-            if ($(this).hasClass('bt-import-disabled')) return;
+            if (this.classList.contains('bt-import-disabled')) return;
             if (allChecked) {
-                $cb.removeClass('checked').html('');
                 $(this).removeClass('selected');
+                $(this).find('.bt-cb').removeClass('checked').html('');
             } else {
-                $cb.addClass('checked').html('&#10003;');
                 $(this).addClass('selected');
+                $(this).find('.bt-cb').addClass('checked').html('&#10003;');
             }
         });
 
@@ -552,99 +541,109 @@ var XNAT = getObject(XNAT || {});
         } else {
             $headerCb.addClass('checked').html('&#10003;');
         }
-        updateSelectionCount();
         updateSummary();
     }
 
+    function getVisibleRows() {
+        return $('#bt-data-body tr').filter(':visible');
+    }
+
     function filterData(query) {
-        var q = query.toLowerCase();
-        var pool = getVisiblePool();
-        var $rows = $('#bt-data-body tr[data-pool="' + pool + '"]');
+        var q = (query || '').toLowerCase();
 
         // The filter is a VIEW filter only: it shows/hides rows but never changes which
-        // rows are selected. This preserves the user's manual selections across filtering
-        // and clearing. (Previously, clearing the filter re-selected every row and
-        // filtering deselected every non-match, silently discarding the user's choices.)
+        // rows are selected, so the user's manual selections survive filtering and clearing.
         if (q.length === 0) {
-            // No filter: restore full tree visibility (respecting expand/collapse state).
-            showPoolRows(pool);
-            updateSelectionCount();
+            showRows();
             updateSummary();
             return;
         }
 
-        // First pass: determine which rows match the query text
-        var matchingIds = {};
-        $rows.each(function() {
-            var text = $(this).text().toLowerCase();
-            if (text.includes(q)) {
-                matchingIds[$(this).data('pool') + ':' + $(this).data('id')] = true;
-            }
-        });
+        // Raw DOM, matching against text cached at index time, one batched display pass — so
+        // each keystroke stays cheap even at tens of thousands of rows.
+        var rows = document.querySelectorAll('#bt-data-body tr');
+        var i, el, parentId, parentEl;
 
-        // Second pass: include ancestors of matching rows so the tree context is visible
-        $rows.each(function() {
-            var key = $(this).data('pool') + ':' + $(this).data('id');
-            if (matchingIds[key]) {
-                var parentId = $(this).data('parent');
-                while (parentId) {
-                    var parentKey = pool + ':' + parentId;
-                    matchingIds[parentKey] = true;
-                    var $parent = $('#bt-data-body tr[data-id="' + parentId + '"][data-pool="' + pool + '"]');
-                    parentId = $parent.data('parent');
+        // Pass 1: rows whose cached text matches the query.
+        var matching = {};
+        for (i = 0; i < rows.length; i++) {
+            el = rows[i];
+            if ((el._btFilterText || '').indexOf(q) !== -1) {
+                matching[el.getAttribute('data-id')] = true;
+            }
+        }
+
+        // Pass 2: include ancestors of matches so the tree context shows (index walk; stop as
+        // soon as an already-marked ancestor is reached).
+        for (i = 0; i < rows.length; i++) {
+            el = rows[i];
+            if (matching[el.getAttribute('data-id')]) {
+                parentId = el.getAttribute('data-parent');
+                while (parentId && !matching[parentId]) {
+                    matching[parentId] = true;
+                    parentEl = rowById[parentId];
+                    parentId = parentEl ? parentEl.getAttribute('data-parent') : null;
                 }
             }
-        });
+        }
 
-        // Third pass: show matching rows (and their ancestors), hide the rest.
-        // Selection state is intentionally left untouched.
-        $rows.each(function() {
-            var key = $(this).data('pool') + ':' + $(this).data('id');
-            if (matchingIds[key]) {
-                $(this).show();
-            } else {
-                $(this).hide();
-            }
-        });
+        // Pass 3: show matches (and ancestors), hide the rest — raw display writes (one reflow).
+        // Selection state is left untouched.
+        for (i = 0; i < rows.length; i++) {
+            el = rows[i];
+            el.style.display = matching[el.getAttribute('data-id')] ? '' : 'none';
+        }
 
-        updateSelectionCount();
         updateSummary();
     }
 
-    function getVisiblePool() {
-        return selectedOp === 'Clone' ? 'copy' : 'share';
-    }
+    // ── Summary + selection counts ──
+    // Single O(n) pass drives both the selection bar and the sidebar summary (previously two
+    // or three separate full scans ran on every click).
 
-    function getVisibleRows(pool) {
-        return $('#bt-data-body tr[data-pool="' + pool + '"]').filter(':visible');
-    }
+    function updateSummary() {
+        $('#bt-sum-op').text(selectedOp);
+        $('#bt-sum-dest').text(selectedProject || '—');
 
-    function updateSelectionCount() {
-        var pool = getVisiblePool();
-        var count = $('#bt-data-body tr[data-pool="' + pool + '"].selected').not('.bt-import-disabled').length;
-        $('#bt-sel-count').text(count);
-
-        var $link = $('.bt-select-all-link');
-        var total = $('#bt-data-body tr[data-pool="' + pool + '"]').not('.bt-import-disabled').length;
-        $link.text(count === total ? 'Deselect all' : 'Select all');
-    }
-
-    // ── Summary ──
-
-    function getSelectionCounts() {
-        var pool = getVisiblePool();
-        var $rows = $('#bt-data-body tr[data-pool="' + pool + '"].selected').not('.bt-import-disabled');
-        var subjects = 0, sessions = 0, assessors = 0;
-        $rows.each(function() {
-            var type = $(this).attr('data-type') || '';
-            var xsi = $(this).attr('data-xsi') || '';
+        var subjects = 0, sessions = 0, assessors = 0, selectedCount = 0, eligibleCount = 0;
+        var rows = document.querySelectorAll('#bt-data-body tr');
+        for (var i = 0; i < rows.length; i++) {
+            var el = rows[i];
+            if (el.classList.contains('bt-import-disabled')) continue;
+            eligibleCount++;
+            if (!el.classList.contains('selected')) continue;
+            selectedCount++;
+            var type = el.getAttribute('data-type') || '';
             if (type === 'subject') {
                 subjects++;
             } else if (type === 'assessor') {
-                if (isSessionData(xsi)) sessions++;
+                if (el.getAttribute('data-reimportable') === 'true') sessions++;
                 else assessors++;
             }
-        });
+        }
+
+        $('#bt-sel-count').text(selectedCount);
+        $('.bt-select-all-link').text(eligibleCount > 0 && selectedCount === eligibleCount ? 'Deselect all' : 'Select all');
+        $('#bt-sum-subjects').text(subjects);
+        $('#bt-sum-sessions').text(sessions);
+        $('#bt-sum-assessors').text(assessors);
+        updateSubmitButton();
+    }
+
+    // Used only by the submit confirmation (infrequent) for its "N subjects, M sessions" text.
+    function getSelectionCounts() {
+        var subjects = 0, sessions = 0, assessors = 0;
+        var rows = document.querySelectorAll('#bt-data-body tr');
+        for (var i = 0; i < rows.length; i++) {
+            var el = rows[i];
+            if (el.classList.contains('bt-import-disabled') || !el.classList.contains('selected')) continue;
+            var type = el.getAttribute('data-type') || '';
+            if (type === 'subject') subjects++;
+            else if (type === 'assessor') {
+                if (el.getAttribute('data-reimportable') === 'true') sessions++;
+                else assessors++;
+            }
+        }
         return { subjects: subjects, sessions: sessions, assessors: assessors };
     }
 
@@ -664,16 +663,6 @@ var XNAT = getObject(XNAT || {});
         $('#bt-submit-btn').text(label);
     }
 
-    function updateSummary() {
-        $('#bt-sum-op').text(selectedOp);
-        $('#bt-sum-dest').text(selectedProject || '\u2014');
-        var counts = getSelectionCounts();
-        $('#bt-sum-subjects').text(counts.subjects);
-        $('#bt-sum-sessions').text(counts.sessions);
-        $('#bt-sum-assessors').text(counts.assessors);
-        updateSubmitButton();
-    }
-
     // ── Submit ──
 
     XNAT.plugin.batchtransfer.submitTransfer = function() {
@@ -682,8 +671,7 @@ var XNAT = getObject(XNAT || {});
             return false;
         }
 
-        var pool = getVisiblePool();
-        var $selected = $('#bt-data-body tr[data-pool="' + pool + '"].selected').not('.bt-import-disabled');
+        var $selected = $('#bt-data-body tr.selected').not('.bt-import-disabled');
         if ($selected.length === 0) {
             xmodal.message('Batch Transfer', 'Please select at least one item');
             return false;
@@ -711,8 +699,7 @@ var XNAT = getObject(XNAT || {});
         xModalConfirm({
             content: confirmationMsg,
             okAction: function() {
-                // Guard against a second submission while one is already in flight
-                // (the submit button isn't otherwise blocked once the dialog confirms).
+                // Guard against a second submission while one is already in flight.
                 if (submitInFlight) return;
                 submitInFlight = true;
                 $('#bt-submit-btn').prop('disabled', true);

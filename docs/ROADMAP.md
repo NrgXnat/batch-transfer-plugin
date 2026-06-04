@@ -39,6 +39,7 @@ The Batch Transfer Plugin enables bulk data operations across XNAT projects. Use
 ## Planned
 
 ### Operations & Workflow
+- Implement UX cohort building filters for large (>10k+) datasets where the select/deselect item workflow would be tedious 
 - Launch Advanced Search from destination project Action Menu
   - Include all XNAT experiment data types
 - Computed size estimate in the operation-detail panel — replace the static duplication warning with a real byte count for the current selection (e.g. "≈ 4.2 GB will be duplicated to *DestProject*"). Requires either a new XAPI endpoint that walks the archive, or per-row `data-size` attributes emitted by `XDATScreen_batch_transfer.java`, plus rollup logic in `batchTransfer.js`.
