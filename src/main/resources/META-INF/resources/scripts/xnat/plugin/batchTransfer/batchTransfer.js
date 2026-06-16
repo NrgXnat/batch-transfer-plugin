@@ -108,29 +108,20 @@ var XNAT = getObject(XNAT || {});
             }
             renderProjects(document.getElementById('bt-project-select'), projects);
             $('#bt-project-select').prop('disabled', false);
-            fetchAnonForProjects(projects);
         });
         window.projectLoader.init();
     }
 
-    // Cache each project's anonymization state up-front so the operation-detail
-    // panel banner can render synchronously when the user picks a destination.
-    function fetchAnonForProjects(projects) {
-        projects.forEach(function(p) {
-            XNAT.plugin.batchtransfer.checkProjectAnon(p.id, function(anonEnabled) {
-                projectAnonCache[p.id] = anonEnabled;
-            });
-        });
-    }
-
     // ── Anonymization Check ──
 
-    XNAT.plugin.batchtransfer.checkProjectAnon = function(projectId, callback) {
+    XNAT.plugin.batchtransfer.checkProjectAnon = function(projectId, callback, forceRefresh) {
         if (!projectId) {
             callback(null, 'No project selected');
             return;
         }
-        if (projectAnonCache.hasOwnProperty(projectId)) {
+        // forceRefresh re-queries the server even on a cache hit, so the destination's anon
+        // status is current at selection time (it may have changed since the page loaded).
+        if (!forceRefresh && projectAnonCache.hasOwnProperty(projectId)) {
             callback(projectAnonCache[projectId], null);
             return;
         }
@@ -248,6 +239,11 @@ var XNAT = getObject(XNAT || {});
     // A non-reimportable subject is hidden, but its (reimportable) sessions still render:
     // showRows() treats a bt-import-hidden parent as logically visible.
     function applyOperationEligibility(op) {
+        // In Reimport, a session's only children are image assessors, which are not re-importable.
+        // Their expand arrows would open to nothing. Flag the body so CSS suppresses the arrows here.
+        var body = document.getElementById('bt-data-body');
+        if (body) body.classList.toggle('bt-reimport-mode', op === 'Reimport');
+
         var attr = (op === 'Clone') ? 'data-cloneable'
                  : (op === 'Reimport') ? 'data-reimportable'
                  : 'data-shareable';
@@ -313,14 +309,13 @@ var XNAT = getObject(XNAT || {});
     function bindProjectSelect() {
         $(document).on('change', '#bt-project-select', function() {
             selectedProject = $(this).val() || null;
-            if (selectedProject && projectAnonCache.hasOwnProperty(selectedProject)) {
-                selectedAnon = projectAnonCache[selectedProject];
-                updateAnonBanner();
-            } else if (selectedProject) {
+            if (selectedProject) {
+                // Re-query the destination's anon status on every selection so the banner is
+                // fresh, rather than reflecting whatever was cached when the page loaded.
                 XNAT.plugin.batchtransfer.checkProjectAnon(selectedProject, function(anonEnabled) {
                     selectedAnon = anonEnabled;
                     updateAnonBanner();
-                });
+                }, true);
             } else {
                 selectedAnon = null;
                 updateAnonBanner();
@@ -603,7 +598,7 @@ var XNAT = getObject(XNAT || {});
 
     function updateSummary() {
         $('#bt-sum-op').text(selectedOp);
-        $('#bt-sum-dest').text(selectedProject || '—');
+        $('#bt-sum-dest').text(selectedProject || '-');
 
         var subjects = 0, sessions = 0, assessors = 0, selectedCount = 0, eligibleCount = 0;
         var rows = document.querySelectorAll('#bt-data-body tr');
