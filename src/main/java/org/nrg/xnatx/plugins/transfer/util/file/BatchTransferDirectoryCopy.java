@@ -76,7 +76,7 @@ public class BatchTransferDirectoryCopy extends SimpleFileVisitor<Path> {
                 }
 
                 String destFileName = FileUtil.getDestFileName(file, sourcePath, destinationPath);
-                if (!CatalogUtils.isCatalogFile(file.toFile()) && useHardLink) {
+                if (!isCatalogFile(file) && useHardLink) {
                     log.debug("Creating a link for {} to {}", file, destFileName);
                     FileUtil.createLinkFile(file.toString(), destFileName, recreateIfExisted);
                 } else {
@@ -91,6 +91,13 @@ public class BatchTransferDirectoryCopy extends SimpleFileVisitor<Path> {
         }
 
         return FileVisitResult.CONTINUE;
+    }
+
+    private static boolean isCatalogFile(Path file) {
+        final String name = file.getFileName().toString();
+        if (name.endsWith("_catalog.xml")) return true;     // standard catalogs
+        if (!name.endsWith(".xml"))        return false;     // DICOM/data: never read them
+        return CatalogUtils.isCatalogFile(file.toFile());    // rare odd-named .xml: still sniff
     }
 
     @Override
