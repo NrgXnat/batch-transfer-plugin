@@ -9,6 +9,7 @@ import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.DicomObjectIdentifier;
 import org.nrg.xnat.helpers.merge.AnonUtils;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -81,5 +82,10 @@ public class MockConfig {
     @Bean
     public XnatSubjectdata subject() {
         return mock(XnatSubjectdata.class);
+    }
+
+    @Bean
+    public BatchTransferMonitor batchTransferMonitor() {
+        return mock(BatchTransferMonitor.class);
     }
 }

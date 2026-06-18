@@ -1,0 +1,87 @@
+####
+#### Batch Transfer — Site-wide JMS Queue Settings
+#### Adds a "Batch Transfer" group to Site Administration with a "JMS Queue" tab. The form is bound
+#### to BatchTransferQueueSettingsApi (/xapi/batch_transfer/jms_queues), which reads/writes
+#### BatchTransferQueuePrefsBean. Field names match the preference keys.
+####
+
+batchTransferQueueSettingsForm:
+    label: "Site-wide JMS Queue Settings"
+    kind: panel.form
+    name: batchTransferQueueSettings
+    id: batch-transfer-queue-settings-form
+    contentType: json
+    method: POST
+    action: "/xapi/batch_transfer/jms_queues"
+    contents:
+        restartNote:
+            tag: div.warning
+            contents:
+                "Changing JMS concurrency settings requires a Tomcat restart to take effect."
+        queueDescription:
+            tag: div.message
+            contents:
+                "Consumer concurrency for the Batch Transfer JMS queues: the Reimport queue parallelizes per image session; the Clone queue parallelizes per subject (one consumer handles a whole subject). Each reimport also feeds XNAT's prearchive rebuild queue (tuned separately under Site Administration), so keep these values modest. Set a queue's min and max both to 1 to disable its parallelism."
+        reimportQueueMin:
+            kind: panel.input.text
+            name: reimportConcurrencyMin
+            label: Reimport queue min concurrency
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Set min concurrency for Reimport queue consumers
+            description: >
+                Minimum number of concurrent consumers for the Batch Transfer Reimport queue.
+                Default is 4, must be greater than 0.
+        reimportQueueMax:
+            kind: panel.input.text
+            name: reimportConcurrencyMax
+            label: Reimport queue max concurrency
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Set max concurrency for Reimport queue consumers
+            description: >
+                Maximum number of concurrent consumers for the Batch Transfer Reimport queue.
+                Default is 8, must be greater than or equal to the minimum concurrency.
+        cloneQueueMin:
+            kind: panel.input.text
+            name: cloneConcurrencyMin
+            label: Clone queue min concurrency
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Set min concurrency for Clone queue consumers
+            description: >
+                Minimum number of concurrent consumers for the Batch Transfer Clone queue (each consumer
+                handles all of one subject's items). Default is 1, must be greater than 0.
+        cloneQueueMax:
+            kind: panel.input.text
+            name: cloneConcurrencyMax
+            label: Clone queue max concurrency
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Set max concurrency for Clone queue consumers
+            description: >
+                Maximum number of concurrent consumers for the Batch Transfer Clone queue.
+                Default is 2, must be greater than or equal to the minimum concurrency.
+
+
+#################################################
+####  Root Site Admin Spawner Config Object  ####
+#################################################
+
+siteSettings:
+    kind: tabs
+    name: batchTransferAdminPage
+    label: Administer Batch Transfer
+    meta:
+        tabGroups:
+            batchTransferTabGroup: Batch Transfer
+    contains: tabs
+    tabs:
+        batchTransferQueueTab:
+            kind: tab
+            name: batchTransferQueueTab
+            label: JMS Queue
+            group: batchTransferTabGroup
+            active: true
+            contents:
+                ${batchTransferQueueSettingsForm}

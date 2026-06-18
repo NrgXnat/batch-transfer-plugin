@@ -23,7 +23,9 @@
       <fileNamePattern>${xnat.home}/logs/batch-transfer.log.%d{yyyy-MM-dd}</fileNamePattern>
     </rollingPolicy>
   </appender>
-  <logger name="org.nrg.xnatx.plugins.transfer" additivity="false" level="ERROR">
+  <!-- INFO surfaces batch timing instrumentation (and the importer heartbeat) in batch-transfer.log.
+       Revert to "ERROR" to silence them; the timing instrumentation logs at INFO. -->
+  <logger name="org.nrg.xnatx.plugins.transfer" additivity="false" level="INFO">
     <appender-ref ref="batch_transfer"/>
   </logger>
 </configuration>
