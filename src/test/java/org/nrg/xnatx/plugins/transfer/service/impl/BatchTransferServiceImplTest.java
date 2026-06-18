@@ -6,6 +6,7 @@ import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
+import org.nrg.xnatx.plugins.transfer.util.FileUtil;
 import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
 import org.junit.Before;
 import org.junit.Rule;
@@ -23,8 +24,11 @@ import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xdat.om.base.BaseXnatSubjectdata;
 import org.nrg.xdat.security.helpers.Features;
 import org.nrg.xdat.security.helpers.Permissions;
+import org.nrg.xft.event.EventUtils;
 import org.nrg.xft.security.UserI;
+import org.nrg.xft.utils.SaveItemHelper;
 import org.nrg.xnat.helpers.prearchive.PrearcSession;
+import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnat.helpers.prearchive.PrearcUtils;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.FileWriterWrapperI;
@@ -377,6 +381,44 @@ public class BatchTransferServiceImplTest {
 
             final Exception thrown = processItemCatching(reimport(EXP_ID));
             assertNotNull("expected processItem to propagate a runImporter failure", thrown);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Clone — saveItemAndCopyFiles after the destination-workflow collapse
+    // -----------------------------------------------------------------
+
+    /**
+     * File-linking now runs without its own "Files Cloned" workflow (the destination workflow was
+     * collapsed into the source-item workflow created by the copy* methods). A link failure must still
+     * roll the saved item back (deleteItemWithoutSecurity) and propagate, via saveItemAndCopyFiles's
+     * own catch — and no workflow is created inside this method.
+     */
+    @Test
+    public void saveItemAndCopyFiles_linkFailure_rollsBackAndCreatesNoWorkflow() throws Exception {
+        final ArchivableItem newItem = Mockito.mock(ArchivableItem.class);
+        final String source = tmp.newFolder("clone-src").getAbsolutePath();
+        final String dest   = tmp.getRoot().getAbsolutePath() + "/clone-dst/leaf";
+
+        try (MockedStatic<EventUtils>     events = mockStatic(EventUtils.class);
+             MockedStatic<SaveItemHelper> save   = mockStatic(SaveItemHelper.class);
+             MockedStatic<FileUtil>       files  = mockStatic(FileUtil.class);
+             MockedStatic<XnatUtils>      utils  = mockStatic(XnatUtils.class)) {
+
+            files.when(() -> FileUtil.linkFiles(anyString(), anyString()))
+                    .thenThrow(new RuntimeException("link boom"));
+
+            Exception thrown = null;
+            try {
+                service.saveItemAndCopyFiles(user, newItem, newItem, source, dest);
+            } catch (Exception e) {
+                thrown = e;
+            }
+
+            assertNotNull("expected a link failure to propagate out of saveItemAndCopyFiles", thrown);
+            utils.verify(() -> XnatUtils.deleteItemWithoutSecurity(newItem));
+            utils.verify(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)), never());
         }
     }
 }

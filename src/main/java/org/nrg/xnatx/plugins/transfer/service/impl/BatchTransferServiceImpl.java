@@ -371,7 +371,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         final StreamingZipFileWriter wrapper = new StreamingZipFileWriter(sourcePath, sourceExperiment.getId() + ".zip");
         final AtomicReference<List<String>> uriRef = new AtomicReference<>();
         XnatUtils.doActionWithWorkflow(user, sourceExperiment,
-                "Reimporting " + sourceExperiment.getLabel() + " to " + destinationProjectData.getId(), () -> {
+                sourceWorkflowLabel(TransferMode.REIMPORT, sourceExperiment.getLabel(), destinationProjectData.getId()), () -> {
             final List<String> result = runImporter(user, wrapper, params);
             if (result == null || result.isEmpty()) {
                 throw new Exception("No DICOM files found in source experiment " + sourceExperiment.getId() + "; nothing to reimport.");
@@ -715,7 +715,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceAssess, "Cloned into project: " + newAssessor.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceAssess, sourceWorkflowLabel(TransferMode.CLONE, sourceAssess.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceAssess, newAssessor, filepath, newFilepath);
             return true;
         });
@@ -793,7 +793,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceExpt, "Cloned into project: " + newExperiment.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceExpt, sourceWorkflowLabel(TransferMode.CLONE, sourceExpt.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceExpt, newExperiment, filepath, newFilepath);
             return true;
         });
@@ -842,11 +842,19 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceSubject, "Cloned into project: " + newSubject.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceSubject, sourceWorkflowLabel(TransferMode.CLONE, sourceSubject.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceSubject, newSubject, filepath, newFilepath);
             return true;
         });
         return newSubject;
+    }
+
+    /**
+     * Builds the source-item workflow label for Clone/Reimport, e.g. "Cloned sess1 to project P2".
+     * Centralized so the wording stays consistent across operations. (Share keeps its own label.)
+     */
+    private static String sourceWorkflowLabel(final TransferMode mode, final String sourceLabel, final String destProjectId) {
+        return mode.getPastAction() + " " + sourceLabel + " to project " + destProjectId;
     }
 
     /**
@@ -860,7 +868,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * @param dest       - The destination filepath
      * @throws Exception
      */
-    private void saveItemAndCopyFiles(final UserI user, final ArchivableItem sourceItem, final ArchivableItem newItem, final String source, final String dest) throws Exception {
+    // Package-private (not private) so BatchTransferServiceImplTest can drive the save+link path directly.
+    void saveItemAndCopyFiles(final UserI user, final ArchivableItem sourceItem, final ArchivableItem newItem, final String source, final String dest) throws Exception {
         try {
             EventDetails details = EventUtils.newEventInstance(EventUtils.CATEGORY.DATA, EventUtils.TYPE.WEB_SERVICE, "Item Saved");
             SaveItemHelper.authorizedSave(newItem, user, false, false, details);
@@ -868,11 +877,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             throw new Exception("Failed to save item", e);
         }
 
+        // Link files directly (no separate workflow): the enclosing source-item workflow
+        // (e.g. "Cloned sess1 to project P2") already wraps this whole method, so a link failure
+        // still fails that workflow and triggers the rollback below. The destination copy
+        // intentionally carries no plugin workflow of its own.
         try {
-            XnatUtils.doActionWithWorkflow(user, newItem, "Files Cloned", () -> {
-                FileUtil.linkFiles(source, dest);
-                return true;
-            });
+            FileUtil.linkFiles(source, dest);
         } catch (Exception e) {
             XnatUtils.deleteItemWithoutSecurity(newItem);
             final Path destDir = Paths.get(dest);
