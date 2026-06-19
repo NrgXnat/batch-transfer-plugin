@@ -22,6 +22,7 @@ import org.nrg.xdat.turbine.utils.TurbineUtils;
 import org.nrg.xft.XFTTable;
 import org.nrg.xft.security.UserI;
 import org.restlet.data.Status;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,7 +41,7 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             "LEFT JOIN xdat_user u ON map.groups_groupid_xdat_user_xdat_user_id=u.xdat_user_id\n";
 
     private static final String READABLE_EXPERIMENTS = "FROM xdat_user_groupid gid\n" +
-            "LEFT JOIN xdat_usergroup grp ON gid.groupid=grp.id AND gid.groups_groupid_xdat_user_xdat_user_id={USER_ID}\n" +
+            "LEFT JOIN xdat_usergroup grp ON gid.groupid=grp.id AND gid.groups_groupid_xdat_user_xdat_user_id=:userId\n" +
             "LEFT JOIN xdat_element_access xea ON grp.xdat_usergroup_id=xea.xdat_usergroup_xdat_usergroup_id AND xea.element_name NOT IN ('xnat:projectData','xnat:subjectData')\n" +
             "LEFT JOIN xdat_field_mapping_set fms ON xea.xdat_element_access_id=fms.permissions_allow_set_xdat_elem_xdat_element_access_id\n" +
             "LEFT JOIN xdat_field_mapping xfm ON fms.xdat_field_mapping_set_id=xfm.xdat_field_mapping_set_xdat_field_mapping_set_id AND xfm.read_element=1\n" +
@@ -111,11 +112,27 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             itemIds = table.convertColumnToArrayList(FIELD_ID);
         }
 
-        boolean byProject  = (sourceProjectId != null);
-        String safeProj    = byProject ? sourceProjectId.replaceAll("[^A-Za-z0-9_\\-]", "") : "";
-        String ownedScope  = byProject ? "WHERE subj.project='" + safeProj + "'\n" : "";
-        String sharedScope = byProject ? "WHERE pp.project='" + safeProj + "'\n" : "";
-        String finalFilter = byProject ? "" : ("WHERE " + column + " IN ('" + buildWhereClause(itemIds) + "')");
+        boolean byProject = (sourceProjectId != null);
+
+        // Parameterized query: values are bound, not concatenated. ":userId" is reused throughout;
+        // ":project" / ":ids" are bound per entry point. "column" in finalFilter is a SQL identifier
+        // (subj.id / SADS.id / IAD.id, chosen above from xsiType) and cannot be bound, so it stays
+        // concatenated — safe because it is code-controlled.
+        final MapSqlParameterSource params =
+                new MapSqlParameterSource("userId", ((XDATUser) user).getXdatUserId());
+        String ownedScope = "", sharedScope = "", finalFilter = "";
+        if (byProject) {
+            params.addValue("project", sourceProjectId);
+            ownedScope  = "WHERE subj.project = :project\n";
+            sharedScope = "WHERE pp.project = :project\n";
+        } else {
+            if (itemIds == null || itemIds.isEmpty()) {
+                context.put("sharingMsg", "None of the requested data is available.");
+                return;
+            }
+            params.addValue("ids", itemIds);
+            finalFilter = "WHERE " + column + " IN (:ids)";
+        }
 
         // Build the query to retrieve information about the items we want listed.
         String query = "SELECT DISTINCT ON (SUBJ.ID, SADS.ID, IAD.ID) secondary_id AS project_label,subj.id AS subject_id, subj.label AS subject_label, subj.project AS subject_project, SADS.id AS session_id, SADS.label AS session_label, SADS.project AS session_project, SADS.date AS session_expt_date, SADS.element_name as session_element, IAD.id AS assessor_id, IAD.label AS assessor_label, IAD.project AS assessor_project, IAD.date AS assess_expt_date, IAD.element_name AS assessor_element\n" +
@@ -124,7 +141,7 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 "FROM xnat_subjectData subj\n" +
                 "JOIN (\n" +
                 READABLE_SUBJECTS +
-                "WHERE xdat_user_id={USER_ID} AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/project') OWNED ON subj.project=OWNED.tag\n" +
+                "WHERE xdat_user_id=:userId AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/project') OWNED ON subj.project=OWNED.tag\n" +
                 ownedScope +
                 "UNION\n" +
                 "SELECT subj.id, pp.label, subj.project\n" +
@@ -132,7 +149,7 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 " JOIN xnat_projectParticipant pp ON subj.id=pp.subject_id\n" +
                 "JOIN (\n" +
                 READABLE_SUBJECTS +
-                "WHERE xdat_user_id={USER_ID} AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/sharing/share/project' ) SHARED ON pp.project=SHARED.tag\n" +
+                "WHERE xdat_user_id=:userId AND read_element=1 AND element_name='xnat:subjectData' AND field='xnat:subjectData/sharing/share/project' ) SHARED ON pp.project=SHARED.tag\n" +
                 sharedScope +
                 ")  SUBJ\n" +
                 "LEFT JOIN (\n" +
@@ -169,14 +186,12 @@ public class XDATScreen_batch_transfer extends SecureScreen {
                 finalFilter +
                 ";";
 
-        query = query.replace("{USER_ID}", ((XDATUser) user).getXdatUserId().toString());
-
-        // Execute the query to get a list of experiments
-        XFTTable experiments = XFTTable.Execute(query, user.getDBName(), user.getUsername());
+        // Execute the parameterized query to get a list of experiments.
+        List<Map<String, Object>> rows = XDAT.getNamedParameterJdbcTemplate().queryForList(query, params);
 
         // Build ONE item set (all readable items), then compute per-project eligibility once.
         // Share/Clone are feature-gated; Reimport is always allowed, so the set is unfiltered.
-        Map<String, ItemContainer> items = buildItems(experiments, search);
+        Map<String, ItemContainer> items = buildItems(rows);
         if (items.isEmpty()) {
             context.put("sharingMsg", "None of the requested data is available.");
             return;
@@ -231,13 +246,13 @@ public class XDATScreen_batch_transfer extends SecureScreen {
      * @param search - DisplaySearch
      * @return Hashtable<String, ItemContainer>
      */
-    private Map<String, ItemContainer> buildItems(XFTTable t, DisplaySearch search) {
+    private Map<String, ItemContainer> buildItems(List<Map<String, Object>> rows) {
         Map<String, ItemContainer> items = new HashMap<>();
 
         // For each experiment row, build the project→subject→session→assessor tree. The set is
         // unfiltered — per-project Share/Clone eligibility is computed once in doBuildTemplate,
         // and Reimport is always allowed.
-        for(Hashtable exp : t.rowHashs()){
+        for (Map<String, Object> exp : rows) {
 
             String project = (String) exp.get("subject_project");
             String subject_id = (String) exp.get("subject_id");
@@ -287,15 +302,6 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         return sortItemContainersByLabel(items);
     }
 
-    /**
-     * Function builds a comma delimited string of id's to be
-     * inserted in the where clause of a sql query.
-     * @param ids - a list of ids
-     * @return a comma delimited string of id's
-     */
-    private String buildWhereClause(List<String> ids){
-        return StringUtils.join(ids, "','");
-    }
 
     private static Map<String, ItemContainer> sortItemContainersByLabel(Map<String, ItemContainer> items) {
         items.forEach((key, value) -> value.sortChildren());
