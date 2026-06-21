@@ -58,7 +58,6 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.LongAdder; // TIMING INSTRUMENTATION (delete this import to remove)
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import java.util.zip.Deflater;
@@ -103,35 +102,52 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
     private void batchTransfer(BatchTransfer batchTransferRequest, UserI user) {
         final List<TransferRequest> requests = batchTransferRequest.getRequests();
-        // Batches are single-mode (the UI applies one operation to all selected items). Route the
-        // whole batch by its operation: Reimport fans out to a JMS queue per item; Clone fans out to a
-        // JMS queue per subject (one consumer owns each subject); Share (and any mixed/unknown batch)
-        // stays on the in-process sequential path.
-        final TransferMode mode = requests.isEmpty() ? null : requests.get(0).getMode();
-        if (mode == TransferMode.REIMPORT) {
-            enqueueReimport(batchTransferRequest, user);
-        } else if (mode == TransferMode.CLONE) {
-            enqueueClone(batchTransferRequest, user);
-        } else {
-            runSequential(batchTransferRequest, user);
+        if (requests == null || requests.isEmpty()) {
+            return;
+        }
+        final String trackingId = batchTransferRequest.getTrackingId();
+
+        // A batch usually carries a single operation, but the UI can mix them. Split by operation in
+        // one pass so each item takes the right path: Reimport fans out to a JMS queue per item; Clone
+        // fans out to a JMS queue per subject (one consumer owns each subject); Share (and any
+        // null/unknown mode) is processed in-process on the sequential path.
+        final List<TransferRequest> reimportItems   = new ArrayList<>();
+        final List<TransferRequest> cloneItems      = new ArrayList<>();
+        final List<TransferRequest> sequentialItems = new ArrayList<>();
+        for (final TransferRequest request : requests) {
+            final TransferMode mode = request.getMode();
+            if (mode == TransferMode.REIMPORT) {
+                reimportItems.add(request);
+            } else if (mode == TransferMode.CLONE) {
+                cloneItems.add(request);
+            } else {
+                sequentialItems.add(request);
+            }
+        }
+
+        // Register the whole batch once; every item — whether queued (Reimport/Clone) or processed
+        // in-process (Share) — reports to the monitor, which emits the single terminal event after the
+        // last one finishes. This keeps one completion signal even when operations are mixed.
+        monitor.register(trackingId, user.getID(), requests.size());
+        if (!reimportItems.isEmpty()) {
+            enqueueReimport(trackingId, reimportItems, user);
+        }
+        if (!cloneItems.isEmpty()) {
+            enqueueClone(trackingId, cloneItems, user);
+        }
+        if (!sequentialItems.isEmpty()) {
+            runSequential(trackingId, sequentialItems, user);
         }
     }
 
     /**
-     * Producer for the parallel Reimport path. Pre-creates one workflow per item (tagged with the
-     * batch trackingId as its external id, status Queued), registers the batch with the monitor, then
-     * enqueues one {@link TransferItemRequest} per item. {@code TransferReimportListener} consumes
-     * them concurrently and {@link BatchTransferMonitor} emits the terminal event when all finish.
-     * Runs on the executor thread (via {@code submitTransferRequest}), so these DB writes and sends
-     * are off the HTTP request path.
+     * Producer for the parallel Reimport path. Enqueues one {@link TransferItemRequest} per item;
+     * {@code TransferReimportListener} consumes them concurrently and each reports completion to the
+     * {@link BatchTransferMonitor}. The batch is registered with the monitor once by the caller
+     * ({@link #batchTransfer}), so this only enqueues; it runs on the executor thread, off the HTTP
+     * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
      */
-    private void enqueueReimport(final BatchTransfer batchTransferRequest, final UserI user) {
-        final String trackingId = batchTransferRequest.getTrackingId();
-        final List<TransferRequest> requests = batchTransferRequest.getRequests();
-        // Register the expected item count up front; each consumer reports its item via the monitor,
-        // and the consumer that reports the last one emits the batch's terminal event. No workflow is
-        // pre-created here: importExperiment creates (and completes/fails) each session's own workflow.
-        monitor.register(trackingId, user.getID(), requests.size());
+    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final UserI user) {
         for (final TransferRequest request : requests) {
             try {
                 XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
@@ -147,17 +163,13 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     /**
-     * Producer for the parallel Clone path. Groups the batch's items by their subject and enqueues one
+     * Producer for the parallel Clone path. Groups the items by their subject and enqueues one
      * {@link CloneSubjectRequest} per subject, so {@code CloneSubjectListener} processes each subject's
      * items serially in a single consumer (creating the destination subject/experiment once, with no
-     * get-or-create race). Parallelism is across subjects. Registers the total item count so the monitor
-     * fires the terminal event once every item has been processed.
+     * get-or-create race). Parallelism is across subjects. The batch is registered with the monitor once
+     * by the caller ({@link #batchTransfer}); each item reports completion via its consumer.
      */
-    private void enqueueClone(final BatchTransfer batchTransferRequest, final UserI user) {
-        final String trackingId = batchTransferRequest.getTrackingId();
-        final List<TransferRequest> requests = batchTransferRequest.getRequests();
-        monitor.register(trackingId, user.getID(), requests.size());
-
+    private void enqueueClone(final String trackingId, final List<TransferRequest> requests, final UserI user) {
         final Map<String, List<CloneSubjectRequest.CloneItem>> bySubject = new LinkedHashMap<>();
         for (final TransferRequest request : requests) {
             try {
@@ -209,64 +221,32 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     /**
-     * In-process sequential path for Share / Clone (and any mixed/unknown batch) — today's behavior.
-     * Calls {@link #processItem} per item and emits the terminal event inline once the loop finishes.
+     * In-process path for Share (and any null/unknown-mode) items. Calls {@link #processItem} per item
+     * and reports each one to the {@link BatchTransferMonitor}; the monitor (not this method) emits the
+     * batch's single terminal event once every item across all operations has finished — so this path
+     * composes with the parallel Reimport/Clone queues in a mixed batch.
      */
-    private void runSequential(final BatchTransfer batchTransferRequest, final UserI user) {
-        final List<String> failures = new ArrayList<>();
-        final String trackingId = batchTransferRequest.getTrackingId();
-        final int numRequests = batchTransferRequest.getRequests().size();
-        int count = 0;
-
-        // === TIMING INSTRUMENTATION: start (delete to remove; grep "TIMING INSTRUMENTATION" for all blocks) ===
-        final long batchStartNanos = System.nanoTime();
-        final Map<String, LongAdder[]> timingByMode = new LinkedHashMap<>(); // mode -> [count, totalNanos]
-        // === TIMING INSTRUMENTATION: end ===
-
-        for (final TransferRequest request : batchTransferRequest.getRequests()) {
-            count++;
+    private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+        for (final TransferRequest request : requests) {
             final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
-            final int progress = Math.round(((float) count / numRequests) * 100) - 1;
+            final int progress = monitor.currentPercent(trackingId);
             final long itemStartNanos = System.nanoTime(); // TIMING INSTRUMENTATION (delete this line to remove)
+            boolean failed = false;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, trackingId,
                         String.format("%s %s into project: %s", modeAction, request.getId(), request.getDestinationProject())));
                 processItem(request, user, new EventInfo(trackingId, progress));
             } catch (Exception e) {
+                failed = true;
                 log.debug(e.getMessage(), e);
                 final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
-                failures.add(err);
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
             }
-            // === TIMING INSTRUMENTATION: start (delete this finally block to remove) ===
-            finally {
-                final long itemNanos = System.nanoTime() - itemStartNanos;
-                final String modeKey = request.getMode() != null ? request.getMode().getValue() : "Unknown";
-                final LongAdder[] agg = timingByMode.computeIfAbsent(modeKey, k -> new LongAdder[]{new LongAdder(), new LongAdder()});
-                agg[0].increment();
-                agg[1].add(itemNanos);
-                log.info("Batch {} item {} ({}) took {} ms", trackingId, request.getId(), modeKey, itemNanos / 1_000_000L);
-            }
-            // === TIMING INSTRUMENTATION: end ===
-        }
-
-        // === TIMING INSTRUMENTATION: start (delete this block to remove) ===
-        final long batchWallMs = (System.nanoTime() - batchStartNanos) / 1_000_000L;
-        final StringBuilder timingSummary = new StringBuilder();
-        long summedItemMs = 0L;
-        for (final Map.Entry<String, LongAdder[]> timingEntry : timingByMode.entrySet()) {
-            final long n = timingEntry.getValue()[0].sum();
-            final long totalMs = timingEntry.getValue()[1].sum() / 1_000_000L;
-            summedItemMs += totalMs;
-            timingSummary.append(String.format(" | %s: n=%d total=%dms mean=%dms", timingEntry.getKey(), n, totalMs, n > 0 ? totalMs / n : 0L));
-        }
-        log.info("Batch {} timing: {} item(s) in {} ms wall / {} ms summed{}", trackingId, numRequests, batchWallMs, summedItemMs, timingSummary);
-        // === TIMING INSTRUMENTATION: end ===
-
-        if (!failures.isEmpty()) {
-            eventService.triggerEvent(BatchTransferEvent.warn(user.getID(), 100, trackingId, String.format("Transfer Complete with %s %s. Please review this log carefully.", failures.size(), failures.size() == 1 ? "warning" : "warnings")));
-        } else {
-            eventService.triggerEvent(BatchTransferEvent.complete(user.getID(), trackingId, "Transfer Complete"));
+            final long itemMillis = (System.nanoTime() - itemStartNanos) / 1_000_000L; // TIMING INSTRUMENTATION
+            log.info("Batch {} item {} ({}) took {} ms", trackingId, request.getId(),                // TIMING INSTRUMENTATION
+                    request.getMode() != null ? request.getMode().getValue() : "Unknown", itemMillis); // TIMING INSTRUMENTATION
+            // Report completion; the monitor emits the batch's terminal event when the last item finishes.
+            monitor.itemDone(trackingId, failed, itemMillis);
         }
     }
 
@@ -525,6 +505,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 // writeEntry returns false once the consumer closes the pipe; allMatch then stops
                 // streaming. Real source-read failures throw and are caught (and recorded) below.
                 paths.filter(Files::isRegularFile)
+                        .filter(p -> StreamSupport.stream(p.spliterator(), false)
+                                .anyMatch(part -> part.toString().equals("SCANS")))
                      .filter(p -> StreamSupport.stream(p.spliterator(), false)
                              .anyMatch(part -> part.toString().equals("DICOM")))
                      .filter(p -> !p.getFileName().toString().toLowerCase().endsWith("catalog.xml"))

@@ -8,15 +8,20 @@ import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.util.FileUtil;
 import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
+import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
+import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.nrg.framework.services.NrgEventService;
+import org.nrg.xdat.XDAT;
 import org.nrg.xdat.om.XnatImageassessordata;
 import org.nrg.xdat.om.XnatImagesessiondata;
 import org.nrg.xdat.om.XnatProjectdata;
@@ -57,6 +62,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -87,6 +93,7 @@ public class BatchTransferServiceImplTest {
     @Autowired private XnatImagesessiondata imageSession;
     @Autowired private XnatImageassessordata imageAssessor;
     @Autowired private XnatSubjectdata subject;
+    @Autowired private BatchTransferMonitor monitor;
 
     private static final String DEST_PROJECT = "destProj";
     private static final String SRC_PROJECT  = "srcProj";
@@ -97,7 +104,7 @@ public class BatchTransferServiceImplTest {
     @Before
     public void setUp() throws Exception {
         Mockito.reset(service, nrgEventService, executorService, user,
-                destinationProjectData, imageSession, imageAssessor, subject);
+                destinationProjectData, imageSession, imageAssessor, subject, monitor);
 
         when(user.getID()).thenReturn(42);
 
@@ -419,6 +426,67 @@ public class BatchTransferServiceImplTest {
             utils.verify(() -> XnatUtils.deleteItemWithoutSecurity(newItem));
             utils.verify(() -> XnatUtils.doActionWithWorkflow(
                     any(UserI.class), any(), anyString(), any(Callable.class)), never());
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // batchTransfer — split a mixed batch by operation
+    // -----------------------------------------------------------------
+
+    /**
+     * A batch can mix operations. batchTransfer must split by operation and route each to its path —
+     * Reimport → reimport queue, Clone → clone queue (grouped by subject), Share → in-process — while
+     * registering the batch with the monitor exactly once (one terminal event for the whole batch).
+     */
+    @Test
+    public void batchTransfer_mixedBatch_splitsByOperation() throws Exception {
+        final TransferRequest reimportReq = new TransferRequest(DEST_PROJECT, "exp_reimport", TransferMode.REIMPORT);
+        final TransferRequest cloneReq1   = new TransferRequest(DEST_PROJECT, "exp_clone1",   TransferMode.CLONE);
+        final TransferRequest cloneReq2   = new TransferRequest(DEST_PROJECT, "exp_clone2",   TransferMode.CLONE);
+        final TransferRequest shareReq    = new TransferRequest(DEST_PROJECT, "exp_share",    TransferMode.SHARE);
+        final List<TransferRequest> all = new ArrayList<>();
+        all.add(reimportReq); all.add(cloneReq1); all.add(cloneReq2); all.add(shareReq);
+        final BatchTransfer batch = new BatchTransfer(all, TRACKING_ID);
+
+        // Share items run in-process via processItem; stub it (the service is a spy) so this router test
+        // doesn't execute the real share logic. Reimport/Clone items are enqueued, not processed here.
+        Mockito.doNothing().when(service).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+
+        try (MockedStatic<XDAT>      xdat  = mockStatic(XDAT.class);
+             MockedStatic<XnatUtils> utils = mockStatic(XnatUtils.class)) {
+
+            // Clone grouping resolves each clone item's subject (both → SUBJ1, so one bundle of two).
+            utils.when(() -> XnatUtils.getArchivableItem("exp_clone1", null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.getArchivableItem("exp_clone2", null)).thenReturn(imageSession);
+            when(imageSession.getProperty("subject_ID")).thenReturn("SUBJ1");
+
+            service.submitTransferRequest(batch, user); // mock executor runs batchTransfer on this thread
+
+            // Registered once for the whole batch (all four items) → a single terminal event.
+            verify(monitor).register(TRACKING_ID, 42, 4);
+
+            // Two JMS sends: one reimport item, one clone bundle.
+            final ArgumentCaptor<Object> sent = ArgumentCaptor.forClass(Object.class);
+            xdat.verify(() -> XDAT.sendJmsRequest(sent.capture()), times(2));
+
+            final TransferItemRequest reimportSent = sent.getAllValues().stream()
+                    .filter(r -> r instanceof TransferItemRequest).map(r -> (TransferItemRequest) r)
+                    .findFirst().orElse(null);
+            assertNotNull("reimport item should be queued to the reimport queue", reimportSent);
+            assertEquals("exp_reimport", reimportSent.getItemId());
+
+            final CloneSubjectRequest cloneSent = sent.getAllValues().stream()
+                    .filter(r -> r instanceof CloneSubjectRequest).map(r -> (CloneSubjectRequest) r)
+                    .findFirst().orElse(null);
+            assertNotNull("clone items should be queued to the clone queue", cloneSent);
+            assertEquals("SUBJ1", cloneSent.getSubjectId());
+            assertEquals(2, cloneSent.getItems().size());
+
+            // Share item is processed in-process; reimport/clone items were enqueued, not processed.
+            final ArgumentCaptor<TransferRequest> processed = ArgumentCaptor.forClass(TransferRequest.class);
+            verify(service).processItem(processed.capture(), any(UserI.class), any(EventInfo.class));
+            assertEquals("exp_share", processed.getValue().getId());
+            assertEquals(TransferMode.SHARE, processed.getValue().getMode());
         }
     }
 }
