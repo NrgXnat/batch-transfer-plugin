@@ -54,7 +54,6 @@ public class TransferReimportListener {
     public void onRequest(final TransferItemRequest request) {
         final String trackingId     = request.getTrackingId();
         final String itemId         = request.getItemId();
-        final long   itemStartNanos = System.nanoTime(); // TIMING INSTRUMENTATION (delete this line to remove)
 
         final UserI user;
         try {
@@ -62,7 +61,7 @@ public class TransferReimportListener {
         } catch (Exception e) {
             log.error("Reimport {}: could not load user {}", itemId, request.getUsername(), e);
             emitFail(request, "Could not load user " + request.getUsername());
-            recordDone(request, itemStartNanos, true);
+            monitor.itemDone(trackingId, true);
             return;
         }
 
@@ -77,17 +76,8 @@ public class TransferReimportListener {
             failed = true;
             emitFail(request, itemId + " failed. Cause: " + (e.getCause() == null ? e.getMessage() : e.getCause().getMessage()));
         } finally {
-            recordDone(request, itemStartNanos, failed);
+            monitor.itemDone(trackingId, failed);
         }
-    }
-
-    /** Reports the item's outcome to the monitor (advances fan-in) and logs its duration. */
-    private void recordDone(final TransferItemRequest request, final long itemStartNanos, final boolean failed) {
-        // TIMING INSTRUMENTATION: per-item reimport duration (delete this calc + the itemStartNanos line; pass 0L) ===
-        final long itemMillis = (System.nanoTime() - itemStartNanos) / 1_000_000L;
-        log.info("Reimport {} took {} ms", request.getItemId(), itemMillis);
-        // === END TIMING INSTRUMENTATION
-        monitor.itemDone(request.getTrackingId(), failed, itemMillis);
     }
 
     private void emitFail(final TransferItemRequest request, final String message) {

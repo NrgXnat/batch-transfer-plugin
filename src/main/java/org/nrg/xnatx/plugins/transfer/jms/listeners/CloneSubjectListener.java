@@ -61,7 +61,7 @@ public class CloneSubjectListener {
             // Report every item in the bundle so fan-in still completes.
             for (final CloneSubjectRequest.CloneItem item : request.getItems()) {
                 emitFail(request, item.getItemId() + " failed. Cause: could not load user " + request.getUsername());
-                monitor.itemDone(trackingId, true, 0L);
+                monitor.itemDone(trackingId, true);
             }
             return;
         }
@@ -70,7 +70,6 @@ public class CloneSubjectListener {
         // experiment is created once and reused (no get-or-create race). A failed parent fails its
         // dependents item-by-item; siblings still proceed.
         for (final CloneSubjectRequest.CloneItem item : request.getItems()) {
-            final long itemStartNanos = System.nanoTime(); // TIMING INSTRUMENTATION (delete this line to remove)
             boolean failed = false;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
@@ -83,10 +82,7 @@ public class CloneSubjectListener {
                 failed = true;
                 emitFail(request, item.getItemId() + " failed. Cause: " + (e.getCause() == null ? e.getMessage() : e.getCause().getMessage()));
             } finally {
-                // TIMING INSTRUMENTATION: per-item duration (delete this calc + the itemStartNanos line; pass 0L)
-                final long itemMillis = (System.nanoTime() - itemStartNanos) / 1_000_000L;
-                log.info("Clone {} took {} ms", item.getItemId(), itemMillis);
-                monitor.itemDone(trackingId, failed, itemMillis);
+                monitor.itemDone(trackingId, failed);
             }
         }
     }

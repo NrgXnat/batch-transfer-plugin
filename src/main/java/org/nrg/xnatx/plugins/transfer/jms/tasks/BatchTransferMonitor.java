@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.LongAdder;
 
 /**
  * In-memory fan-in for the JMS-parallelized Reimport batches. The producer {@link #register}s a batch
@@ -60,10 +59,8 @@ public class BatchTransferMonitor {
      * Reports one item's outcome. The consumer that brings the completed count up to the batch total
      * emits the terminal event exactly once and clears the batch. Must be called once per item on
      * every path (success or handled failure), or fan-in stalls.
-     *
-     * @param itemMillis per-item duration — TIMING INSTRUMENTATION (pass 0 and drop the timing log to remove)
      */
-    public void itemDone(final String trackingId, final boolean failed, final long itemMillis) {
+    public void itemDone(final String trackingId, final boolean failed) {
         final BatchInfo info = active.get(trackingId);
         if (info == null) {
             return;
@@ -71,7 +68,6 @@ public class BatchTransferMonitor {
         if (failed) {
             info.failed.incrementAndGet();
         }
-        info.summedItemMillis.add(itemMillis); // TIMING INSTRUMENTATION
         if (info.completed.incrementAndGet() != info.total) {
             return; // not the last item
         }
@@ -85,13 +81,6 @@ public class BatchTransferMonitor {
         } else {
             eventService.triggerEvent(BatchTransferEvent.complete(info.userId, trackingId, "Transfer Complete"));
         }
-        // === TIMING INSTRUMENTATION: batch wall-time + parallelism (delete to remove) ===
-        final long wallMillis   = System.currentTimeMillis() - info.startMillis;
-        final long summedMillis = info.summedItemMillis.sum();
-        log.info("Batch {} transfer timing: {} item(s) in {} ms wall / {} ms summed (parallelism {})",
-                trackingId, info.total, wallMillis, summedMillis,
-                wallMillis > 0 ? String.format("%.1fx", summedMillis / (double) wallMillis) : "n/a");
-        // === TIMING INSTRUMENTATION: end ===
         active.remove(trackingId);
     }
 
@@ -100,8 +89,6 @@ public class BatchTransferMonitor {
         private final int           total;
         private final AtomicInteger completed = new AtomicInteger(0);
         private final AtomicInteger failed    = new AtomicInteger(0);
-        private final long          startMillis      = System.currentTimeMillis(); // TIMING INSTRUMENTATION
-        private final LongAdder     summedItemMillis = new LongAdder();             // TIMING INSTRUMENTATION
 
         private BatchInfo(final Integer userId, final int total) {
             this.userId = userId;

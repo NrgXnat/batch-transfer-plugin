@@ -51,15 +51,17 @@ import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -157,7 +159,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 log.error("Failed to queue reimport for {}", request.getId(), e);
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
-                monitor.itemDone(trackingId, true, 0L);
+                monitor.itemDone(trackingId, true);
             }
         }
     }
@@ -181,7 +183,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 log.error("Failed to group clone item {}", request.getId(), e);
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
-                monitor.itemDone(trackingId, true, 0L);
+                monitor.itemDone(trackingId, true);
             }
         }
 
@@ -195,7 +197,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 for (final CloneSubjectRequest.CloneItem item : entry.getValue()) {
                     eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                             item.getItemId() + " could not be queued. Cause: " + e.getMessage()));
-                    monitor.itemDone(trackingId, true, 0L);
+                    monitor.itemDone(trackingId, true);
                 }
             }
         }
@@ -230,7 +232,6 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         for (final TransferRequest request : requests) {
             final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
             final int progress = monitor.currentPercent(trackingId);
-            final long itemStartNanos = System.nanoTime(); // TIMING INSTRUMENTATION (delete this line to remove)
             boolean failed = false;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, trackingId,
@@ -242,11 +243,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
             }
-            final long itemMillis = (System.nanoTime() - itemStartNanos) / 1_000_000L; // TIMING INSTRUMENTATION
-            log.info("Batch {} item {} ({}) took {} ms", trackingId, request.getId(),                // TIMING INSTRUMENTATION
-                    request.getMode() != null ? request.getMode().getValue() : "Unknown", itemMillis); // TIMING INSTRUMENTATION
             // Report completion; the monitor emits the batch's terminal event when the last item finishes.
-            monitor.itemDone(trackingId, failed, itemMillis);
+            monitor.itemDone(trackingId, failed);
         }
     }
 
@@ -501,16 +499,33 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             final ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(pipedOut, 65536));
             zos.setLevel(Deflater.NO_COMPRESSION);
             final byte[] buffer = new byte[65536];
-            try (Stream<Path> paths = Files.walk(sourceDir)) {
-                // writeEntry returns false once the consumer closes the pipe; allMatch then stops
-                // streaming. Real source-read failures throw and are caught (and recorded) below.
-                paths.filter(Files::isRegularFile)
-                        .filter(p -> StreamSupport.stream(p.spliterator(), false)
-                                .anyMatch(part -> part.toString().equals("SCANS")))
-                     .filter(p -> StreamSupport.stream(p.spliterator(), false)
-                             .anyMatch(part -> part.toString().equals("DICOM")))
-                     .filter(p -> !p.getFileName().toString().toLowerCase().endsWith("catalog.xml"))
-                     .allMatch(p -> writeEntry(zos, p, buffer));
+            try {
+                // Prune everything except the SCANS directory directly under the source root (RESOURCES,
+                // the session XML, etc.) and follow symlinks. The walk supplies each file's attributes,
+                // so there is no second stat per file.
+                Files.walkFileTree(sourceDir, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
+                        new SimpleFileVisitor<Path>() {
+                            @Override
+                            public FileVisitResult preVisitDirectory(final Path dir, final BasicFileAttributes attrs) {
+                                // Only descend into the SCANS directory immediately under the source root.
+                                if (sourceDir.equals(dir.getParent())
+                                        && !dir.getFileName().toString().equalsIgnoreCase("SCANS")) {
+                                    return FileVisitResult.SKIP_SUBTREE;
+                                }
+                                return FileVisitResult.CONTINUE;
+                            }
+
+                            @Override
+                            public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) {
+                                if (attrs.isRegularFile()
+                                        && hasPathComponent(file, "DICOM")
+                                        && !file.getFileName().toString().toLowerCase().endsWith("catalog.xml")) {
+                                    // writeEntry returns false once the consumer closes the pipe → stop walking.
+                                    return writeEntry(zos, file, buffer) ? FileVisitResult.CONTINUE : FileVisitResult.TERMINATE;
+                                }
+                                return FileVisitResult.CONTINUE;
+                            }
+                        });
             } catch (UncheckedIOException e) {
                 recordError(e.getCause());   // a source DICOM file could not be read
             } catch (IOException e) {
@@ -518,6 +533,16 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } finally {
                 finishZip(zos);
             }
+        }
+
+        /** True if any component of {@code p} matches {@code component}, ignoring case (archive folders are conventionally upper-case). */
+        private static boolean hasPathComponent(final Path p, final String component) {
+            for (final Path part : p) {
+                if (part.toString().equalsIgnoreCase(component)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void recordError(final Throwable cause) {
