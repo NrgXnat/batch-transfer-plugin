@@ -6,7 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [1.0.0] — Unreleased
+## [1.0.1-RC]
+
+A performance and hardening release on top of the 1.0.0 rebrand: Reimport and Clone now run in parallel through JMS queues, mixed-operation batches route correctly, the listing query is parameterized, and workflow history is consistent across all three operations. The `/xapi/transfer` request format and the Java packages are unchanged from 1.0.0.
+
+### Performance
+
+- **Parallel processing via JMS queues** — Reimport and Clone no longer run in a single sequential loop. Reimport is dispatched per image session and Clone per subject onto in-process (`vm://`) JMS queues; an in-memory `BatchTransferMonitor` fans the results back in and emits a single terminal *Transfer Complete* / *Warning* event once every item — across every operation in the batch — has finished.
+- **Admin-tunable consumer concurrency** — new site-admin settings (and `GET` / `POST /xapi/batch_transfer/jms_queues`) set each queue's `min–max` consumer count. Defaults: **Reimport 4–8**, **Clone 1–2**; set `min = max = 1` for a serial kill-switch.
+- **Faster Clone file copy** — the archive directory copy no longer opens every file to check whether it is a catalog; only catalog/XML files are read and the rest are hard-linked directly, sharply cutting per-file I/O on large multi-scan sessions.
+
+> **Concurrency & storage note** — Reimport throughput is bound by prearchive **storage** and the anonymization pipeline, not CPU or plugin locking. On slow or bind-mounted storage, raising consumer concurrency is counter-productive (concurrent writers contend, and one slot can out-throughput many); tune concurrency up only on fast local/SAN prearchive storage. See `docs/ROADMAP.md`.
+
+### Changed
+
+- **Operation-aware batch routing** — a batch containing a mix of Share / Clone / Reimport items is now split by operation and each group routed to its correct path (Reimport queue, Clone queue, or the in-process sequential path for Share). Previously every item in a batch was assumed to share a single operation.
+- **Unified workflow history** — the completed-action workflow recorded on the **source** item now uses one consistent past-tense label for all three operations: *"Cloned / Shared / Reimported `<item>` to project `<dest>`"*.
+
+### Removed
+
+- **Redundant "Files Cloned" workflow** — each cloned item previously produced a second, destination-side *"Files Cloned"* workflow on top of the source-side *"Cloned …"* workflow (four workflow DB writes per item). The destination-side record is gone (two writes now); clone provenance is still captured by the source workflow plus the preserved `original-project` field, and rollback-on-failure is unchanged.
+
+### Fixed
+
+- **Reimport expand arrows** — a session whose only expandable children are out-of-scope image assessors no longer shows a dead expand arrow in Reimport mode. Share / Clone are unaffected.
+- **Stale anonymization status** — the destination project's anonymization status is re-queried on each selection change instead of being read once at page load, so the *About this transfer* banner always reflects the project actually selected.
+
+### Security
+
+- **Parameterized listing query** — the subject / experiment listing SQL behind the transfer screen is now fully parameterized (`:userId`, `:project`, `:ids`) via `NamedParameterJdbcTemplate`; request-derived values are no longer concatenated into the SQL string, closing a SQL-injection vector in the project / id filters.
+
+---
+
+## [1.0.0]
 
 ### Renamed — Batch Share → Batch Transfer
 

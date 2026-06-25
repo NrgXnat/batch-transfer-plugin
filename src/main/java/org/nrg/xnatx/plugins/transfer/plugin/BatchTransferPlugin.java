@@ -6,6 +6,7 @@ import org.springframework.context.annotation.ComponentScan;
         "org.nrg.xnatx.plugins.transfer.api",
         "org.nrg.xnatx.plugins.transfer.service",
         "org.nrg.xnatx.plugins.transfer.event",
+        "org.nrg.xnatx.plugins.transfer.jms",
 })
 @XnatPlugin(value = "batchTransferPlugin",
         name = "Batch Transfer Plugin",

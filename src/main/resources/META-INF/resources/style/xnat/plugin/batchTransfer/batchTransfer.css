@@ -925,6 +925,11 @@
     display: none !important;
 }
 
+/* Reimport mode: sessions are the only eligible rows, so suppress the otherwise-empty expand arrows. */
+#bt-data-body.bt-reimport-mode .bt-expand {
+    display: none;
+}
+
 /* Import disabled rows (subjects & assessors not importable) */
 .bt-import-disabled {
     opacity: 0.4;

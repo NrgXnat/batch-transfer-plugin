@@ -30,16 +30,19 @@ public class StreamingZipFileWriterTest {
 
     @Rule public TemporaryFolder tmp = new TemporaryFolder();
 
-    /** Verifies the DICOM filter, the catalog.xml exclusion, and entry contents. */
+    /** Verifies the SCANS+DICOM filter (case-insensitive), the catalog.xml exclusion, and entry contents. */
     @Test
     public void streamsDicomFilesAndExcludesCatalog() throws Exception {
         final Path source = tmp.newFolder("source").toPath();
-        final Path dicomDir = Files.createDirectories(source.resolve("scans/1/DICOM"));
+        final Path dicomDir = Files.createDirectories(source.resolve("SCANS/1/DICOM"));
         Files.write(dicomDir.resolve("img1.dcm"), "img1-bytes".getBytes(StandardCharsets.UTF_8));
         Files.write(dicomDir.resolve("img2.dcm"), "img2-bytes".getBytes(StandardCharsets.UTF_8));
         Files.write(dicomDir.resolve("catalog.xml"), "<catalog/>".getBytes(StandardCharsets.UTF_8));
         // Non-DICOM file outside the DICOM dir: must be filtered out.
-        Files.write(source.resolve("scans/1/NOTE.txt"), "nope".getBytes(StandardCharsets.UTF_8));
+        Files.write(source.resolve("SCANS/1/NOTE.txt"), "nope".getBytes(StandardCharsets.UTF_8));
+        // DICOM file with no SCANS ancestor: must be filtered out by the (intentional) SCANS narrowing.
+        Files.write(Files.createDirectories(source.resolve("DICOM")).resolve("orphan.dcm"),
+                "orphan".getBytes(StandardCharsets.UTF_8));
 
         try (BatchTransferServiceImpl.StreamingZipFileWriter w =
                      new BatchTransferServiceImpl.StreamingZipFileWriter(source, "exp.zip")) {
@@ -50,12 +53,14 @@ public class StreamingZipFileWriterTest {
 
             assertEquals("expected exactly the two DICOM files, got " + entries.keySet(),
                     2, entries.size());
-            assertArrayContains(entries, "scans/1/DICOM/img1.dcm", "img1-bytes");
-            assertArrayContains(entries, "scans/1/DICOM/img2.dcm", "img2-bytes");
+            assertArrayContains(entries, "SCANS/1/DICOM/img1.dcm", "img1-bytes");
+            assertArrayContains(entries, "SCANS/1/DICOM/img2.dcm", "img2-bytes");
             assertNull("catalog.xml should be excluded",
-                    entries.get("scans/1/DICOM/catalog.xml"));
+                    entries.get("SCANS/1/DICOM/catalog.xml"));
             assertNull("NOTE.txt should be excluded (not in DICOM dir)",
-                    entries.get("scans/1/NOTE.txt"));
+                    entries.get("SCANS/1/NOTE.txt"));
+            assertNull("DICOM file with no SCANS ancestor should be excluded",
+                    entries.get("DICOM/orphan.dcm"));
         }
     }
 
@@ -84,7 +89,7 @@ public class StreamingZipFileWriterTest {
     @Test
     public void awaitProducerTimeout_throwsIOException() throws Exception {
         final Path source = tmp.newFolder("source").toPath();
-        final Path dicomDir = Files.createDirectories(source.resolve("DICOM"));
+        final Path dicomDir = Files.createDirectories(source.resolve("SCANS/1/DICOM"));
         // Incompressible random bytes so Deflater.BEST_SPEED can't shrink the
         // payload below the pipe buffer — without this, the producer would
         // finish instantly and the timeout would never fire.

@@ -36,6 +36,10 @@ import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.Fields;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
+import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
+import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xdat.XDAT;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -47,15 +51,17 @@ import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -67,16 +73,19 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     private final ExecutorService executorService;
     private final AnonUtils anonUtils;
     private final DicomObjectIdentifier identifier;
+    private final BatchTransferMonitor monitor;
 
     @Autowired
     public BatchTransferServiceImpl(final NrgEventService eventService,
                                  final ExecutorService executorService,
                                  final AnonUtils anonUtils,
-                                 final ContextService contextService) {
+                                 final ContextService contextService,
+                                 final BatchTransferMonitor monitor) {
         this.eventService = eventService;
         this.executorService = executorService;
         this.anonUtils = anonUtils;
         this.identifier = contextService.getBean("dicomObjectIdentifier", DicomObjectIdentifier.class);
+        this.monitor = monitor;
     }
 
     public void submitTransferRequest(BatchTransfer batchTransferRequest, UserI user) {
@@ -94,93 +103,220 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     private void batchTransfer(BatchTransfer batchTransferRequest, UserI user) {
-        final List<String> failures = new ArrayList<>();
+        final List<TransferRequest> requests = batchTransferRequest.getRequests();
+        if (requests == null || requests.isEmpty()) {
+            return;
+        }
         final String trackingId = batchTransferRequest.getTrackingId();
-        final int numRequests = batchTransferRequest.getRequests().size();
-        int count = 0;
 
-        for (TransferRequest request : batchTransferRequest.getRequests()) {
-            count++;
-            String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
-            final int progress = Math.round(((float) count / numRequests) * 100) - 1;
-            try {
-                final String message = String.format("%s %s into project: %s", modeAction, request.getId(), request.getDestinationProject());
-                eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, batchTransferRequest.getTrackingId(), message));
-
-                validateRequest(request);
-                final EventInfo eventInfo = new EventInfo(trackingId, progress);
-                final XnatProjectdata destinationProjectData = XnatUtils.getProject(request.getDestinationProject(), user);
-                final ArchivableItem item = XnatUtils.getArchivableItem(request.getId(), null);
-
-                // We need to retrieve the item outside of the user's context so we can access archive path, etc.
-                // This means we need to carefully check our permissions on it.
-                if (!Permissions.canRead(user, item)) {
-                    throw new Exception("You do not have permission to read " + item.getId());
-                }
-
-                final String sourceProject = item.getProject();
-                if (sourceProject.equals(request.getDestinationProject())) {
-                    throw new Exception("Destination project cannot be the same as the source project.");
-                }
-
-                if (request.getMode() == TransferMode.SHARE) {
-                    if (!Features.checkRestrictedFeature(user, item.getProject(), Features.PROJECT_SHARING_FEATURE)) {
-                        throw new Exception("You do not have permission to share this data.");
-                    }
-                } else {
-                    if (!Features.checkRestrictedFeature(user, item.getProject(), Fields.PROJECT_COPYING_FEATURE)) {
-                        throw new Exception("You do not have permission to clone this data.");
-                    }
-                }
-
-                if (!Permissions.canCreate(user, item.getXSIType() + "/project", destinationProjectData.getId())) {
-                    throw new Exception("You do not have permission to create " + item.getXSIType() + " in " +
-                            destinationProjectData.getId());
-                }
-
-                if (item instanceof XnatSubjectdata) {
-                    final XnatSubjectdata sourceSubject = (XnatSubjectdata) item;
-                    final XnatSubjectdata existingSubject = XnatSubjectdata.GetSubjectByProjectIdentifier(destinationProjectData.getId(),
-                            sourceSubject.getLabel(), null, false);
-
-                    if (request.getMode().equals(TransferMode.SHARE)) {
-                        shareSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
-                    } else if (request.getMode().equals(TransferMode.CLONE)) {
-                        getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
-                    } else if (request.getMode().equals(TransferMode.REIMPORT)) {
-                        log.warn("Reimport operation is not supported for subjects.");
-                    } else {
-                        throw new Exception(String.format("Unsupported mode %s", request.getMode()));
-                    }
-                } else if (item instanceof XnatExperimentdata) {
-                    final XnatExperimentdata sourceExperiment = (XnatExperimentdata) item;
-                    final XnatExperimentdata existingExperiment = XnatExperimentdata.GetExptByProjectIdentifier(destinationProjectData.getId(),
-                            sourceExperiment.getLabel(), null, false);
-
-                    if (request.getMode().equals(TransferMode.SHARE)) {
-                        shareExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
-                    } else if (request.getMode().equals(TransferMode.CLONE)) {
-                        getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
-                    } else if (request.getMode().equals(TransferMode.REIMPORT)) {
-                        importExperiment(sourceExperiment, destinationProjectData, user, eventInfo);
-                    } else {
-                        throw new Exception(String.format("Unsupported mode %s", request.getMode()));
-                    }
-                } else {
-                    throw new Exception(String.format("Unsupported xsiType %s", item.getXSIType()));
-                }
-            } catch (Exception e) {
-                log.debug(e.getMessage(), e);
-                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
-                failures.add(err);
-                eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
+        // A batch usually carries a single operation, but the UI can mix them. Split by operation in
+        // one pass so each item takes the right path: Reimport fans out to a JMS queue per item; Clone
+        // fans out to a JMS queue per subject (one consumer owns each subject); Share (and any
+        // null/unknown mode) is processed in-process on the sequential path.
+        final List<TransferRequest> reimportItems   = new ArrayList<>();
+        final List<TransferRequest> cloneItems      = new ArrayList<>();
+        final List<TransferRequest> sequentialItems = new ArrayList<>();
+        for (final TransferRequest request : requests) {
+            final TransferMode mode = request.getMode();
+            if (mode == TransferMode.REIMPORT) {
+                reimportItems.add(request);
+            } else if (mode == TransferMode.CLONE) {
+                cloneItems.add(request);
+            } else {
+                sequentialItems.add(request);
             }
         }
 
-        if (!failures.isEmpty()) {
-            eventService.triggerEvent(BatchTransferEvent.warn(user.getID(), 100, batchTransferRequest.getTrackingId(), String.format("Transfer Complete with %s %s. Please review this log carefully.", failures.size(), failures.size() == 1 ? "warning" : "warnings")));
+        // Register the whole batch once; every item — whether queued (Reimport/Clone) or processed
+        // in-process (Share) — reports to the monitor, which emits the single terminal event after the
+        // last one finishes. This keeps one completion signal even when operations are mixed.
+        monitor.register(trackingId, user.getID(), requests.size());
+        if (!reimportItems.isEmpty()) {
+            enqueueReimport(trackingId, reimportItems, user);
+        }
+        if (!cloneItems.isEmpty()) {
+            enqueueClone(trackingId, cloneItems, user);
+        }
+        if (!sequentialItems.isEmpty()) {
+            runSequential(trackingId, sequentialItems, user);
+        }
+    }
+
+    /**
+     * Producer for the parallel Reimport path. Enqueues one {@link TransferItemRequest} per item;
+     * {@code TransferReimportListener} consumes them concurrently and each reports completion to the
+     * {@link BatchTransferMonitor}. The batch is registered with the monitor once by the caller
+     * ({@link #batchTransfer}), so this only enqueues; it runs on the executor thread, off the HTTP
+     * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
+     */
+    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+        for (final TransferRequest request : requests) {
+            try {
+                XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
+                        request.getDestinationProject(), user.getUsername(), user.getID()));
+            } catch (Exception e) {
+                // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
+                log.error("Failed to queue reimport for {}", request.getId(), e);
+                eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
+                        request.getId() + " could not be queued. Cause: " + e.getMessage()));
+                monitor.itemDone(trackingId, true);
+            }
+        }
+    }
+
+    /**
+     * Producer for the parallel Clone path. Groups the items by their subject and enqueues one
+     * {@link CloneSubjectRequest} per subject, so {@code CloneSubjectListener} processes each subject's
+     * items serially in a single consumer (creating the destination subject/experiment once, with no
+     * get-or-create race). Parallelism is across subjects. The batch is registered with the monitor once
+     * by the caller ({@link #batchTransfer}); each item reports completion via its consumer.
+     */
+    private void enqueueClone(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+        final Map<String, List<CloneSubjectRequest.CloneItem>> bySubject = new LinkedHashMap<>();
+        for (final TransferRequest request : requests) {
+            try {
+                final String subjectId = resolveSubjectId(request.getId());
+                bySubject.computeIfAbsent(subjectId, k -> new ArrayList<>())
+                        .add(new CloneSubjectRequest.CloneItem(request.getId(), request.getDestinationProject()));
+            } catch (Exception e) {
+                // Couldn't determine the subject — report this item failed so the batch still finishes.
+                log.error("Failed to group clone item {}", request.getId(), e);
+                eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
+                        request.getId() + " could not be queued. Cause: " + e.getMessage()));
+                monitor.itemDone(trackingId, true);
+            }
+        }
+
+        for (final Map.Entry<String, List<CloneSubjectRequest.CloneItem>> entry : bySubject.entrySet()) {
+            try {
+                XDAT.sendJmsRequest(new CloneSubjectRequest(trackingId, entry.getKey(), entry.getValue(),
+                        user.getUsername(), user.getID()));
+            } catch (Exception e) {
+                // Couldn't enqueue this subject's bundle — report all of its items failed.
+                log.error("Failed to queue clone bundle for subject {}", entry.getKey(), e);
+                for (final CloneSubjectRequest.CloneItem item : entry.getValue()) {
+                    eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
+                            item.getItemId() + " could not be queued. Cause: " + e.getMessage()));
+                    monitor.itemDone(trackingId, true);
+                }
+            }
+        }
+    }
+
+    /** Resolves an item's subject id for Clone grouping: subject → itself; experiment → its subject; assessor → its session's subject. */
+    private String resolveSubjectId(final String itemId) throws Exception {
+        final ArchivableItem item = XnatUtils.getArchivableItem(itemId, null);
+        final String subjectId;
+        if (item instanceof XnatSubjectdata) {
+            subjectId = item.getId();
+        } else if (item instanceof XnatImageassessordata) {
+            subjectId = (String) ((XnatImageassessordata) item).getImageSessionData().getProperty("subject_ID");
+        } else if (item instanceof XnatExperimentdata) {
+            subjectId = (String) ((XnatExperimentdata) item).getProperty("subject_ID");
         } else {
-            eventService.triggerEvent(BatchTransferEvent.complete(user.getID(), batchTransferRequest.getTrackingId(), "Transfer Complete"));
+            subjectId = null;
+        }
+        if (StringUtils.isBlank(subjectId)) {
+            throw new Exception("Could not determine the subject for " + itemId);
+        }
+        return subjectId;
+    }
+
+    /**
+     * In-process path for Share (and any null/unknown-mode) items. Calls {@link #processItem} per item
+     * and reports each one to the {@link BatchTransferMonitor}; the monitor (not this method) emits the
+     * batch's single terminal event once every item across all operations has finished — so this path
+     * composes with the parallel Reimport/Clone queues in a mixed batch.
+     */
+    private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+        for (final TransferRequest request : requests) {
+            final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
+            final int progress = monitor.currentPercent(trackingId);
+            boolean failed = false;
+            try {
+                eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, trackingId,
+                        String.format("%s %s into project: %s", modeAction, request.getId(), request.getDestinationProject())));
+                processItem(request, user, new EventInfo(trackingId, progress));
+            } catch (Exception e) {
+                failed = true;
+                log.debug(e.getMessage(), e);
+                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+                eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
+            }
+            // Report completion; the monitor emits the batch's terminal event when the last item finishes.
+            monitor.itemDone(trackingId, failed);
+        }
+    }
+
+    /**
+     * Validates, loads, permission-checks, and dispatches a single transfer item by mode. Shared by
+     * the sequential path ({@link #runSequential}) and the JMS consumers, so it is the single source
+     * of truth for per-item transfer logic. Throws on any failure; the caller records it (a fail
+     * event in the sequential path, a failed workflow + fail event in the consumer).
+     */
+    @Override
+    public void processItem(final TransferRequest request, final UserI user, final EventInfo eventInfo) throws Exception {
+        validateRequest(request);
+        final XnatProjectdata destinationProjectData = XnatUtils.getProject(request.getDestinationProject(), user);
+        final ArchivableItem item = XnatUtils.getArchivableItem(request.getId(), null);
+
+        // We retrieve the item outside of the user's context so we can access archive path, etc.,
+        // so we carefully check our permissions on it here.
+        if (!Permissions.canRead(user, item)) {
+            throw new Exception("You do not have permission to read " + item.getId());
+        }
+
+        final String sourceProject = item.getProject();
+        if (sourceProject.equals(request.getDestinationProject())) {
+            throw new Exception("Destination project cannot be the same as the source project.");
+        }
+
+        if (request.getMode() == TransferMode.SHARE) {
+            if (!Features.checkRestrictedFeature(user, item.getProject(), Features.PROJECT_SHARING_FEATURE)) {
+                throw new Exception("You do not have permission to share this data.");
+            }
+        } else {
+            if (!Features.checkRestrictedFeature(user, item.getProject(), Fields.PROJECT_COPYING_FEATURE)) {
+                throw new Exception("You do not have permission to clone this data.");
+            }
+        }
+
+        if (!Permissions.canCreate(user, item.getXSIType() + "/project", destinationProjectData.getId())) {
+            throw new Exception("You do not have permission to create " + item.getXSIType() + " in " +
+                    destinationProjectData.getId());
+        }
+
+        if (item instanceof XnatSubjectdata) {
+            final XnatSubjectdata sourceSubject = (XnatSubjectdata) item;
+            final XnatSubjectdata existingSubject = XnatSubjectdata.GetSubjectByProjectIdentifier(destinationProjectData.getId(),
+                    sourceSubject.getLabel(), null, false);
+
+            if (request.getMode().equals(TransferMode.SHARE)) {
+                shareSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+            } else if (request.getMode().equals(TransferMode.CLONE)) {
+                getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+            } else if (request.getMode().equals(TransferMode.REIMPORT)) {
+                log.warn("Reimport operation is not supported for subjects.");
+            } else {
+                throw new Exception(String.format("Unsupported mode %s", request.getMode()));
+            }
+        } else if (item instanceof XnatExperimentdata) {
+            final XnatExperimentdata sourceExperiment = (XnatExperimentdata) item;
+            // Reimport does not use the existing-experiment lookup; skip that DB query for it.
+            final XnatExperimentdata existingExperiment = (request.getMode() == TransferMode.REIMPORT) ? null
+                    : XnatExperimentdata.GetExptByProjectIdentifier(destinationProjectData.getId(), sourceExperiment.getLabel(), null, false);
+
+            if (request.getMode().equals(TransferMode.SHARE)) {
+                shareExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+            } else if (request.getMode().equals(TransferMode.CLONE)) {
+                getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+            } else if (request.getMode().equals(TransferMode.REIMPORT)) {
+                importExperiment(sourceExperiment, destinationProjectData, user, eventInfo);
+            } else {
+                throw new Exception(String.format("Unsupported mode %s", request.getMode()));
+            }
+        } else {
+            throw new Exception(String.format("Unsupported xsiType %s", item.getXSIType()));
         }
     }
 
@@ -212,7 +348,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
         final StreamingZipFileWriter wrapper = new StreamingZipFileWriter(sourcePath, sourceExperiment.getId() + ".zip");
         final AtomicReference<List<String>> uriRef = new AtomicReference<>();
-        XnatUtils.doActionWithWorkflow(user, sourceExperiment, "Streaming experiment for import.", () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceExperiment,
+                sourceWorkflowLabel(TransferMode.REIMPORT, sourceExperiment.getLabel(), destinationProjectData.getId()), () -> {
             final List<String> result = runImporter(user, wrapper, params);
             if (result == null || result.isEmpty()) {
                 throw new Exception("No DICOM files found in source experiment " + sourceExperiment.getId() + "; nothing to reimport.");
@@ -360,16 +497,35 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
         private void produce() {
             final ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(pipedOut, 65536));
-            zos.setLevel(Deflater.BEST_SPEED);
+            zos.setLevel(Deflater.NO_COMPRESSION);
             final byte[] buffer = new byte[65536];
-            try (Stream<Path> paths = Files.walk(sourceDir)) {
-                // writeEntry returns false once the consumer closes the pipe; allMatch then stops
-                // streaming. Real source-read failures throw and are caught (and recorded) below.
-                paths.filter(Files::isRegularFile)
-                     .filter(p -> StreamSupport.stream(p.spliterator(), false)
-                             .anyMatch(part -> part.toString().equals("DICOM")))
-                     .filter(p -> !p.getFileName().toString().toLowerCase().endsWith("catalog.xml"))
-                     .allMatch(p -> writeEntry(zos, p, buffer));
+            try {
+                // Prune everything except the SCANS directory directly under the source root (RESOURCES,
+                // the session XML, etc.) and follow symlinks. The walk supplies each file's attributes,
+                // so there is no second stat per file.
+                Files.walkFileTree(sourceDir, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
+                        new SimpleFileVisitor<Path>() {
+                            @Override
+                            public FileVisitResult preVisitDirectory(final Path dir, final BasicFileAttributes attrs) {
+                                // Only descend into the SCANS directory immediately under the source root.
+                                if (sourceDir.equals(dir.getParent())
+                                        && !dir.getFileName().toString().equalsIgnoreCase("SCANS")) {
+                                    return FileVisitResult.SKIP_SUBTREE;
+                                }
+                                return FileVisitResult.CONTINUE;
+                            }
+
+                            @Override
+                            public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) {
+                                if (attrs.isRegularFile()
+                                        && hasPathComponent(file, "DICOM")
+                                        && !file.getFileName().toString().toLowerCase().endsWith("catalog.xml")) {
+                                    // writeEntry returns false once the consumer closes the pipe → stop walking.
+                                    return writeEntry(zos, file, buffer) ? FileVisitResult.CONTINUE : FileVisitResult.TERMINATE;
+                                }
+                                return FileVisitResult.CONTINUE;
+                            }
+                        });
             } catch (UncheckedIOException e) {
                 recordError(e.getCause());   // a source DICOM file could not be read
             } catch (IOException e) {
@@ -377,6 +533,16 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } finally {
                 finishZip(zos);
             }
+        }
+
+        /** True if any component of {@code p} matches {@code component}, ignoring case (archive folders are conventionally upper-case). */
+        private static boolean hasPathComponent(final Path p, final String component) {
+            for (final Path part : p) {
+                if (part.toString().equalsIgnoreCase(component)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void recordError(final Throwable cause) {
@@ -556,7 +722,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceAssess, "Cloned into project: " + newAssessor.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceAssess, sourceWorkflowLabel(TransferMode.CLONE, sourceAssess.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceAssess, newAssessor, filepath, newFilepath);
             return true;
         });
@@ -634,7 +800,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceExpt, "Cloned into project: " + newExperiment.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceExpt, sourceWorkflowLabel(TransferMode.CLONE, sourceExpt.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceExpt, newExperiment, filepath, newFilepath);
             return true;
         });
@@ -683,11 +849,19 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             fixPaths(res, filepath, newFilepath);
         }
 
-        XnatUtils.doActionWithWorkflow(user, sourceSubject, "Cloned into project: " + newSubject.getProject(), () -> {
+        XnatUtils.doActionWithWorkflow(user, sourceSubject, sourceWorkflowLabel(TransferMode.CLONE, sourceSubject.getLabel(), destinationProjectData.getId()), () -> {
             saveItemAndCopyFiles(user, sourceSubject, newSubject, filepath, newFilepath);
             return true;
         });
         return newSubject;
+    }
+
+    /**
+     * Builds the source-item workflow label for Clone/Reimport, e.g. "Cloned sess1 to project P2".
+     * Centralized so the wording stays consistent across operations. (Share keeps its own label.)
+     */
+    private static String sourceWorkflowLabel(final TransferMode mode, final String sourceLabel, final String destProjectId) {
+        return mode.getPastAction() + " " + sourceLabel + " to project " + destProjectId;
     }
 
     /**
@@ -701,7 +875,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * @param dest       - The destination filepath
      * @throws Exception
      */
-    private void saveItemAndCopyFiles(final UserI user, final ArchivableItem sourceItem, final ArchivableItem newItem, final String source, final String dest) throws Exception {
+    // Package-private (not private) so BatchTransferServiceImplTest can drive the save+link path directly.
+    void saveItemAndCopyFiles(final UserI user, final ArchivableItem sourceItem, final ArchivableItem newItem, final String source, final String dest) throws Exception {
         try {
             EventDetails details = EventUtils.newEventInstance(EventUtils.CATEGORY.DATA, EventUtils.TYPE.WEB_SERVICE, "Item Saved");
             SaveItemHelper.authorizedSave(newItem, user, false, false, details);
@@ -709,11 +884,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             throw new Exception("Failed to save item", e);
         }
 
+        // Link files directly (no separate workflow): the enclosing source-item workflow
+        // (e.g. "Cloned sess1 to project P2") already wraps this whole method, so a link failure
+        // still fails that workflow and triggers the rollback below. The destination copy
+        // intentionally carries no plugin workflow of its own.
         try {
-            XnatUtils.doActionWithWorkflow(user, newItem, "Files Cloned", () -> {
-                FileUtil.linkFiles(source, dest);
-                return true;
-            });
+            FileUtil.linkFiles(source, dest);
         } catch (Exception e) {
             XnatUtils.deleteItemWithoutSecurity(newItem);
             final Path destDir = Paths.get(dest);
