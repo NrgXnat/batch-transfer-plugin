@@ -10,13 +10,15 @@ The Batch Transfer Plugin enables bulk data operations across XNAT projects. Use
 
 ## Completed
 
-### 1.0.1-RC — Performance & hardening
+## 1.0.1 — Performance & hardening
 - **Parallel processing via JMS queues** — Reimport (per session) and Clone (per subject) dispatched onto in-process (`vm://`) JMS queues instead of a single sequential loop; in-memory `BatchTransferMonitor` fan-in emits one terminal event per batch
 - **Admin-tunable queue concurrency** — site-admin settings + `GET`/`POST /xapi/batch_transfer/jms_queues`; defaults Reimport 4–8, Clone 1–2 (`min = max = 1` for serial)
 - **Operation-aware batch routing** — mixed Share/Clone/Reimport batches split by operation and routed to the correct queue or the sequential path
 - **Faster Clone copy** — archive copy reads only catalog/XML files and hard-links the rest (no longer opens every file)
 - **Unified workflow history** — consistent past-tense source-item labels ("Cloned/Shared/Reimported `<item>` to project `<dest>`"); removed the redundant destination-side "Files Cloned" workflow (4 → 2 workflow writes per cloned item)
 - **Parameterized listing query** — subject/experiment listing SQL fully parameterized (`:userId`, `:project`, `:ids`); closes a SQL-injection vector
+
+## 1.0.0
 
 ### UI Modernization
 - Two-panel layout replacing legacy jsTree-based form (sidebar + data table)
