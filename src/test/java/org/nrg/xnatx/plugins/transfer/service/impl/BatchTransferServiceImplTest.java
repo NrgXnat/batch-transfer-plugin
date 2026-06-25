@@ -190,7 +190,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
-                    preserveSubjectLabel, preserveSessionLabel), user, eventInfo());
+                    preserveSubjectLabel, preserveSessionLabel, null), user, eventInfo());
 
             verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
             return paramsCaptor.getValue();
@@ -459,7 +459,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -487,7 +487,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true, null));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }

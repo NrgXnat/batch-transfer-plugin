@@ -7,6 +7,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.Map;
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -20,9 +22,12 @@ public class TransferRequest {
     private Boolean preserveSubjectLabel;
     // Reimport only: preserve the source session's XNAT label by passing it to the importer
     private Boolean preserveSessionLabel;
+    // Reimport only: substitution values
+    private Map<String, String> csvValues;
 
     //  Retain no-preserve-flag default constructor
     public TransferRequest(String destinationProject, String id, TransferMode mode) {
-        this(destinationProject, id, mode, null, null);
+        this(destinationProject, id, mode, null, null, null);
     }
+
 }

@@ -1,7 +1,9 @@
 package org.nrg.xnatx.plugins.transfer.api;
 
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
+import org.nrg.xnatx.plugins.transfer.model.TransferCapabilities;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.service.TransferCapabilitiesService;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
@@ -19,6 +21,7 @@ import io.swagger.annotations.Api;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+import static org.springframework.web.bind.annotation.RequestMethod.GET;
 import static org.springframework.web.bind.annotation.RequestMethod.POST;
 
 @Slf4j
@@ -28,10 +31,13 @@ import static org.springframework.web.bind.annotation.RequestMethod.POST;
 public class BatchTransferApi extends AbstractXapiRestController {
 
     private final BatchTransferService batchTransferService;
+    private final TransferCapabilitiesService capabilitiesService;
 
-    protected BatchTransferApi(UserManagementServiceI userManagementService, RoleHolder roleHolder, BatchTransferService batchTransferService) {
+    protected BatchTransferApi(UserManagementServiceI userManagementService, RoleHolder roleHolder,
+                               BatchTransferService batchTransferService, TransferCapabilitiesService capabilitiesService) {
         super(userManagementService, roleHolder);
         this.batchTransferService = batchTransferService;
+        this.capabilitiesService = capabilitiesService;
     }
 
     @ApiOperation(value = "Submits an async batch transfer request")
@@ -45,5 +51,13 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
         batchTransferService.submitTransferRequest(batchTransferRequest, getSessionUser());
         return new ResponseEntity<>(HttpStatus.OK);
+    }
+
+    @ApiOperation(value = "Reports per-import anonymization capability and limits for this XNAT build")
+    @ApiResponses({ @ApiResponse(code = 200, message = "Capabilities returned") })
+    @XapiRequestMapping(value = {"capabilities"}, produces = APPLICATION_JSON_VALUE, method = GET)
+    @ResponseBody
+    public ResponseEntity<TransferCapabilities> capabilities() {
+        return new ResponseEntity<>(capabilitiesService.getCapabilities(), HttpStatus.OK);
     }
 }
