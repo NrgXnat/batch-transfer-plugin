@@ -1,5 +1,6 @@
 package org.nrg.xnatx.plugins.transfer.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategy;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -24,10 +25,10 @@ public class TransferRequest {
     private Boolean preserveSessionLabel;
     // Reimport only: substitution values
     private Map<String, String> csvValues;
-
+    @JsonIgnore
+    private String anonScript;
     //  Retain no-preserve-flag default constructor
     public TransferRequest(String destinationProject, String id, TransferMode mode) {
-        this(destinationProject, id, mode, null, null, null);
+        this(destinationProject, id, mode, null, null, null, null);
     }
-
 }

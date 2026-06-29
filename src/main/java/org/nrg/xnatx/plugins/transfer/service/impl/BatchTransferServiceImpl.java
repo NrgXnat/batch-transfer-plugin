@@ -136,7 +136,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             log.info("Batch {} was already registered by another node; continuing.", trackingId);
         }
         if (!reimportItems.isEmpty()) {
-            enqueueReimport(trackingId, reimportItems, user);
+            enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(), user);
         }
         if (!cloneItems.isEmpty()) {
             enqueueClone(trackingId, cloneItems, user);
@@ -153,12 +153,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * ({@link #batchTransfer}), so this only enqueues; it runs on the executor thread, off the HTTP
      * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
      */
-    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final String anonScript, final UserI user) {
         for (final TransferRequest request : requests) {
             try {
                 XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
                         request.getDestinationProject(), user.getUsername(), user.getID(),
-                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel()));
+                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), anonScript));
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -320,7 +320,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } else if (request.getMode().equals(TransferMode.REIMPORT)) {
                 importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
                         request.getPreserveSubjectLabel(),
-                        request.getPreserveSessionLabel());
+                        request.getPreserveSessionLabel(),
+                        request.getAnonScript());
             } else {
                 throw new Exception(String.format("Unsupported mode %s", request.getMode()));
             }
@@ -346,7 +347,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
-                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel) throws Exception {
+                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel, String anonScript) throws Exception {
         if (sourceExperiment instanceof XnatImageassessordata) {
             throw new Exception("Reimport operation is not supported for assessors.");
         }
@@ -356,10 +357,10 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         params.put("rename", "true");
         params.put("project", destinationProjectData.getId());
         params.put("action", "commit");
-        // AA drives DicomZipImporter.isAutoArchive(), which ignores the project's prearchive code, so
-        // gate it on that code: auto-archive => archive inline; Manual => leave built in the prearchive.
         if (destinationAutoArchives(destinationProjectData.getId())) {
             params.put("AA", "true");
+        if (StringUtils.isNotBlank(anonScript)) {
+            params.put("Anon-Script", anonScript);
         }
 
         // Preserve the source XNAT labels instead of letting the destination derive them from DICOM

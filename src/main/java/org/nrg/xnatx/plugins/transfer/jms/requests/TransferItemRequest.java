@@ -31,4 +31,5 @@ public class TransferItemRequest implements Serializable {
     private final Integer requestingUserId;
     private final Boolean preserveSubjectLabel;
     private final Boolean preserveSessionLabel;
+    private final String  anonScript;
 }

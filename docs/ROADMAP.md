@@ -1,8 +1,8 @@
 # Batch Transfer Plugin — Roadmap
 
-**Plugin Version**: 1.1.1 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
+**Plugin Version**: 1.2.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
 **Target XNAT**: 1.9.3.3
-**Last Updated**: 2026-07-02
+**Last Updated**: 2026-06-30
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
@@ -59,6 +59,17 @@ Multi-node correctness for deployments using a shared external JMS broker (singl
 ### Testing & Release
 - XNAT 1.9 compatibility
 - **1.0.0 rebrand** (Batch Share → Batch Transfer; Copy → Clone, Import → Reimport)
+
+---
+
+## 2.0.0 — Cohort building, custom anonymization & transfer history (planned)
+
+Conduit-inspired UI/UX expansion. **Design + mockups: [docs/2.0.0-ui-plan.md](2.0.0-ui-plan.md) · REST API: [docs/2.0.0-rest-api.md](2.0.0-rest-api.md) · Implementation: [docs/2.0.0-implementation-plan.md](2.0.0-implementation-plan.md).** Deliberately does *not* adopt conduit's job engine (no new job/row tables, dashboard, or per-row retry).
+
+- **Cohort building as step 1** — a first-class first step; pick data by the interactive tree *or* by uploading a **manifest CSV** (synchronous resolve-on-upload, matched/not-found review). Two top tabs: *New transfer* (landing) / *Transfer history*.
+- **Custom DicomEdit anonymization for Reimport** — a one-off script applied on top of the destination pipeline, with per-session `${csv.*}` values substituted from the manifest; 256 KB cap; SHA-256 audited on the workflow. Rides the per-import `Anon-Script` importer param and is **feature-detected** (`perImportAnonSupported()`) so it degrades gracefully on XNAT builds without it.
+- **Transfer history** — runs list + per-item run detail, backed by a single **`batch_transfer_history`** header table (structured / filterable / permanent) + **`jobid`-grouped workflows** for per-item detail; live progress via `EventTrackingData`. One run-header table, **no per-row table** (still not conduit's job engine).
+- **UI** — horizontal config-band layout (Source→Destination · Operation · Cohort · Anonymization), rounded-box operation radios, sticky action bar, inline-styled confirmation dialog.
 
 ---
 

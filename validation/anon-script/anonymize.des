@@ -1,0 +1,19 @@
+version "6.1"
+
+// =========================================================================
+//  Batch Transfer — API anon-script validation fixture (DicomEdit 6)
+//
+//  Deliberately recognizable: verify-anon-applied.sh reads these edits back
+//  from the reimported DICOM in the destination project to prove THIS script
+//  ran at ingest.
+// =========================================================================
+
+// Sentinel — a unique value grep-able in the destination DICOM:
+(0008,1030) := "API_ANON_OK"            // StudyDescription
+
+// A removal, to show edits beyond assignment take effect:
+- (0010,0010)                           // PatientName
+
+// Optional: rewrite identifiers (uncomment to also drive the destination
+// subject/session labels from these tags on reimport).
+// (0010,0020) := "ANON_API_ID"         // PatientID

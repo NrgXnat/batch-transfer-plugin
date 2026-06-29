@@ -190,7 +190,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
-                    preserveSubjectLabel, preserveSessionLabel, null), user, eventInfo());
+                    preserveSubjectLabel, preserveSessionLabel, null, null), user, eventInfo());
 
             verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
             return paramsCaptor.getValue();
@@ -459,7 +459,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null, null));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -571,6 +571,52 @@ public class BatchTransferServiceImplTest {
                     !paramsCaptor.getValue().containsKey("subject"));
             assertTrue("null preserveSessionLabel must add no session override",
                     !paramsCaptor.getValue().containsKey("session"));
+        }
+    }
+
+    /**
+     * Phase 1A: a REIMPORT carrying a custom anon script forwards it to the importer as the
+     * {@code Anon-Script} param. (A request without one adds no such key — see the happy-path test, whose
+     * captured params never contain it.)
+     */
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public void importImagesession_customAnonScript_passedToImporterParams() throws Exception {
+        stubImageSessionAsSource();
+
+        final String script = "version \"6.1\"\n(0010,0010) := \"ANON\"";
+        final List<String> importerUris = Collections.singletonList(
+                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
+        final ArgumentCaptor<Map> params = ArgumentCaptor.forClass(Map.class);
+        doReturn(importerUris).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), params.capture());
+
+        try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats  = mockStatic(Features.class);
+             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
+             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
+             MockedConstruction<PrearchiveOperationRequest> req =
+                     mockConstruction(PrearchiveOperationRequest.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)))
+                    .thenAnswer(inv -> {
+                        ((Callable<?>) inv.getArgument(3)).call();
+                        return true;
+                    });
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
+
+            final TransferRequest withScript = reimport(EXP_ID);
+            withScript.setAnonScript(script);
+            service.processItem(withScript, user, eventInfo());
+
+            assertEquals(script, params.getValue().get("Anon-Script"));
         }
     }
 
