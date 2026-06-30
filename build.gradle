@@ -1,6 +1,6 @@
 buildscript {
     ext {
-        vXnat = "1.9.3.5"
+        vXnat = "1.9.3.3"
         pluginAppName = "Batch Transfer Plugin"
     }
 }
