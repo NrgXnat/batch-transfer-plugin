@@ -1008,3 +1008,42 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-proj-locked-name {
     font-weight: 600;
 }
+
+/* Reimport: preserve-source-label checkboxes, laid out side by side (Subject | Session). */
+.bt-label-options {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e8eaed;
+}
+
+.bt-label-options-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: #202124;
+    margin-bottom: 3px;
+}
+
+.bt-label-options-help {
+    font-size: 12px;
+    color: #5f6368;
+    line-height: 1.45;
+    margin: 0 0 10px;
+}
+
+.bt-label-checks {
+    display: flex;
+    gap: 20px;
+}
+
+.bt-label-checks label {
+    display: inline-flex;
+    align-items: center;
+    font-size: 13px;
+    color: #3c4043;
+    cursor: pointer;
+}
+
+.bt-label-checks input[type="checkbox"] {
+    margin: 0 6px 0 0;
+    vertical-align: middle;
+}

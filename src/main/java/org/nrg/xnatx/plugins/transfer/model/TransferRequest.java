@@ -16,4 +16,13 @@ public class TransferRequest {
     private String destinationProject;
     private String id;
     private TransferMode mode;
+    // Reimport only: preserve the source subject's XNAT label by passing it to the importer
+    private Boolean preserveSubjectLabel;
+    // Reimport only: preserve the source session's XNAT label by passing it to the importer
+    private Boolean preserveSessionLabel;
+
+    //  Retain no-preserve-flag default constructor
+    public TransferRequest(String destinationProject, String id, TransferMode mode) {
+        this(destinationProject, id, mode, null, null);
+    }
 }

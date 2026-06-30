@@ -82,6 +82,16 @@
                     <div class="bt-op-desc">Re-anonymize image sessions</div>
                 </div>
             </div>
+            <!-- Reimport only: preserve source XNAT labels instead of deriving them from DICOM tags. -->
+            <div id="bt-reimport-label-option" class="bt-label-options" style="display:none;">
+                <div class="bt-label-options-title">Preserve source labels</div>
+                <p class="bt-label-options-help">Use the source's XNAT labels instead of deriving them from DICOM tags.</p>
+                <div class="bt-label-checks">
+                    <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
+                    <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
+                </div>
+            </div>
+
         </div>
 
         <!-- About this transfer (operation description + anon status) -->
