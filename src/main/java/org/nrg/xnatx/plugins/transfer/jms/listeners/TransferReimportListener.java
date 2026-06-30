@@ -69,7 +69,8 @@ public class TransferReimportListener {
         try {
             eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
                     monitor.currentPercent(trackingId), trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
-            service.processItem(new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT),
+            service.processItem(new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT,
+                            request.getPreserveSubjectLabel(), request.getPreserveSessionLabel()),
                     user, new EventInfo(trackingId, monitor.currentPercent(trackingId)));
         } catch (Exception e) {
             log.error("Reimport {} failed", itemId, e);

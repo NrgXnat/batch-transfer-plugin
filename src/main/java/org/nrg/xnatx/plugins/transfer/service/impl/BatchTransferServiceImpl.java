@@ -153,7 +153,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         for (final TransferRequest request : requests) {
             try {
                 XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
-                        request.getDestinationProject(), user.getUsername(), user.getID()));
+                        request.getDestinationProject(), user.getUsername(), user.getID(),
+                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel()));
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -311,7 +312,9 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } else if (request.getMode().equals(TransferMode.CLONE)) {
                 getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
             } else if (request.getMode().equals(TransferMode.REIMPORT)) {
-                importExperiment(sourceExperiment, destinationProjectData, user, eventInfo);
+                importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
+                        request.getPreserveSubjectLabel(),
+                        request.getPreserveSessionLabel());
             } else {
                 throw new Exception(String.format("Unsupported mode %s", request.getMode()));
             }
@@ -336,7 +339,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         }
     }
 
-    private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+    private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
+                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel) throws Exception {
         if (sourceExperiment instanceof XnatImageassessordata) {
             throw new Exception("Reimport operation is not supported for assessors.");
         }
@@ -345,6 +349,27 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         params.put("Ignore-Unparsable", "true");
         params.put("rename", "true");
         params.put("project", destinationProjectData.getId());
+
+        // Preserve the source XNAT labels instead of letting the destination derive them from DICOM
+        // tags. If the user asked to preserve a label but it is blank or missing, there is nothing
+        // usable to override with, so fail the item rather than silently skipping the substitution.
+        if (Boolean.TRUE.equals(preserveSubjectLabel)) {
+            final XnatSubjectdata sourceSubject = XnatUtils.getSubject((String) sourceExperiment.getProperty("subject_ID"), user);
+            final String subjectLabel = sourceSubject.getLabel();
+            if (StringUtils.isBlank(subjectLabel)) {
+                throw new Exception("Cannot preserve the source subject label for " + sourceExperiment.getId()
+                        + ": the source subject label is blank or missing.");
+            }
+            params.put("subject", subjectLabel);
+        }
+        if (Boolean.TRUE.equals(preserveSessionLabel)) {
+            final String sessionLabel = sourceExperiment.getLabel();
+            if (StringUtils.isBlank(sessionLabel)) {
+                throw new Exception("Cannot preserve the source session label for " + sourceExperiment.getId()
+                        + ": the source session label is blank or missing.");
+            }
+            params.put("session", sessionLabel);
+        }
 
         final StreamingZipFileWriter wrapper = new StreamingZipFileWriter(sourcePath, sourceExperiment.getId() + ".zip");
         final AtomicReference<List<String>> uriRef = new AtomicReference<>();

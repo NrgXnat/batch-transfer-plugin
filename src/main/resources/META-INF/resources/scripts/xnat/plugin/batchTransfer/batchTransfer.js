@@ -191,6 +191,8 @@ var XNAT = getObject(XNAT || {});
 
     function updateOperationDetail() {
         $('#bt-op-detail-desc').text(operationDetails[selectedOp] || '');
+        // The preserve-source-label checkboxes only apply to Reimport.
+        $('#bt-reimport-label-option').toggle(selectedOp === 'Reimport');
     }
 
     // ── Operation Selection ──
@@ -672,15 +674,25 @@ var XNAT = getObject(XNAT || {});
             return false;
         }
 
+        // Reimport only: whether to preserve the source XNAT subject/session labels (server resolves
+        // the actual label values). Ignored for Share/Clone.
+        var preserveSubjectLabel = (selectedOp === 'Reimport') && $('#bt-preserve-subject-label').is(':checked');
+        var preserveSessionLabel = (selectedOp === 'Reimport') && $('#bt-preserve-session-label').is(':checked');
+
         var items = [];
         $selected.each(function() {
             var id = $(this).data('id');
             if (id) {
-                items.push({
+                var item = {
                     id: id,
                     mode: selectedOp,
                     destination_project: selectedProject
-                });
+                };
+                if (selectedOp === 'Reimport') {
+                    item.preserve_subject_label = preserveSubjectLabel;
+                    item.preserve_session_label = preserveSessionLabel;
+                }
+                items.push(item);
             }
         });
 

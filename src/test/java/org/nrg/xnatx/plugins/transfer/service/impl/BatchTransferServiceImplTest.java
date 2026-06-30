@@ -158,6 +158,60 @@ public class BatchTransferServiceImplTest {
                 .thenReturn(tmp.newFolder("src").getAbsolutePath());
     }
 
+    private static final String SUBJECT_ID    = "SUBJ1";
+    private static final String SUBJECT_LABEL = "subjectLabel";
+
+    /**
+     * Drives a REIMPORT of the image session with the given preserve-label flags and returns the
+     * parameter map handed to the (spy-stubbed) {@code runImporter} seam, so a test can assert which
+     * label overrides ("subject" / "session") were set. {@code subjectLabel} is what the resolved
+     * source subject reports as its label (pass blank to exercise the "blank ⇒ no override" path).
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> reimportCapturingImporterParams(final boolean preserveSubjectLabel,
+                                                                final boolean preserveSessionLabel,
+                                                                final String subjectLabel) throws Exception {
+        stubImageSessionAsSource();
+        when(imageSession.getProperty("subject_ID")).thenReturn(SUBJECT_ID);
+        when(subject.getLabel()).thenReturn(subjectLabel);
+
+        final List<String> importerUris = Collections.singletonList(
+                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
+        doReturn(importerUris).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats  = mockStatic(Features.class);
+             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
+             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
+             MockedConstruction<PrearchiveOperationRequest> req =
+                     mockConstruction(PrearchiveOperationRequest.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.getSubject(SUBJECT_ID, user)).thenReturn(subject);
+            utils.when(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)))
+                    .thenAnswer(inv -> {
+                        ((Callable<?>) inv.getArgument(3)).call();
+                        return true;
+                    });
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
+
+            service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
+                    preserveSubjectLabel, preserveSessionLabel), user, eventInfo());
+
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            return paramsCaptor.getValue();
+        }
+    }
+
     // -----------------------------------------------------------------
     // Tests
     // -----------------------------------------------------------------
@@ -322,6 +376,184 @@ public class BatchTransferServiceImplTest {
             prearc.verify(() -> PrearcUtils.queuePrearchiveOperation(any()));
             assertEquals(1, sess.constructed().size());
             assertEquals(1, req.constructed().size());
+        }
+    }
+
+    /**
+     * Preserve-label flags (issue #10): each flag independently adds a label override to the importer
+     * params — "subject" (→ SUBJECT_ID) from the source subject label and "session" (→ EXPT_LABEL) from
+     * the source session label — so the destination uses the source XNAT labels instead of deriving them
+     * from DICOM tags. The four flag combinations are asserted via the captured runImporter params.
+     */
+    @Test
+    public void preserveLabels_both_addsSubjectAndSessionOverrides() throws Exception {
+        final Map<String, Object> params = reimportCapturingImporterParams(true, true, SUBJECT_LABEL);
+        assertEquals(SUBJECT_LABEL, params.get("subject"));
+        assertEquals(LABEL, params.get("session"));
+    }
+
+    @Test
+    public void preserveLabels_subjectOnly_addsSubjectOverrideOnly() throws Exception {
+        final Map<String, Object> params = reimportCapturingImporterParams(true, false, SUBJECT_LABEL);
+        assertEquals(SUBJECT_LABEL, params.get("subject"));
+        assertTrue("session override must not be set when only subject is preserved",
+                !params.containsKey("session"));
+    }
+
+    @Test
+    public void preserveLabels_sessionOnly_addsSessionOverrideOnly() throws Exception {
+        final Map<String, Object> params = reimportCapturingImporterParams(false, true, SUBJECT_LABEL);
+        assertEquals(LABEL, params.get("session"));
+        assertTrue("subject override must not be set when only session is preserved",
+                !params.containsKey("subject"));
+    }
+
+    @Test
+    public void preserveLabels_none_addsNoOverrides() throws Exception {
+        final Map<String, Object> params = reimportCapturingImporterParams(false, false, SUBJECT_LABEL);
+        assertTrue("subject override must not be set", !params.containsKey("subject"));
+        assertTrue("session override must not be set", !params.containsKey("session"));
+    }
+
+    /**
+     * Drives a REIMPORT that preserves only the subject label, with the resolved source subject
+     * reporting {@code subjectLabel}, and returns the thrown exception (or null). Used for the
+     * blank/missing-label error cases; asserts the importer is never invoked.
+     */
+    private Exception reimportExpectingSubjectLabelError(final String subjectLabel) throws Exception {
+        stubImageSessionAsSource();
+        when(imageSession.getProperty("subject_ID")).thenReturn(SUBJECT_ID);
+        when(subject.getLabel()).thenReturn(subjectLabel);
+
+        try (MockedStatic<XnatUtils>   utils = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats = mockStatic(Features.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.getSubject(SUBJECT_ID, user)).thenReturn(subject);
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+
+            final Exception thrown = processItemCatching(
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false));
+            verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+            return thrown;
+        }
+    }
+
+    /**
+     * Drives a REIMPORT that preserves only the session label, with the source session reporting
+     * {@code sessionLabel}, and returns the thrown exception (or null). Asserts the importer is never invoked.
+     */
+    private Exception reimportExpectingSessionLabelError(final String sessionLabel) throws Exception {
+        when(imageSession.getXSIType()).thenReturn("xnat:mrSessionData");
+        when(imageSession.getProject()).thenReturn(SRC_PROJECT);
+        when(imageSession.getId()).thenReturn(EXP_ID);
+        when(imageSession.getLabel()).thenReturn(sessionLabel);
+        when(imageSession.getCurrentSessionFolder(true)).thenReturn(tmp.newFolder().getAbsolutePath());
+
+        try (MockedStatic<XnatUtils>   utils = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats = mockStatic(Features.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+
+            final Exception thrown = processItemCatching(
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true));
+            verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+            return thrown;
+        }
+    }
+
+    /**
+     * Preserve subject/session label requested but the source label is blank or missing (null) → the
+     * substitution has nothing usable, so processItem fails the item rather than skipping it. All four
+     * combinations (subject/session × null/blank) throw and never reach the importer.
+     */
+    @Test
+    public void preserveLabels_nullSubjectLabel_throws() throws Exception {
+        final Exception thrown = reimportExpectingSubjectLabelError(null);
+        assertNotNull("expected processItem to throw when the source subject label is null", thrown);
+        assertTrue("message should mention the blank/missing subject label: " + thrown.getMessage(),
+                thrown.getMessage() != null && thrown.getMessage().contains("subject label is blank or missing"));
+    }
+
+    @Test
+    public void preserveLabels_blankSubjectLabel_throws() throws Exception {
+        final Exception thrown = reimportExpectingSubjectLabelError("  ");
+        assertNotNull("expected processItem to throw when the source subject label is blank", thrown);
+        assertTrue("message should mention the blank/missing subject label: " + thrown.getMessage(),
+                thrown.getMessage() != null && thrown.getMessage().contains("subject label is blank or missing"));
+    }
+
+    @Test
+    public void preserveLabels_nullSessionLabel_throws() throws Exception {
+        final Exception thrown = reimportExpectingSessionLabelError(null);
+        assertNotNull("expected processItem to throw when the source session label is null", thrown);
+        assertTrue("message should mention the blank/missing session label: " + thrown.getMessage(),
+                thrown.getMessage() != null && thrown.getMessage().contains("session label is blank or missing"));
+    }
+
+    @Test
+    public void preserveLabels_blankSessionLabel_throws() throws Exception {
+        final Exception thrown = reimportExpectingSessionLabelError("  ");
+        assertNotNull("expected processItem to throw when the source session label is blank", thrown);
+        assertTrue("message should mention the blank/missing session label: " + thrown.getMessage(),
+                thrown.getMessage() != null && thrown.getMessage().contains("session label is blank or missing"));
+    }
+
+    /**
+     * A Reimport whose request omits the preserve-label flags (the 3-arg constructor leaves both
+     * {@code null} — as a direct API call or pre-flag client would) must not throw and must add no
+     * label overrides. Guards the {@code Boolean.TRUE.equals(...)} null check in importExperiment: a
+     * "simplification" to {@code if (preserveSubjectLabel)} would NPE here while passing every other test.
+     */
+    @Test
+    public void preserveLabels_nullFlags_addsNoOverridesAndDoesNotThrow() throws Exception {
+        stubImageSessionAsSource();
+
+        final List<String> importerUris = Collections.singletonList(
+                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
+        doReturn(importerUris).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats  = mockStatic(Features.class);
+             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
+             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
+             MockedConstruction<PrearchiveOperationRequest> req =
+                     mockConstruction(PrearchiveOperationRequest.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)))
+                    .thenAnswer(inv -> {
+                        ((Callable<?>) inv.getArgument(3)).call();
+                        return true;
+                    });
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
+
+            // reimport(id) uses the 3-arg constructor, so both preserve flags are null.
+            service.processItem(reimport(EXP_ID), user, eventInfo());
+
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            assertTrue("null preserveSubjectLabel must add no subject override",
+                    !paramsCaptor.getValue().containsKey("subject"));
+            assertTrue("null preserveSessionLabel must add no session override",
+                    !paramsCaptor.getValue().containsKey("session"));
         }
     }
 
