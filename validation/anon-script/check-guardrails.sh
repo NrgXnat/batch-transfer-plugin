@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Validate the Phase 1A submit guardrails for a custom anon script.
+# Validate the submit guardrail that gates a custom anon script to Reimport.
 # Deterministic check: a custom anon_script on a non-Reimport (Share) request must be rejected 400,
 # BEFORE any data is touched. (409 requires a build without Anon-Script; 403 requires a no-edit user —
 # both are situational and noted, not asserted here.)

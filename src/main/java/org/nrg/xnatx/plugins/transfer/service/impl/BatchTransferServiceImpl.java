@@ -36,6 +36,7 @@ import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
 import org.nrg.xdat.XDAT;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -72,18 +73,21 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     private final AnonUtils anonUtils;
     private final DicomObjectIdentifier identifier;
     private final BatchTransferMonitor monitor;
+    private final ScriptCompiler scriptCompiler;
 
     @Autowired
     public BatchTransferServiceImpl(final NrgEventService eventService,
                                  final ExecutorService executorService,
                                  final AnonUtils anonUtils,
                                  final ContextService contextService,
-                                 final BatchTransferMonitor monitor) {
+                                 final BatchTransferMonitor monitor,
+                                 final ScriptCompiler scriptCompiler) {
         this.eventService = eventService;
         this.executorService = executorService;
         this.anonUtils = anonUtils;
         this.identifier = contextService.getBean("dicomObjectIdentifier", DicomObjectIdentifier.class);
         this.monitor = monitor;
+        this.scriptCompiler = scriptCompiler;
     }
 
     public void submitTransferRequest(BatchTransfer batchTransferRequest, UserI user) {
@@ -136,7 +140,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             log.info("Batch {} was already registered by another node; continuing.", trackingId);
         }
         if (!reimportItems.isEmpty()) {
-            enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(), user);
+            enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(),
+                    batchTransferRequest.isAnonReplacePipeline(), user);
         }
         if (!cloneItems.isEmpty()) {
             enqueueClone(trackingId, cloneItems, user);
@@ -153,12 +158,19 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * ({@link #batchTransfer}), so this only enqueues; it runs on the executor thread, off the HTTP
      * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
      */
-    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final String anonScript, final UserI user) {
+    private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final String anonScript,
+                                final boolean anonReplacePipeline, final UserI user) {
         for (final TransferRequest request : requests) {
             try {
+                // Substitute the ${csv.*} template with this item's values now, so each JMS message carries
+                // a ready-to-apply script (no template/values to re-combine in the consumer). A blank
+                // template stays null, leaving a plain static-script transfer unchanged.
+                final String compiledScript = StringUtils.isNotBlank(anonScript)
+                        ? scriptCompiler.compile(anonScript, request.getCsvValues()) : null;
                 XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
                         request.getDestinationProject(), user.getUsername(), user.getID(),
-                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), anonScript));
+                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), compiledScript,
+                        anonReplacePipeline));
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -321,7 +333,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
                         request.getPreserveSubjectLabel(),
                         request.getPreserveSessionLabel(),
-                        request.getAnonScript());
+                        request.getAnonScript(),
+                        request.isAnonReplacePipeline());
             } else {
                 throw new Exception(String.format("Unsupported mode %s", request.getMode()));
             }
@@ -347,7 +360,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
-                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel, String anonScript) throws Exception {
+                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel, String anonScript,
+                                  boolean anonReplacePipeline) throws Exception {
         if (sourceExperiment instanceof XnatImageassessordata) {
             throw new Exception("Reimport operation is not supported for assessors.");
         }
@@ -361,6 +375,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             params.put("AA", "true");
         if (StringUtils.isNotBlank(anonScript)) {
             params.put("Anon-Script", anonScript);
+            if (anonReplacePipeline) {
+                // Replace mode: suppress the destination's site/project pipeline so only the custom script
+                // runs. The importer applies the inline Anon-Script regardless of prevent_anon, so this
+                // leaves the custom script in effect while skipping the site-wide step.
+                params.put(URIManager.PREVENT_ANON, "true");
+            }
         }
 
         // Preserve the source XNAT labels instead of letting the destination derive them from DICOM

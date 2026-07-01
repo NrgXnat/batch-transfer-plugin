@@ -190,7 +190,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
-                    preserveSubjectLabel, preserveSessionLabel, null, null), user, eventInfo());
+                    preserveSubjectLabel, preserveSessionLabel, null, null, false), user, eventInfo());
 
             verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
             return paramsCaptor.getValue();
@@ -459,7 +459,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null, null));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null, null, false));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -487,7 +487,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true, null));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true, null, null, false));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -575,7 +575,7 @@ public class BatchTransferServiceImplTest {
     }
 
     /**
-     * Phase 1A: a REIMPORT carrying a custom anon script forwards it to the importer as the
+     * A REIMPORT carrying a custom anon script forwards it to the importer as the
      * {@code Anon-Script} param. (A request without one adds no such key — see the happy-path test, whose
      * captured params never contain it.)
      */

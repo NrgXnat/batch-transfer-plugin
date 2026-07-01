@@ -1,9 +1,9 @@
-# Live validation — API-provided custom anonymization (Batch Transfer 2.0.0, Phase 1A)
+# Live validation — API-provided custom anonymization (Batch Transfer 2.0.0)
 
 These scripts validate, against a **running XNAT**, that a custom DicomEdit script supplied with a
-`POST /xapi/transfer` Reimport request is accepted and actually applied at ingest.
+`POST /xapi/transfer` Reimport request is accepted, validated, and actually applied at ingest.
 
-What they exercise (the Phase 1A path):
+**Static-script** path:
 
 1. **Auth** — acquire one JSESSION and reuse it for every call (logout at the end).
 2. **Capabilities** — `GET /xapi/transfer/capabilities`; abort early unless `per_import_anon == true`
@@ -13,17 +13,30 @@ What they exercise (the Phase 1A path):
 4. **Poll** — `GET /xapi/event_tracking/{tracking_id}` until the run reports a terminal `succeeded`.
 5. **Verify** (separate script) — download a DICOM from the destination session and confirm the script's
    sentinel edit (`StudyDescription = "API_ANON_OK"`) is present.
-6. **Guardrails** (separate script) — confirm a custom script on a non-Reimport request is rejected `400`.
+6. **Guardrail** (separate script) — confirm a custom script on a non-Reimport request is rejected `400`.
+
+**Templated (`${csv.*}`) path:**
+
+7. **`${csv.*}` substitution** — submit a Reimport with a `${csv.*}` *template* + per-request `csv_values`;
+   the plugin substitutes per item, and verify confirms the substituted value landed
+   (`submit-csv-anon-transfer.sh`). Optionally `anon_replace_pipeline=true` to suppress the destination
+   pipeline so only the custom script runs.
+8. **Submit-time enforcement** — six deterministic `400` cases proving `ScriptCompiler.validateBatch`
+   rejects bad input *before any data is touched*: malformed DE6, missing/disallowed version, restricted
+   verb, unbound placeholder, and an unsafe value (`check-script-enforcement.sh`).
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `config.env.example` | Copy to `config.env` and fill in. **`config.env` is gitignored** (holds credentials). |
-| `anonymize.des` | Sample DicomEdit 6 script with a grep-able sentinel. |
-| `submit-anon-transfer.sh` | Steps 1–4 (the main positive test). |
-| `verify-anon-applied.sh` | Step 5 — reads the sentinel back from the destination DICOM. |
-| `check-guardrails.sh` | Step 6 — the deterministic `400` guardrail (script + Share → 400). |
+| `anonymize.des` | Sample static DicomEdit 6 script with a grep-able sentinel. |
+| `anonymize-csv.des` | `${csv.*}` **template** fixture (substituted from `csv_values`). |
+| `submit-anon-transfer.sh` | Steps 1–4 — the static-script positive test. |
+| `submit-csv-anon-transfer.sh` | Step 7 — `${csv.*}` substitution (+ optional replace-mode) positive test. |
+| `verify-anon-applied.sh` | Step 5 — reads the sentinel back from the destination DICOM (override `SENTINEL`). |
+| `check-guardrails.sh` | Step 6 — the Reimport-only `400` guardrail (script + Share → 400). |
+| `check-script-enforcement.sh` | Step 8 — the six submit-enforcement `400` cases (no data touched). |
 | `reimport-project.sh` | Load profiling — reimport **all** sessions in a project, with/without a script. |
 
 ## Prerequisites
@@ -60,24 +73,35 @@ DEST_PROJECT=ANON_TARGET                # destination project; you must have EDI
 ## Run
 
 ```bash
+# Static script
 ./submit-anon-transfer.sh            # auth → capabilities → submit → poll;  PASS = run completed
 ./verify-anon-applied.sh             # confirm the sentinel edit in the newest destination session
 #   or target a specific session:  ./verify-anon-applied.sh XNAT_E00099
 ./check-guardrails.sh                # confirm the 400 Reimport-only guardrail
+
+# Templated substitution + submit enforcement
+./check-script-enforcement.sh        # six 400 cases (parse, version, verb, binding, charset); no data touched
+./submit-csv-anon-transfer.sh        # ${csv.*} template + csv_values → reimport; PASS = run completed
+SENTINEL="CSV_ANON_OK" ./verify-anon-applied.sh   # confirm the SUBSTITUTED value landed
 ```
 
 Each script exits `0` on PASS, non-zero on FAIL/inconclusive, and prints a `== Result ==` line.
+`check-script-enforcement.sh` touches no data; the `submit-*` scripts create a session in `DEST_PROJECT`.
 
 ## Interpreting results
 
 - **Capabilities `per_import_anon != true`** → the running build predates the `Anon-Script` change. The
   feature is inert; nothing else will work until xnat-web is updated. (This is the gate, not a bug.)
 - **Submit `409`** → same as above but caught at submit (shouldn't happen if step 2 passed).
-- **Submit `400`** → the request was malformed (e.g. empty `requests`, or a non-Reimport item carried the
-  script — see `check-guardrails.sh`).
+- **Submit `400`** → the request was rejected at submit. Either malformed (empty `requests`, or a
+  non-Reimport item carried the script — `check-guardrails.sh`), or it failed a
+  `validateBatch` check: unparsable DE6, missing/disallowed version, a restricted verb, an unbound
+  `${csv.*}` placeholder, or a value outside the safe charset (`check-script-enforcement.sh`). The response body
+  names the reason.
 - **Submit `403`** → you lack edit access to `DEST_PROJECT`.
-- **Poll `succeeded:false`** → the reimport failed. A *malformed* script fails here (Phase 1A defers the
-  upfront parse-validate to 1B, so a bad script surfaces as a per-item ingest failure). Read
+- **Poll `succeeded:false`** → the reimport failed *during ingest* (after submit passed). A
+  **malformed or restricted script is rejected up front at submit (`400`)**, so this is a runtime/data
+  failure (e.g. no DICOM in the source, a prearchive error), not a script-syntax problem. Read
   `finalMessage` / the payload, or `batch-transfer.log` on the server.
 - **Verify FAIL (sentinel missing)** → the run completed but the script's edit isn't in the destination.
   Most likely the **destination project's own anonymization overwrote `(0008,1030)`** — the custom script

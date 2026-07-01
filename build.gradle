@@ -39,6 +39,13 @@ configurations.all {
         selectHighestVersion()
     }
 }
+// xnat-web pulls log4j-over-slf4j (log4j->slf4j) while the test scope also binds slf4j->log4j
+// (slf4j-log4j12 + the log4j test dep). Both present forms a bridge loop that slf4j aborts on init,
+// which breaks Mockito instrumentation of @Slf4j classes. Drop the bridge in test scope only; the
+// deployed XNAT war has a single consistent binding.
+configurations.testRuntimeClasspath {
+    exclude group: "org.slf4j", module: "log4j-over-slf4j"
+}
 dependencies {
     implementation platform("org.nrg:parent:${vXnat}")
 
@@ -46,6 +53,11 @@ dependencies {
     implementation "org.nrg.xnat:web"
     implementation "org.nrg.xdat:core"
     implementation "org.nrg:dicom-xnat-util"
+    // Per-import anon (Phase 1B): the anonymization service interface for compile-without-apply
+    // script validation, and Commons Text for ${csv.*} substitution. Both are provided by xnat-web at
+    // runtime (declared implementation there, so not exposed transitively) — versions via the parent BOM.
+    implementation "org.nrg.dicom:mizer"
+    implementation "org.apache.commons:commons-text"
     implementation "org.springframework:spring-beans"
     implementation "org.springframework:spring-context"
     implementation "org.springframework:spring-jms"

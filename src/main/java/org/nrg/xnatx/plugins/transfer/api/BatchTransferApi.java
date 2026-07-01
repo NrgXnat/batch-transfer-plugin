@@ -5,6 +5,8 @@ import org.nrg.xnatx.plugins.transfer.model.TransferCapabilities;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
+import org.nrg.xnatx.plugins.transfer.service.ScriptValidationException;
 import org.nrg.xnatx.plugins.transfer.service.TransferCapabilitiesService;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
@@ -41,12 +43,15 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
     private final BatchTransferService batchTransferService;
     private final TransferCapabilitiesService capabilitiesService;
+    private final ScriptCompiler scriptCompiler;
 
     protected BatchTransferApi(UserManagementServiceI userManagementService, RoleHolder roleHolder,
-                               BatchTransferService batchTransferService, TransferCapabilitiesService capabilitiesService) {
+                               BatchTransferService batchTransferService, TransferCapabilitiesService capabilitiesService,
+                               ScriptCompiler scriptCompiler) {
         super(userManagementService, roleHolder);
         this.batchTransferService = batchTransferService;
         this.capabilitiesService = capabilitiesService;
+        this.scriptCompiler = scriptCompiler;
     }
 
     @ApiOperation(value = "Submits an async batch transfer request")
@@ -65,7 +70,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         final UserI user = getSessionUser();
 
-        // Phase 1A guardrails for a custom anonymization script (Reimport-only static script).
+        // Guardrails for a custom anonymization script (Reimport-only).
         final String anonScript = batchTransferRequest.getAnonScript();
         if (StringUtils.isNotBlank(anonScript)) {
             if (!capabilitiesService.isPerImportAnonSupported()) {
@@ -99,6 +104,14 @@ public class BatchTransferApi extends AbstractXapiRestController {
                             "Could not verify edit permission on project " + destination + ".",
                             HttpStatus.INTERNAL_SERVER_ERROR);
                 }
+            }
+
+            // Size, parse, thread-safety restriction, ${csv.*} binding, and value-charset checks. Throws
+            // with the HTTP status the response should carry.
+            try {
+                scriptCompiler.validateBatch(anonScript, requests);
+            } catch (ScriptValidationException e) {
+                return new ResponseEntity<>(e.getMessage(), e.getStatus());
             }
         }
 

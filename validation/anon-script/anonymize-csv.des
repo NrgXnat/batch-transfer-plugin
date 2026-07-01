@@ -1,0 +1,22 @@
+version "6.1"
+
+// =========================================================================
+//  Batch Transfer — CSV-substitution validation fixture (DicomEdit 6)
+//
+//  This is a TEMPLATE: the ${csv.*} placeholders are substituted per item by
+//  the plugin's ScriptCompiler from each request's csv_values BEFORE the script
+//  reaches the importer. submit-csv-anon-transfer.sh supplies the values and
+//  verify reads the substituted result back from the destination DICOM.
+//
+//  ${csv.study_desc} and ${csv.patient_id} must be bound by csv_values, and
+//  their values must pass the safe charset (A-Za-z0-9 ^_.-).
+// =========================================================================
+
+// Substituted sentinel — verify greps the destination DICOM for this value:
+(0008,1030) := "${csv.study_desc}"      // StudyDescription <- csv.study_desc
+
+// A second substituted identifier:
+(0010,0020) := "${csv.patient_id}"      // PatientID <- csv.patient_id
+
+// A removal, to show non-substitution edits still apply:
+- (0010,0010)                           // PatientName

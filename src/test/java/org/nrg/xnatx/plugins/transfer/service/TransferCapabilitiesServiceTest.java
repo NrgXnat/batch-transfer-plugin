@@ -10,7 +10,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 /**
- * Phase 0: the capabilities service reports the static limits and reflects the (reflective) per-import
+ * The capabilities service reports the static limits and reflects the (reflective) per-import
  * anon probe. The probe itself is stubbed so the test doesn't depend on what xnat-web is on the classpath.
  */
 public class TransferCapabilitiesServiceTest {

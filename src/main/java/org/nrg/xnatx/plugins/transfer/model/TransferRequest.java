@@ -25,10 +25,14 @@ public class TransferRequest {
     private Boolean preserveSessionLabel;
     // Reimport only: substitution values
     private Map<String, String> csvValues;
+    // Internal threading only (the batch-level fields live on BatchTransfer): the compiled per-item script
+    // and whether it replaces the destination pipeline. Not part of the per-request wire contract.
     @JsonIgnore
     private String anonScript;
+    @JsonIgnore
+    private boolean anonReplacePipeline;
     //  Retain no-preserve-flag default constructor
     public TransferRequest(String destinationProject, String id, TransferMode mode) {
-        this(destinationProject, id, mode, null, null, null, null);
+        this(destinationProject, id, mode, null, null, null, null, false);
     }
 }

@@ -11,7 +11,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Phase 0: the new optional fields (anon_script, anon_replace_pipeline, csv_values) serialize in
+ * The optional fields (anon_script, anon_replace_pipeline, csv_values) serialize in
  * snake_case and round-trip, and old-shape payloads (without them) still deserialize unchanged.
  */
 public class BatchTransferModelTest {
