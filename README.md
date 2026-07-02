@@ -38,7 +38,7 @@ JDK 8 only (Lombok in this Gradle 6.4.1 setup breaks on newer JDKs).
 ./gradlew test   # tests only
 ```
 
-Output: `build/libs/batch-transfer-1.0.0-SNAPSHOT.jar`
+Output: `build/libs/batch-transfer-1.1.1.jar`
 
 ## Install
 

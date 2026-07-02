@@ -1,7 +1,7 @@
 # Batch Transfer Plugin — Roadmap
 
-**Plugin Version**: 1.1.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
-**Target XNAT**: 1.9.3.5
+**Plugin Version**: 1.1.1 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
+**Target XNAT**: 1.9.3.3
 **Last Updated**: 2026-07-02
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
@@ -9,6 +9,15 @@ The Batch Transfer Plugin enables bulk data operations across XNAT projects. Use
 ---
 
 ## Completed
+
+## [1.1.1]
+
+Multi-node correctness for deployments using a shared external JMS broker (single-node unaffected).
+
+- **Reimport double-archive across nodes** — the queued `Rebuild → Archive` chain ran on both nodes and raced XNAT's non-atomic archive gate; Reimport now archives inline (`action=commit`), with `AA=true` only for auto-archive destinations
+- **Batch never reports "complete" on multi-node** — the per-JVM completion counter is replaced by a shared `BatchTransferProgress` row incremented under `SELECT … FOR UPDATE`, so exactly one node fires the terminal event once
+- **Root-cause surfaced to users** — item failures now show the underlying reason (e.g. schema-validation errors) in the activity monitor and workflow details instead of a generic wrapper
+
 
 ## [1.1.0]
 
