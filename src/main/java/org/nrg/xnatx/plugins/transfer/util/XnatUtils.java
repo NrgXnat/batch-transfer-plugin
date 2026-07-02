@@ -166,10 +166,31 @@ public class XnatUtils {
             action.call();
             PersistentWorkflowUtils.complete(wrk, wrk.buildEvent());
         } catch (Exception e) {
-            wrk.setDetails(e.getMessage());
+            // Record the root cause (e.g. the schema/validation error), not this frame's generic wrapper,
+            // so the workflow details and the surfaced failure name the actual reason.
+            wrk.setDetails(rootCauseMessage(e));
             PersistentWorkflowUtils.fail(wrk, wrk.buildEvent());
             throw new Exception(workflowName + " Failed", e);
         }
+    }
+
+    /** The deepest throwable in {@code t}'s cause chain (cycle-safe). */
+    public static Throwable rootCause(final Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root;
+    }
+
+    /**
+     * The message of {@code t}'s root cause, for surfacing the real failure reason to the user rather than
+     * a generic wrapper message. Falls back to the root's simple class name when its message is blank.
+     */
+    public static String rootCauseMessage(final Throwable t) {
+        final Throwable root = rootCause(t);
+        final String message = root.getMessage();
+        return (message != null && !message.trim().isEmpty()) ? message : root.getClass().getSimpleName();
     }
 
     /**

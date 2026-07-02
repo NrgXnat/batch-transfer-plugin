@@ -4,9 +4,9 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 
 > Share and Clone operations directly replace those in the deprecated *Batch Share Plugin*. 
 
-| Plugin Version | Target XNAT | JDK |
-|---|---|---|
-| `1.0.0-SNAPSHOT` (target release `1.0.0`) | 1.9.3.3 | 8 |
+| Plugin Version                  | Target XNAT | JDK |
+|---------------------------------|---|---|
+| `1.1.1` | 1.9.3.3 | 8 |
 
 ---
 

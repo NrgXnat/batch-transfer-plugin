@@ -12,6 +12,7 @@ import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
@@ -73,14 +74,14 @@ public class CloneSubjectListener {
             boolean failed = false;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
-                        monitor.currentPercent(trackingId), trackingId,
+                        0, trackingId,
                         "Cloning " + item.getItemId() + " to " + item.getDestinationProject()));
                 service.processItem(new TransferRequest(item.getDestinationProject(), item.getItemId(), TransferMode.CLONE),
-                        user, new EventInfo(trackingId, monitor.currentPercent(trackingId)));
+                        user, new EventInfo(trackingId, 0));
             } catch (Exception e) {
                 log.error("Clone {} failed", item.getItemId(), e);
                 failed = true;
-                emitFail(request, item.getItemId() + " failed. Cause: " + (e.getCause() == null ? e.getMessage() : e.getCause().getMessage()));
+                emitFail(request, item.getItemId() + " failed. Cause: " + XnatUtils.rootCauseMessage(e));
             } finally {
                 monitor.itemDone(trackingId, failed);
             }
@@ -89,6 +90,6 @@ public class CloneSubjectListener {
 
     private void emitFail(final CloneSubjectRequest request, final String message) {
         eventService.triggerEvent(BatchTransferEvent.fail(request.getRequestingUserId(),
-                monitor.currentPercent(request.getTrackingId()), request.getTrackingId(), message));
+                0, request.getTrackingId(), message));
     }
 }

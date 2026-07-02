@@ -17,7 +17,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.nrg.framework.services.NrgEventService;
@@ -32,12 +31,9 @@ import org.nrg.xdat.security.helpers.Permissions;
 import org.nrg.xft.event.EventUtils;
 import org.nrg.xft.security.UserI;
 import org.nrg.xft.utils.SaveItemHelper;
-import org.nrg.xnat.helpers.prearchive.PrearcSession;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnat.helpers.prearchive.PrearcUtils;
-import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.FileWriterWrapperI;
-import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
@@ -59,7 +55,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -117,6 +112,9 @@ public class BatchTransferServiceImplTest {
         when(destinationProjectData.getId()).thenReturn(DEST_PROJECT);
         when(destinationProjectData.getCachePath())
                 .thenReturn(tmp.newFolder("cache").getAbsolutePath());
+
+        // Default reimport destinations to auto-archive (AA=true); tests override with doReturn(false).
+        doReturn(true).when(service).destinationAutoArchives(anyString());
     }
 
     // -----------------------------------------------------------------
@@ -139,14 +137,6 @@ public class BatchTransferServiceImplTest {
         } catch (Exception e) {
             return e;
         }
-    }
-
-    private Map<String, Object> uriProps() {
-        Map<String, Object> props = new HashMap<>();
-        props.put(URIManager.PROJECT_ID, DEST_PROJECT);
-        props.put(PrearcUtils.PREARC_TIMESTAMP, "20260101_000000");
-        props.put(PrearcUtils.PREARC_SESSION_FOLDER, LABEL);
-        return props;
     }
 
     private void stubImageSessionAsSource() throws Exception {
@@ -184,11 +174,7 @@ public class BatchTransferServiceImplTest {
 
         try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
              MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
-             MockedStatic<Features>    feats  = mockStatic(Features.class);
-             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
-             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
-             MockedConstruction<PrearchiveOperationRequest> req =
-                     mockConstruction(PrearchiveOperationRequest.class)) {
+             MockedStatic<Features>    feats  = mockStatic(Features.class)) {
 
             utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
             utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
@@ -202,7 +188,6 @@ public class BatchTransferServiceImplTest {
             perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
             perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
-            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
 
             service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
                     preserveSubjectLabel, preserveSessionLabel), user, eventInfo());
@@ -335,26 +320,26 @@ public class BatchTransferServiceImplTest {
     }
 
     /**
-     * Happy path: REIMPORT of an XnatImagesessiondata invokes the (spy-stubbed) runImporter with a
-     * streaming wrapper and commits the returned URIs to the prearchive. processItem returns normally.
+     * Happy path: REIMPORT runs the (spy-stubbed) runImporter with the inline-archive params
+     * (action=commit, AA=true) and queues no prearchive operation. processItem returns normally.
      */
     @Test
+    @SuppressWarnings("unchecked")
     public void importImagesession_happyPath() throws Exception {
         stubImageSessionAsSource();
 
-        final List<String> importerUris = Collections.singletonList(
-                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
-        doReturn(importerUris).when(service).runImporter(
+        // action=commit + AA=true => importer returns archived URLs, not prearchive URIs.
+        final List<String> importerUrls = Collections.singletonList(
+                "/archive/experiments/" + DEST_PROJECT + "_" + LABEL);
+        doReturn(importerUrls).when(service).runImporter(
                 any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
 
         try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
              MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
              MockedStatic<Features>    feats  = mockStatic(Features.class);
-             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
-             // Bypass PrearcSession / PrearchiveOperationRequest real constructors.
-             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
-             MockedConstruction<PrearchiveOperationRequest> req =
-                     mockConstruction(PrearchiveOperationRequest.class)) {
+             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class)) {
 
             utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
             utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
@@ -367,15 +352,52 @@ public class BatchTransferServiceImplTest {
             perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
             perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
-            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
 
             service.processItem(reimport(EXP_ID), user, eventInfo());
 
-            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), any(Map.class));
-            prearc.verify(() -> PrearcUtils.parseURI(importerUris.get(0)));
-            prearc.verify(() -> PrearcUtils.queuePrearchiveOperation(any()));
-            assertEquals(1, sess.constructed().size());
-            assertEquals(1, req.constructed().size());
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            assertEquals("commit", paramsCaptor.getValue().get("action"));
+            assertEquals("true", paramsCaptor.getValue().get("AA"));
+            // Archiving is inline; no prearchive operation is queued.
+            prearc.verify(() -> PrearcUtils.queuePrearchiveOperation(any()), never());
+        }
+    }
+
+    /** A Manual destination sets action=commit but not AA, leaving the built session in the prearchive. */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void importImagesession_manualDestination_omitsAutoArchive() throws Exception {
+        stubImageSessionAsSource();
+        doReturn(false).when(service).destinationAutoArchives(anyString());
+
+        final List<String> importerUris = Collections.singletonList(
+                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
+        doReturn(importerUris).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<XnatUtils>   utils = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats = mockStatic(Features.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)))
+                    .thenAnswer(inv -> {
+                        ((Callable<?>) inv.getArgument(3)).call();
+                        return true;
+                    });
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+
+            service.processItem(reimport(EXP_ID), user, eventInfo());
+
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            assertEquals("commit", paramsCaptor.getValue().get("action"));
+            assertTrue("Manual destination must not set AA", !paramsCaptor.getValue().containsKey("AA"));
         }
     }
 
@@ -527,11 +549,7 @@ public class BatchTransferServiceImplTest {
 
         try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
              MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
-             MockedStatic<Features>    feats  = mockStatic(Features.class);
-             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
-             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
-             MockedConstruction<PrearchiveOperationRequest> req =
-                     mockConstruction(PrearchiveOperationRequest.class)) {
+             MockedStatic<Features>    feats  = mockStatic(Features.class)) {
 
             utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
             utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
@@ -544,7 +562,6 @@ public class BatchTransferServiceImplTest {
             perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
             perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
-            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
 
             // reimport(id) uses the 3-arg constructor, so both preserve flags are null.
             service.processItem(reimport(EXP_ID), user, eventInfo());

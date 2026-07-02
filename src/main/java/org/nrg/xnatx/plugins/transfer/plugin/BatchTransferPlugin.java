@@ -11,5 +11,6 @@ import org.springframework.context.annotation.ComponentScan;
 @XnatPlugin(value = "batchTransferPlugin",
         name = "Batch Transfer Plugin",
         description = "Batch Transfer Plugin",
+        entityPackages = "org.nrg.xnatx.plugins.transfer.jms.tasks.entities",
         logConfigurationFile = "META-INF/resources/batch_transfer_logback.xml")
 public class BatchTransferPlugin { }
