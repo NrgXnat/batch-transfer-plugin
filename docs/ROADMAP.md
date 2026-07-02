@@ -2,7 +2,7 @@
 
 **Plugin Version**: 1.1.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
 **Target XNAT**: 1.9.3.5
-**Last Updated**: 2026-06-29
+**Last Updated**: 2026-07-02
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
@@ -66,6 +66,7 @@ The Batch Transfer Plugin enables bulk data operations across XNAT projects. Use
 - BatchTransferEvent refactor to limit event/DB traffic (partially addressed in 1.0.1-RC: in-memory `BatchTransferMonitor` fan-in collapses per-batch terminal events to one)
 - Rethink BatchTransferEvent status to reflect import process as reflected in prearch import.
   - "Transfer Queued (%s items)" and "Transfer Complete" do not yet reflect true Share/Clone/Reimport status nuance
+- **Migrate progress tracking from `event_tracking` to the workflow table** — each item already creates a persistent workflow *and* runs a parallel `event_tracking` stream; the redundancy is what forced 1.1.1's `BatchTransferProgress` counter. Deriving batch status by querying `wrk_workflowData` (as BulkLaunch's `WorkflowMonitorApi`/`WorkflowRepository` do) is inherently multi-node-safe and would let us delete that counter. Cost: tag each item's workflow with the batch `tracking_id` (workflows otherwise group by project/user/time); handle reimport items that fail before their workflow is created mid-`importExperiment` (the reason the counter was chosen); and replace the activity-tab UI with a workflow-table view. Ref: 1.1.1 PR discussion.
 - REST API extension to support directional sharing workflow (transfer-to vs. transfer-from) once the inbound flow is built
 - Extend PROJECT_SHARING_FEATURE and PROJECT_COPYING_FEATURE controls to include a separate PROJECT_IMPORTING_FEATURE (feature-flag naming intentionally deferred from the rebrand)
 - Per-experiment Reimport timeout to bound importer hangs. `BatchTransferServiceImpl.runImporter` invokes `DicomZipImporter.call()` synchronously, with no upper bound — a stuck prearchive write (wedged NFS mount, deadlocked rebuild queue, slow remote disk) parks the batch-loop thread indefinitely and blocks all subsequent requests in the batch. The 5-minute heartbeat logger makes a hang observable, but recovery still requires a Tomcat restart. Possible fix: wrap `importExperiment` in `Future.get(timeoutMs)` on a separate executor; on timeout, cancel the future, emit a Failed event, and let the batch loop continue with the next request. Caveats: `cancel(true)` cannot reliably stop uninterruptible I/O so the underlying thread leaks; the prearchive has no transactional rollback so a cancelled import may leave partial state; choosing a default timeout is environment-specific (large legitimate sessions can run 30+ min). Defer until a customer incident motivates it; if added, expose the timeout as a plugin config and document explicitly that it means "we gave up waiting", not "we cleaned up".

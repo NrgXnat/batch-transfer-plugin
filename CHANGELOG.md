@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [1.1.1]
 
-Multi-node correctness fixes for deployments using a **shared external JMS broker** (which spreads a batch's work across nodes. Single-node deployments are unaffected.
+Multi-node correctness fixes for deployments using a **shared external JMS broker**, which spreads a batch's work across nodes. Single-node deployments are unaffected.
 
 ### Fixed
 
