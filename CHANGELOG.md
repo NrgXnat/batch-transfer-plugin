@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.1.1]
+
+Multi-node correctness fixes for deployments using a **shared external JMS broker** (which spreads a batch's work across nodes. Single-node deployments are unaffected.
+
+### Fixed
+
+- **Reimport double-archive across nodes** — the queued `Rebuild → Archive` chain ran on both nodes and raced XNAT's non-atomic archive gate (`Session already exists with matching files` / missing `.xml`). Reimport now archives inline (`action=commit`), so nothing is queued for a second node; `AA=true` is set only for auto-archive destinations.
+- **Batch never reports "complete" on multi-node** — the terminal event relied on a per-JVM counter, so a batch split across nodes finished without ever reaching its total. The count now lives in a shared `BatchTransferProgress` row incremented under a `SELECT … FOR UPDATE` lock, so exactly one node fires the event once.
+
+---
+
 ## [1.1.0]
 
 ### Added
