@@ -12,6 +12,7 @@ import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
@@ -68,14 +69,14 @@ public class TransferReimportListener {
         boolean failed = false;
         try {
             eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
-                    monitor.currentPercent(trackingId), trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
+                    0, trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
             service.processItem(new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT,
                             request.getPreserveSubjectLabel(), request.getPreserveSessionLabel()),
-                    user, new EventInfo(trackingId, monitor.currentPercent(trackingId)));
+                    user, new EventInfo(trackingId, 0));
         } catch (Exception e) {
             log.error("Reimport {} failed", itemId, e);
             failed = true;
-            emitFail(request, itemId + " failed. Cause: " + (e.getCause() == null ? e.getMessage() : e.getCause().getMessage()));
+            emitFail(request, itemId + " failed. Cause: " + XnatUtils.rootCauseMessage(e));
         } finally {
             monitor.itemDone(trackingId, failed);
         }
@@ -83,6 +84,6 @@ public class TransferReimportListener {
 
     private void emitFail(final TransferItemRequest request, final String message) {
         eventService.triggerEvent(BatchTransferEvent.fail(request.getRequestingUserId(),
-                monitor.currentPercent(request.getTrackingId()), request.getTrackingId(), message));
+                0, request.getTrackingId(), message));
     }
 }

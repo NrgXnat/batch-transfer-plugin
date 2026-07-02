@@ -1,5 +1,7 @@
 package org.nrg.xnatx.plugins.transfer.jms.tasks.entities;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.nrg.framework.orm.hibernate.AbstractHibernateEntity;
 
 import javax.persistence.Entity;
@@ -14,6 +16,8 @@ import javax.persistence.UniqueConstraint;
  */
 @Entity
 @Table(uniqueConstraints = @UniqueConstraint(columnNames = {"trackingId"}))
+@Getter
+@Setter
 public class BatchTransferProgress extends AbstractHibernateEntity {
 
     private String  trackingId;
@@ -33,45 +37,5 @@ public class BatchTransferProgress extends AbstractHibernateEntity {
         this.total      = total;
         this.completed  = 0;
         this.failed     = 0;
-    }
-
-    public String getTrackingId() {
-        return trackingId;
-    }
-
-    public void setTrackingId(final String trackingId) {
-        this.trackingId = trackingId;
-    }
-
-    public Integer getUserId() {
-        return userId;
-    }
-
-    public void setUserId(final Integer userId) {
-        this.userId = userId;
-    }
-
-    public int getTotal() {
-        return total;
-    }
-
-    public void setTotal(final int total) {
-        this.total = total;
-    }
-
-    public int getCompleted() {
-        return completed;
-    }
-
-    public void setCompleted(final int completed) {
-        this.completed = completed;
-    }
-
-    public int getFailed() {
-        return failed;
-    }
-
-    public void setFailed(final int failed) {
-        this.failed = failed;
     }
 }

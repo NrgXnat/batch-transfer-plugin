@@ -38,6 +38,7 @@ import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
 import org.nrg.xdat.XDAT;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Nonnull;
@@ -127,7 +128,13 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         // Register the whole batch once; every item — whether queued (Reimport/Clone) or processed
         // in-process (Share) — reports to the monitor, which emits the single terminal event after the
         // last one finishes. This keeps one completion signal even when operations are mixed.
-        monitor.register(trackingId, user.getID(), requests.size());
+        try {
+            monitor.register(trackingId, user.getID(), requests.size());
+        } catch (DataIntegrityViolationException e) {
+            // Multi-node: a peer that received the same submit (client retry, same tracking id) already
+            // created the equivalent progress row. Its row is authoritative; proceed with enqueueing.
+            log.info("Batch {} was already registered by another node; continuing.", trackingId);
+        }
         if (!reimportItems.isEmpty()) {
             enqueueReimport(trackingId, reimportItems, user);
         }
@@ -229,7 +236,9 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user) {
         for (final TransferRequest request : requests) {
             final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
-            final int progress = monitor.currentPercent(trackingId);
+            // Progress percent is not surfaced to the user (dropped from the tracking payload), so we no
+            // longer query it per item; the terminal event alone drives the UI to completion.
+            final int progress = 0;
             boolean failed = false;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, trackingId,
@@ -238,7 +247,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } catch (Exception e) {
                 failed = true;
                 log.debug(e.getMessage(), e);
-                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), XnatUtils.rootCauseMessage(e));
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
             }
             // Report completion; the monitor emits the batch's terminal event when the last item finishes.
@@ -397,13 +406,16 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     /**
-     * True if the destination's prearchive code is an auto-archive setting (not
-     * {@link PrearchiveCode#Manual}). Protected seam (like {@link #runImporter}) so tests can stub it
-     * without static {@link ArcSpecManager} wiring; no arc spec ({@code null}) is treated as Manual.
+     * True if the destination's prearchive code is an auto-archive setting, i.e. {@code >=}
+     * {@link PrearchiveCode#AutoArchive} (matching XNAT's own {@code FinishImageUpload} test). Protected
+     * seam (like {@link #runImporter}) so tests can stub it without static {@link ArcSpecManager} wiring;
+     * no arc spec ({@code null}) is treated as non-auto-archive.
      */
     protected boolean destinationAutoArchives(final String projectId) {
         final Integer prearchiveCode = ArcSpecManager.GetInstance().getPrearchiveCodeForProject(projectId);
-        return prearchiveCode != null && PrearchiveCode.code(prearchiveCode) != PrearchiveCode.Manual;
+        // Match XNAT's own auto-archive test (FinishImageUpload): code >= AutoArchive (4). PrearchiveCode.code()
+        // maps only 0/4/5, so comparing the raw int also treats legacy/unknown codes 1-3 as non-auto-archive.
+        return prearchiveCode != null && prearchiveCode >= PrearchiveCode.AutoArchive.getCode();
     }
 
     /** How often the heartbeat thread logs while {@code importer.call()} is running. */

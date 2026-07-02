@@ -3,8 +3,8 @@ package org.nrg.xnatx.plugins.transfer.jms.tasks;
 import lombok.extern.slf4j.Slf4j;
 import org.nrg.framework.services.NrgEventService;
 import org.nrg.xnatx.plugins.transfer.event.BatchTransferEvent;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.entities.BatchTransferProgress;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Completion;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -37,29 +37,22 @@ public class BatchTransferMonitor {
         progressService.register(trackingId, userId, total);
     }
 
-    /** Best-effort progress percent for per-item InProgress events; clamped 0..99 (100 is terminal). */
-    public int currentPercent(final String trackingId) {
-        return progressService.currentPercent(trackingId);
-    }
-
     /**
-     * Reports one item's outcome. The consumer (on any node) that brings the completed count up to the
-     * batch total emits the terminal event exactly once and clears the batch. Must be called once per item
-     * on every path (success or handled failure), or fan-in stalls.
+     * Reports one item's outcome. The service tells exactly one caller (on any node) that its item brought
+     * the batch to its total; that caller emits the single terminal event. Must be called once per item on
+     * every path (success or handled failure), or fan-in stalls.
      */
     public void itemDone(final String trackingId, final boolean failed) {
-        final BatchTransferProgress progress = progressService.recordItemDone(trackingId, failed);
-        if (progress == null || progress.getCompleted() != progress.getTotal()) {
-            return; // unknown batch, or not the last item
+        final Completion completion = progressService.recordItemDone(trackingId, failed);
+        if (completion == null) {
+            return; // not the completing item (or unknown batch)
         }
-        // Last item in — fires once (the pessimistic lock lets one caller across all nodes see == total).
-        if (progress.getFailed() > 0) {
-            eventService.triggerEvent(BatchTransferEvent.warn(progress.getUserId(), 100, trackingId,
+        if (completion.getFailed() > 0) {
+            eventService.triggerEvent(BatchTransferEvent.warn(completion.getUserId(), 100, trackingId,
                     String.format("Transfer Complete with %d %s. Please review this log carefully.",
-                            progress.getFailed(), progress.getFailed() == 1 ? "warning" : "warnings")));
+                            completion.getFailed(), completion.getFailed() == 1 ? "warning" : "warnings")));
         } else {
-            eventService.triggerEvent(BatchTransferEvent.complete(progress.getUserId(), trackingId, "Transfer Complete"));
+            eventService.triggerEvent(BatchTransferEvent.complete(completion.getUserId(), trackingId, "Transfer Complete"));
         }
-        progressService.remove(trackingId);
     }
 }
