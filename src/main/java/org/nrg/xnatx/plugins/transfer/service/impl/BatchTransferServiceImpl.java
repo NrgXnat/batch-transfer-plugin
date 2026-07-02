@@ -21,15 +21,12 @@ import org.nrg.xft.event.EventUtils;
 import org.nrg.xft.security.UserI;
 import org.nrg.xft.utils.FileUtils;
 import org.nrg.xft.utils.SaveItemHelper;
+import org.nrg.framework.constants.PrearchiveCode;
 import org.nrg.xnat.DicomObjectIdentifier;
 import org.nrg.xnat.archive.DicomZipImporter;
-import org.nrg.xnat.archive.Operation;
 import org.nrg.xnat.helpers.merge.AnonUtils;
-import org.nrg.xnat.helpers.prearchive.PrearcSession;
-import org.nrg.xnat.helpers.prearchive.PrearcUtils;
-import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.FileWriterWrapperI;
-import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
+import org.nrg.xnat.turbine.utils.ArcSpecManager;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
@@ -349,6 +346,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         params.put("Ignore-Unparsable", "true");
         params.put("rename", "true");
         params.put("project", destinationProjectData.getId());
+        params.put("action", "commit");
+        // AA drives DicomZipImporter.isAutoArchive(), which ignores the project's prearchive code, so
+        // gate it on that code: auto-archive => archive inline; Manual => leave built in the prearchive.
+        if (destinationAutoArchives(destinationProjectData.getId())) {
+            params.put("AA", "true");
+        }
 
         // Preserve the source XNAT labels instead of letting the destination derive them from DICOM
         // tags. If the user asked to preserve a label but it is blank or missing, there is nothing
@@ -382,15 +385,25 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             uriRef.set(result);
             return true;
         });
-        final List<String> uris = uriRef.get();
+
         if (log.isDebugEnabled()) {
-            final StringBuilder message = new StringBuilder("Processed ").append(uris.size()).append(" URIs:\n");
-            for (final String uri : uris) {
-                message.append(" * ").append(uri).append("\n");
+            final List<String> urls = uriRef.get();
+            final StringBuilder message = new StringBuilder("Archived ").append(urls.size()).append(" session(s):\n");
+            for (final String url : urls) {
+                message.append(" * ").append(url).append("\n");
             }
             log.debug(message.toString());
         }
-        commitUris(uris, params, user);
+    }
+
+    /**
+     * True if the destination's prearchive code is an auto-archive setting (not
+     * {@link PrearchiveCode#Manual}). Protected seam (like {@link #runImporter}) so tests can stub it
+     * without static {@link ArcSpecManager} wiring; no arc spec ({@code null}) is treated as Manual.
+     */
+    protected boolean destinationAutoArchives(final String projectId) {
+        final Integer prearchiveCode = ArcSpecManager.GetInstance().getPrearchiveCodeForProject(projectId);
+        return prearchiveCode != null && PrearchiveCode.code(prearchiveCode) != PrearchiveCode.Manual;
     }
 
     /** How often the heartbeat thread logs while {@code importer.call()} is running. */
@@ -458,23 +471,6 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         t.setDaemon(true);
         t.start();
         return t;
-    }
-
-    private void commitUris(List<String> uris, Map<String, Object> parameters, UserI user) throws Exception {
-        for (final String uri : uris) {
-            final Map<String, Object> properties = PrearcUtils.parseURI(uri);
-            final String              project    = (String) properties.get(URIManager.PROJECT_ID);
-            final String              timestamp  = (String) properties.get(PrearcUtils.PREARC_TIMESTAMP);
-            final String              session    = (String) properties.get(PrearcUtils.PREARC_SESSION_FOLDER);
-
-            final Map<String, Object> rebuildParameters = new HashMap<>(parameters);
-            rebuildParameters.put(URIManager.PROJECT_ID, project);
-            rebuildParameters.put(PrearcUtils.PREARC_TIMESTAMP, timestamp);
-            rebuildParameters.put(PrearcUtils.PREARC_SESSION_FOLDER, session);
-            //rebuildParameters.put(DicomInboxImportRequest.IMPORT_REQUEST_ID, request.getId());
-
-            PrearcUtils.queuePrearchiveOperation(new PrearchiveOperationRequest(user, Operation.Rebuild, new PrearcSession(project, timestamp, session, rebuildParameters, user)));
-        }
     }
 
     /**
