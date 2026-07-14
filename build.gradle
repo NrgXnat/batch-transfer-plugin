@@ -34,15 +34,15 @@ dependencyManagement {
         mavenBom("org.nrg:parent:${vXnat}")
     }
 }
+configurations {
+    implementAndInclude
+    implementation.extendsFrom(implementAndInclude)
+}
 configurations.all {
     resolutionStrategy.capabilitiesResolution.withCapability("com.google.collections:google-collections") {
         selectHighestVersion()
     }
 }
-// xnat-web pulls log4j-over-slf4j (log4j->slf4j) while the test scope also binds slf4j->log4j
-// (slf4j-log4j12 + the log4j test dep). Both present forms a bridge loop that slf4j aborts on init,
-// which breaks Mockito instrumentation of @Slf4j classes. Drop the bridge in test scope only; the
-// deployed XNAT war has a single consistent binding.
 configurations.testRuntimeClasspath {
     exclude group: "org.slf4j", module: "log4j-over-slf4j"
 }
@@ -53,11 +53,9 @@ dependencies {
     implementation "org.nrg.xnat:web"
     implementation "org.nrg.xdat:core"
     implementation "org.nrg:dicom-xnat-util"
-    // Per-import anon (Phase 1B): the anonymization service interface for compile-without-apply
-    // script validation, and Commons Text for ${csv.*} substitution. Both are provided by xnat-web at
-    // runtime (declared implementation there, so not exposed transitively) — versions via the parent BOM.
     implementation "org.nrg.dicom:mizer"
     implementation "org.apache.commons:commons-text"
+    implementAndInclude "org.apache.commons:commons-csv:1.10.0"
     implementation "org.springframework:spring-beans"
     implementation "org.springframework:spring-context"
     implementation "org.springframework:spring-jms"
@@ -75,6 +73,23 @@ dependencies {
 
 test {
     useJUnit()
+}
+
+task fatJar(type: Jar) {
+    archiveClassifier.set('')
+    duplicatesStrategy 'exclude'
+    from {
+        configurations.implementAndInclude.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude "META-INF/*.SF"
+        exclude "META-INF/*.DSA"
+        exclude "META-INF/*.RSA"
+    }
+    with jar
+}
+assemble.dependsOn fatJar
+jar {
+    archiveClassifier.set('thin')
 }
 
 task sourceJar(type: Jar, dependsOn: classes) {
@@ -100,7 +115,8 @@ publishing {
             artifacts {
                 artifact sourceJar
                 artifact javadocJar
-                artifact jar
+                // Publish the fatJar (plugin classes + bundled commons-csv) as the main artifact, not the thin jar.
+                artifact fatJar
             }
 
             pom.withXml {

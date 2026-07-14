@@ -580,24 +580,22 @@ public class BatchTransferServiceImplTest {
      * captured params never contain it.)
      */
     @Test
-    @SuppressWarnings({"unchecked", "rawtypes"})
+    @SuppressWarnings("unchecked")
     public void importImagesession_customAnonScript_passedToImporterParams() throws Exception {
         stubImageSessionAsSource();
 
         final String script = "version \"6.1\"\n(0010,0010) := \"ANON\"";
-        final List<String> importerUris = Collections.singletonList(
-                "/prearchive/projects/" + DEST_PROJECT + "/20260101_000000/" + LABEL);
-        final ArgumentCaptor<Map> params = ArgumentCaptor.forClass(Map.class);
-        doReturn(importerUris).when(service).runImporter(
-                any(UserI.class), any(FileWriterWrapperI.class), params.capture());
+        // action=commit + AA=true => importer returns archived URLs (inline archive, no prearchive commit).
+        final List<String> importerUrls = Collections.singletonList(
+                "/archive/experiments/" + DEST_PROJECT + "_" + LABEL);
+        doReturn(importerUrls).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
 
         try (MockedStatic<XnatUtils>   utils  = mockStatic(XnatUtils.class);
              MockedStatic<Permissions> perms  = mockStatic(Permissions.class);
-             MockedStatic<Features>    feats  = mockStatic(Features.class);
-             MockedStatic<PrearcUtils> prearc = mockStatic(PrearcUtils.class);
-             MockedConstruction<PrearcSession> sess = mockConstruction(PrearcSession.class);
-             MockedConstruction<PrearchiveOperationRequest> req =
-                     mockConstruction(PrearchiveOperationRequest.class)) {
+             MockedStatic<Features>    feats  = mockStatic(Features.class)) {
 
             utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
             utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
@@ -610,13 +608,13 @@ public class BatchTransferServiceImplTest {
             perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
             perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
-            prearc.when(() -> PrearcUtils.parseURI(anyString())).thenReturn(uriProps());
 
             final TransferRequest withScript = reimport(EXP_ID);
             withScript.setAnonScript(script);
             service.processItem(withScript, user, eventInfo());
 
-            assertEquals(script, params.getValue().get("Anon-Script"));
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            assertEquals(script, paramsCaptor.getValue().get("Anon-Script"));
         }
     }
 

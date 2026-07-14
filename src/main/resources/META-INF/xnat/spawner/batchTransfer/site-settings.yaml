@@ -2,7 +2,7 @@
 #### Batch Transfer — Site-wide JMS Queue Settings
 #### Adds a "Batch Transfer" group to Site Administration with a "JMS Queue" tab. The form is bound
 #### to BatchTransferQueueSettingsApi (/xapi/batch_transfer/jms_queues), which reads/writes
-#### BatchTransferQueuePrefsBean. Field names match the preference keys.
+#### BatchTransferPrefsBean. Field names match the preference keys.
 ####
 
 batchTransferQueueSettingsForm:

@@ -14,7 +14,7 @@ import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
-import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferQueuePrefsBean;
+import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferPrefsBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -29,7 +29,7 @@ import static org.nrg.xdat.security.helpers.AccessLevel.Admin;
 /**
  * Admin REST API backing the "Site-wide JMS Queue Settings" panel (defined in the batchTransfer
  * spawner {@code site-settings.yaml}). GET returns the current Batch Transfer queue concurrency
- * preferences as a map; POST updates them via {@link BatchTransferQueuePrefsBean#setBatch}. Modeled
+ * preferences as a map; POST updates them via {@link BatchTransferPrefsBean#setBatch}. Modeled
  * on container-service's {@code QueueSettingsRestApi}, but restricted to site administrators.
  *
  * <p>The preference bean extends a {@code HashMap<String,Object>}, so it serializes directly as the
@@ -42,10 +42,10 @@ import static org.nrg.xdat.security.helpers.AccessLevel.Admin;
 @Slf4j
 public class BatchTransferQueueSettingsApi extends AbstractXapiRestController {
 
-    private final BatchTransferQueuePrefsBean queuePrefs;
+    private final BatchTransferPrefsBean queuePrefs;
 
     @Autowired
-    public BatchTransferQueueSettingsApi(final BatchTransferQueuePrefsBean queuePrefs,
+    public BatchTransferQueueSettingsApi(final BatchTransferPrefsBean queuePrefs,
                                          final UserManagementServiceI userManagementService,
                                          final RoleHolder roleHolder) {
         super(userManagementService, roleHolder);

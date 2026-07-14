@@ -21,4 +21,6 @@ public class TransferCapabilities {
     private boolean perImportAnon;
     private String  anonScriptDialect;
     private String  placeholderSyntax;
+    /** Admin-tunable cap on manifest data rows for the synchronous preflight. Wire name: {@code manifest_max_rows}. */
+    private Integer manifestMaxRows;
 }

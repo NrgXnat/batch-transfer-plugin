@@ -2,7 +2,7 @@ package org.nrg.xnatx.plugins.transfer.jms.config;
 
 import org.apache.activemq.command.ActiveMQQueue;
 import org.nrg.xnatx.plugins.transfer.jms.errors.BatchTransferJmsErrorHandler;
-import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferQueuePrefsBean;
+import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferPrefsBean;
 import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,7 +22,7 @@ import javax.jms.Destination;
  *
  * <ul>
  *   <li>{@code @EnableJms} turns on {@code @JmsListener} processing for the plugin.</li>
- *   <li>Consumer concurrency comes from {@link BatchTransferQueuePrefsBean} (admin-tunable).</li>
+ *   <li>Consumer concurrency comes from {@link BatchTransferPrefsBean} (admin-tunable).</li>
  * </ul>
  */
 @Configuration
@@ -45,7 +45,7 @@ public class BatchTransferJmsConfig {
 
     @Bean(name = REIMPORT_LISTENER_FACTORY)
     public DefaultJmsListenerContainerFactory batchTransferReimportListenerFactory(
-            final BatchTransferQueuePrefsBean prefs,
+            final BatchTransferPrefsBean prefs,
             @Qualifier("springConnectionFactory") final ConnectionFactory connectionFactory) {
         final DefaultJmsListenerContainerFactory factory = defaultFactory(connectionFactory);
         factory.setConcurrency(prefs.getReimportConcurrencyMin() + "-" + prefs.getReimportConcurrencyMax());
@@ -59,7 +59,7 @@ public class BatchTransferJmsConfig {
 
     @Bean(name = CLONE_LISTENER_FACTORY)
     public DefaultJmsListenerContainerFactory batchTransferCloneListenerFactory(
-            final BatchTransferQueuePrefsBean prefs,
+            final BatchTransferPrefsBean prefs,
             @Qualifier("springConnectionFactory") final ConnectionFactory connectionFactory) {
         final DefaultJmsListenerContainerFactory factory = defaultFactory(connectionFactory);
         factory.setConcurrency(prefs.getCloneConcurrencyMin() + "-" + prefs.getCloneConcurrencyMax());

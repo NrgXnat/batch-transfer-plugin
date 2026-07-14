@@ -2,6 +2,7 @@ package org.nrg.xnatx.plugins.transfer.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.nrg.xnatx.plugins.transfer.model.TransferCapabilities;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -23,11 +24,19 @@ public class TransferCapabilitiesService {
     public static final String ANON_SCRIPT_DIALECT = "DicomEdit 6";
     public static final String PLACEHOLDER_SYNTAX  = "${csv.<column>}";
 
+    private final BatchTransferPolicy policy;
+
     /** Lazily computed once; see {@link #detectPerImportAnonSupported()}. */
     private Boolean perImportAnonSupported;
 
+    @Autowired
+    public TransferCapabilitiesService(final BatchTransferPolicy policy) {
+        this.policy = policy;
+    }
+
     public TransferCapabilities getCapabilities() {
-        return new TransferCapabilities(isPerImportAnonSupported(), ANON_SCRIPT_DIALECT, PLACEHOLDER_SYNTAX);
+        return new TransferCapabilities(isPerImportAnonSupported(), ANON_SCRIPT_DIALECT, PLACEHOLDER_SYNTAX,
+                policy.getManifestMaxRows());
     }
 
     public synchronized boolean isPerImportAnonSupported() {

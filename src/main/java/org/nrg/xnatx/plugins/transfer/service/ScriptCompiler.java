@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  *
  * <p>The thread-safety restriction (version + verb deny-list) is plugin-side text detection on the
  * Mizer-validated script, so it needs no dicom-edit6 internals. Limits/charset/deny-list all come from
- * {@link AnonScriptPolicy} (a single source of truth, admin-tunable).
+ * {@link BatchTransferPolicy} (a single source of truth, admin-tunable).
  */
 @Service
 public class ScriptCompiler {
@@ -46,10 +46,10 @@ public class ScriptCompiler {
     private static final Pattern VERSION_DECL = Pattern.compile("(?m)^\\s*version\\s+\"([0-9.]+)\"");
 
     private final MizerService mizer;
-    private final AnonScriptPolicy prefs;
+    private final BatchTransferPolicy prefs;
 
     @Autowired
-    public ScriptCompiler(final MizerService mizer, final AnonScriptPolicy prefs) {
+    public ScriptCompiler(final MizerService mizer, final BatchTransferPolicy prefs) {
         this.mizer = mizer;
         this.prefs = prefs;
     }

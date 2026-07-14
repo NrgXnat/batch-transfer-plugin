@@ -25,6 +25,7 @@ import org.nrg.framework.constants.PrearchiveCode;
 import org.nrg.xnat.DicomObjectIdentifier;
 import org.nrg.xnat.archive.DicomZipImporter;
 import org.nrg.xnat.helpers.merge.AnonUtils;
+import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.FileWriterWrapperI;
 import org.nrg.xnat.turbine.utils.ArcSpecManager;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
@@ -373,6 +374,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         params.put("action", "commit");
         if (destinationAutoArchives(destinationProjectData.getId())) {
             params.put("AA", "true");
+        }
         if (StringUtils.isNotBlank(anonScript)) {
             params.put("Anon-Script", anonScript);
             if (anonReplacePipeline) {

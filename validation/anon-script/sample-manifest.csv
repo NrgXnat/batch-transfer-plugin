@@ -1,0 +1,4 @@
+source_subject_label,source_session_label,destination_patient_id,birthdate_shift_days,_notes
+CT_subject_42,CT_session_0501,ANON-042,-1247,first cohort
+CT_subject_43,CT_session_0503,ANON-043,-892,
+CT_subject_99,CT_session_0612,ANON-099,-15,subject intentionally absent — demonstrates a not-found row

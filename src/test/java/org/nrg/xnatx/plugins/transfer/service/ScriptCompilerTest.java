@@ -4,7 +4,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.nrg.dicom.mizer.exceptions.MizerException;
 import org.nrg.dicom.mizer.service.MizerService;
-import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferQueuePrefsBean;
+import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferPrefsBean;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 
@@ -28,7 +28,7 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests for {@link ScriptCompiler}. The pure-text methods (placeholders, binding, sanitize,
  * substitution, restriction) and the orchestrating {@code validateBatch} run against a mocked
- * {@link BatchTransferQueuePrefsBean} (default limits) and {@link MizerService} (the parse seam), so no real
+ * {@link BatchTransferPrefsBean} (default limits) and {@link MizerService} (the parse seam), so no real
  * DicomEdit engine is needed.
  */
 public class ScriptCompilerTest {
@@ -41,18 +41,21 @@ public class ScriptCompilerTest {
      * preference hierarchy is never initialized) rather than mocking the bean, whose supertype init trips a
      * test-classpath slf4j/log4j conflict.
      */
-    private static final AnonScriptPolicy DEFAULT_POLICY = new AnonScriptPolicy() {
+    private static final BatchTransferPolicy DEFAULT_POLICY = new BatchTransferPolicy() {
         @Override public Integer getMaxAnonScriptBytes() {
-            return Integer.valueOf(BatchTransferQueuePrefsBean.MAX_ANON_SCRIPT_BYTES_DFLT);
+            return Integer.valueOf(BatchTransferPrefsBean.MAX_ANON_SCRIPT_BYTES_DFLT);
         }
         @Override public String getAnonValueCharset() {
-            return BatchTransferQueuePrefsBean.ANON_VALUE_CHARSET_DFLT;
+            return BatchTransferPrefsBean.ANON_VALUE_CHARSET_DFLT;
         }
         @Override public String getRestrictedAnonVerbs() {
-            return BatchTransferQueuePrefsBean.RESTRICTED_ANON_VERBS_DFLT;
+            return BatchTransferPrefsBean.RESTRICTED_ANON_VERBS_DFLT;
         }
         @Override public String getAllowedAnonVersionPattern() {
-            return BatchTransferQueuePrefsBean.ALLOWED_ANON_VERSION_PATTERN_DFLT;
+            return BatchTransferPrefsBean.ALLOWED_ANON_VERSION_PATTERN_DFLT;
+        }
+        @Override public Integer getManifestMaxRows() {
+            return Integer.valueOf(BatchTransferPrefsBean.MANIFEST_MAX_ROWS_DFLT);
         }
     };
 

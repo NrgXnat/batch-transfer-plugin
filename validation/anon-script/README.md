@@ -37,6 +37,8 @@ These scripts validate, against a **running XNAT**, that a custom DicomEdit scri
 | `verify-anon-applied.sh` | Step 5 — reads the sentinel back from the destination DICOM (override `SENTINEL`). |
 | `check-guardrails.sh` | Step 6 — the Reimport-only `400` guardrail (script + Share → 400). |
 | `check-script-enforcement.sh` | Step 8 — the six submit-enforcement `400` cases (no data touched). |
+| `sample-manifest.csv` | Illustrative manifest fixture (required + value + reserved columns) — documents the CSV shape. |
+| `check-manifest.sh` | Manifest preflight — asserts `POST /validate/manifest` column classification + matched/not-found resolution (no data touched). |
 | `reimport-project.sh` | Load profiling — reimport **all** sessions in a project, with/without a script. |
 
 ## Prerequisites
@@ -128,7 +130,7 @@ image-session types; assessors/subjects excluded, since Reimport is session-only
 **For meaningful numbers:**
 - The wall-clock here is **client-side, end-to-end** (submit → all items terminal). Capture the real load
   (CPU, I/O, the anon pipeline) **server-side** during the run — JFR, `docker stats`, prearchive disk.
-- Reimport throughput is bound by the **JMS consumer concurrency** (`BatchTransferQueuePrefsBean`, default
+- Reimport throughput is bound by the **JMS consumer concurrency** (`BatchTransferPrefsBean`, default
   Reimport 4–8) and **prearchive storage**, not the plugin. Keep concurrency identical across the two runs
   you compare; expect the `--with-script` delta to reflect the per-file anon re-parse cost (~10% in the
   JFR work), not a plugin bottleneck.
