@@ -25,6 +25,10 @@ public class TransferRequest {
     private Boolean preserveSessionLabel;
     // Reimport only: substitution values
     private Map<String, String> csvValues;
+    // Reimport only: route the reimport to this destination subject/session label (importer subject/session
+    // params, which override DICOM-tag-derived labels). Blank/null = derive normally.
+    private String destinationSubjectLabel;
+    private String destinationSessionLabel;
     // Internal threading only (the batch-level fields live on BatchTransfer): the compiled per-item script
     // and whether it replaces the destination pipeline. Not part of the per-request wire contract.
     @JsonIgnore
@@ -33,6 +37,6 @@ public class TransferRequest {
     private boolean anonReplacePipeline;
     //  Retain no-preserve-flag default constructor
     public TransferRequest(String destinationProject, String id, TransferMode mode) {
-        this(destinationProject, id, mode, null, null, null, null, false);
+        this(destinationProject, id, mode, null, null, null, null, null, null, false);
     }
 }

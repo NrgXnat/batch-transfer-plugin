@@ -71,8 +71,9 @@ public class TransferReimportListener {
             eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
                     0, trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
             final TransferRequest transferRequest = new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT,
-                    request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), null, request.getAnonScript(),
-                    request.isAnonReplacePipeline());
+                    request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), null,
+                    request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
+                    request.getAnonScript(), request.isAnonReplacePipeline());
             service.processItem(transferRequest, user, new EventInfo(trackingId, 0));
         } catch (Exception e) {
             log.error("Reimport {} failed", itemId, e);

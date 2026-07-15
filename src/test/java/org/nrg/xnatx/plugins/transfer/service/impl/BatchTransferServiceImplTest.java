@@ -190,7 +190,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             service.processItem(new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT,
-                    preserveSubjectLabel, preserveSessionLabel, null, null, false), user, eventInfo());
+                    preserveSubjectLabel, preserveSessionLabel, null, null, null, null, false), user, eventInfo());
 
             verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
             return paramsCaptor.getValue();
@@ -459,7 +459,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null, null, false));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, true, false, null, null, null, null, false));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -487,7 +487,7 @@ public class BatchTransferServiceImplTest {
             feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
 
             final Exception thrown = processItemCatching(
-                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true, null, null, false));
+                    new TransferRequest(DEST_PROJECT, EXP_ID, TransferMode.REIMPORT, false, true, null, null, null, null, false));
             verify(service, never()).runImporter(any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
             return thrown;
         }
@@ -615,6 +615,50 @@ public class BatchTransferServiceImplTest {
 
             verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
             assertEquals(script, paramsCaptor.getValue().get("Anon-Script"));
+        }
+    }
+
+    /**
+     * A REIMPORT carrying destination routing labels sets the importer {@code subject}/{@code session}
+     * params — and the explicit override wins over a preserve-source-label flag.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void importImagesession_destinationLabels_routeToImporterParams() throws Exception {
+        stubImageSessionAsSource();
+
+        final List<String> importerUrls = Collections.singletonList(
+                "/archive/experiments/" + DEST_PROJECT + "_" + LABEL);
+        doReturn(importerUrls).when(service).runImporter(
+                any(UserI.class), any(FileWriterWrapperI.class), any(Map.class));
+
+        final ArgumentCaptor<Map> paramsCaptor = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<XnatUtils>   utils = mockStatic(XnatUtils.class);
+             MockedStatic<Permissions> perms = mockStatic(Permissions.class);
+             MockedStatic<Features>    feats = mockStatic(Features.class)) {
+
+            utils.when(() -> XnatUtils.getProject(DEST_PROJECT, user)).thenReturn(destinationProjectData);
+            utils.when(() -> XnatUtils.getArchivableItem(EXP_ID, null)).thenReturn(imageSession);
+            utils.when(() -> XnatUtils.doActionWithWorkflow(
+                    any(UserI.class), any(), anyString(), any(Callable.class)))
+                    .thenAnswer(inv -> {
+                        ((Callable<?>) inv.getArgument(3)).call();
+                        return true;
+                    });
+            perms.when(() -> Permissions.canRead(user, imageSession)).thenReturn(true);
+            perms.when(() -> Permissions.canCreate(eq(user), anyString(), eq(DEST_PROJECT))).thenReturn(true);
+            feats.when(() -> Features.checkRestrictedFeature(eq(user), anyString(), anyString())).thenReturn(true);
+
+            final TransferRequest routed = reimport(EXP_ID);
+            routed.setDestinationSubjectLabel("ANON-042");
+            routed.setDestinationSessionLabel("STUDY2_042");
+            routed.setPreserveSubjectLabel(true);   // override must still win (no getSubject lookup happens)
+            service.processItem(routed, user, eventInfo());
+
+            verify(service).runImporter(eq(user), any(FileWriterWrapperI.class), paramsCaptor.capture());
+            assertEquals("ANON-042", paramsCaptor.getValue().get("subject"));
+            assertEquals("STUDY2_042", paramsCaptor.getValue().get("session"));
         }
     }
 

@@ -31,6 +31,10 @@ public class ManifestRow {
     private String sourceSubjectLabel;
     private String sourceSessionLabel;
 
+    /** Optional routing: the destination subject/session label this Reimport should land in (null = derive). */
+    private String destinationSubjectLabel;
+    private String destinationSessionLabel;
+
     private String status;
     /** The resolved experiment id when {@code status == matched}; otherwise null. */
     private String resolvedId;

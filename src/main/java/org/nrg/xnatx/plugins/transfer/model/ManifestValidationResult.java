@@ -23,6 +23,8 @@ public class ManifestValidationResult {
     private boolean requiredPresent;
     private List<String> missingColumns = new ArrayList<>();
     private List<String> reservedColumns = new ArrayList<>();
+    /** Recognized routing columns present (`destination_subject_label`/`destination_session_label`). */
+    private List<String> routingColumns = new ArrayList<>();
     private List<String> valueColumns = new ArrayList<>();
     private int totalRows;
     private ManifestSummary summary;

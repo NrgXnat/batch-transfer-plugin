@@ -39,6 +39,7 @@ These scripts validate, against a **running XNAT**, that a custom DicomEdit scri
 | `check-script-enforcement.sh` | Step 8 — the six submit-enforcement `400` cases (no data touched). |
 | `sample-manifest.csv` | Illustrative manifest fixture (required + value + reserved columns) — documents the CSV shape. |
 | `check-manifest.sh` | Manifest preflight — asserts `POST /validate/manifest` column classification + matched/not-found resolution (no data touched). |
+| `submit-manifest.sh` | One-shot manifest submit — resolves label rows and submits them via `POST /manifest`; polls to completion (**creates data**). |
 | `reimport-project.sh` | Load profiling — reimport **all** sessions in a project, with/without a script. |
 
 ## Prerequisites
@@ -61,7 +62,7 @@ Fill in `config.env`:
 XNAT_URL=https://localhost              # no trailing slash needed
 XNAT_USER=admin
 XNAT_PASS=...                           # never commit this
-SOURCE_SESSION_ID=XNAT_E00001           # single-session test: the source session's accession/ID (NOT its label)
+SOURCE_SESSION_ID=XNAT01_E00001           # single-session test: the source session's accession/ID (NOT its label)
 SOURCE_PROJECT=SRC_PROJECT              # profiling: reimport every image session in this project
 DEST_PROJECT=ANON_TARGET                # destination project; you must have EDIT access (use a scratch project)
 # ANON_SCRIPT_FILE=./anonymize.des      # optional; defaults to the bundled sample
@@ -85,6 +86,10 @@ DEST_PROJECT=ANON_TARGET                # destination project; you must have EDI
 ./check-script-enforcement.sh        # six 400 cases (parse, version, verb, binding, charset); no data touched
 ./submit-csv-anon-transfer.sh        # ${csv.*} template + csv_values → reimport; PASS = run completed
 SENTINEL="CSV_ANON_OK" ./verify-anon-applied.sh   # confirm the SUBSTITUTED value landed
+
+# Manifest cohort (label-driven)
+./check-manifest.sh                  # /validate/manifest: column classification + label resolution; no data touched
+./submit-manifest.sh                 # /manifest one-shot: resolve label row(s) → submit → poll;  PASS = run completed
 ```
 
 Each script exits `0` on PASS, non-zero on FAIL/inconclusive, and prints a `== Result ==` line.

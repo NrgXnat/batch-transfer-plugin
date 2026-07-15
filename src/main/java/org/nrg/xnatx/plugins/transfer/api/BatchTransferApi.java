@@ -308,12 +308,27 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         preflightResolver.resolveAll(sourceProject, result.getRows(), user);
 
+        // A matched row with value errors (bad charset value or invalid routing label) is not transferable —
+        // reject up front rather than submitting known-bad data.
+        final List<String> rowErrors = new ArrayList<>();
+        for (final ManifestRow row : result.getRows()) {
+            if (ManifestRow.STATUS_MATCHED.equals(row.getStatus()) && !row.getValueErrors().isEmpty()) {
+                rowErrors.add("row " + row.getIndex() + ": " + String.join("; ", row.getValueErrors()));
+            }
+        }
+        if (!rowErrors.isEmpty()) {
+            return new ResponseEntity<>("Manifest has value errors that block submit — "
+                    + String.join(" | ", rowErrors), HttpStatus.BAD_REQUEST);
+        }
+
         final List<TransferRequest> requests = new ArrayList<>();
         int skipped = 0;
         for (final ManifestRow row : result.getRows()) {
             if (ManifestRow.STATUS_MATCHED.equals(row.getStatus())) {
                 final TransferRequest request = new TransferRequest(destinationProject, row.getResolvedId(), mode);
                 request.setCsvValues(row.getCsvValues());
+                request.setDestinationSubjectLabel(row.getDestinationSubjectLabel());
+                request.setDestinationSessionLabel(row.getDestinationSessionLabel());
                 requests.add(request);
             } else {
                 skipped++;

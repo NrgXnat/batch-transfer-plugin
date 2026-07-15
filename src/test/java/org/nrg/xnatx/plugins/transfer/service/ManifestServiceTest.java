@@ -11,6 +11,7 @@ import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
@@ -122,6 +123,65 @@ public class ManifestServiceTest {
 
         assertFalse(r.getScriptBinding().isBound());
         assertTrue(r.getScriptBinding().getUnbound().contains("not_a_column"));
+    }
+
+    @Test
+    public void classifiesRoutingColumnsAndPopulatesRows() throws Exception {
+        final String csv = "source_subject_label,source_session_label,destination_subject_label,destination_session_label,destination_patient_id\n"
+                + "S1,SESS1,ANON-042,STUDY2_042,ANON-042\n";
+        final ManifestValidationResult r = parse(csv);
+
+        assertEquals(Arrays.asList("destination_subject_label", "destination_session_label"), r.getRoutingColumns());
+        // routing columns are recognized separately — not lumped into value columns
+        assertEquals(Arrays.asList("destination_patient_id"), r.getValueColumns());
+
+        final ManifestRow row = r.getRows().get(0);
+        assertEquals("ANON-042", row.getDestinationSubjectLabel());
+        assertEquals("STUDY2_042", row.getDestinationSessionLabel());
+        // dual-purpose: routing values are also exposed to ${csv.*} substitution
+        assertEquals("ANON-042", row.getCsvValues().get("destination_subject_label"));
+    }
+
+    @Test
+    public void routingColumnIsAvailableForScriptBinding() throws Exception {
+        final String script = "version \"6.1\"\n(0010,0020) := \"${csv.destination_subject_label}\"";
+        final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
+                + "S1,SESS1,ANON-042\n";
+        final ManifestValidationResult r = service.parse(csv, script);
+
+        assertTrue("a routing column binds ${csv.*}", r.getScriptBinding().isBound());
+    }
+
+    @Test
+    public void flagsAnInvalidRoutingLabel() throws Exception {
+        // A space is DICOM-safe (passes the ${csv.*} charset) but NOT a valid XNAT label — exercises the
+        // stricter routing charset, not isValueSafe.
+        final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
+                + "S1,SESS1,ANON 042\n";
+        final ManifestValidationResult r = parse(csv);
+
+        assertFalse(r.getRows().get(0).getValueErrors().isEmpty());
+    }
+
+    @Test
+    public void flagsADottedRoutingLabel() throws Exception {
+        // A dot is DICOM-safe but XNAT's cleanValue rewrites it to '_', so the label wouldn't round-trip —
+        // routing labels must be restricted to what XNAT keeps verbatim.
+        final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
+                + "S1,SESS1,STUDY2.042\n";
+        final ManifestValidationResult r = parse(csv);
+
+        assertFalse(r.getRows().get(0).getValueErrors().isEmpty());
+    }
+
+    @Test
+    public void blankRoutingLabelIsNotAnError() throws Exception {
+        final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
+                + "S1,SESS1,\n";                  // blank → derive normally, not an error
+        final ManifestValidationResult r = parse(csv);
+
+        assertTrue(r.getRows().get(0).getValueErrors().isEmpty());
+        assertNull(r.getRows().get(0).getDestinationSubjectLabel());
     }
 
     @Test

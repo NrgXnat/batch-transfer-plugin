@@ -16,4 +16,4 @@ version "6.1"
 
 // Optional: rewrite identifiers (uncomment to also drive the destination
 // subject/session labels from these tags on reimport).
-// (0010,0020) := "ANON_API_ID"         // PatientID
+(0010,0020) := "ANON_API_ID"         // PatientID

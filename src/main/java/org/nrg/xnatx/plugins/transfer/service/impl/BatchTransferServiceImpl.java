@@ -170,8 +170,9 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                         ? scriptCompiler.compile(anonScript, request.getCsvValues()) : null;
                 XDAT.sendJmsRequest(new TransferItemRequest(trackingId, request.getId(),
                         request.getDestinationProject(), user.getUsername(), user.getID(),
-                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), compiledScript,
-                        anonReplacePipeline));
+                        request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(),
+                        request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
+                        compiledScript, anonReplacePipeline));
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -334,6 +335,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
                         request.getPreserveSubjectLabel(),
                         request.getPreserveSessionLabel(),
+                        request.getDestinationSubjectLabel(),
+                        request.getDestinationSessionLabel(),
                         request.getAnonScript(),
                         request.isAnonReplacePipeline());
             } else {
@@ -361,7 +364,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
-                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel, String anonScript,
+                                  Boolean preserveSubjectLabel, Boolean preserveSessionLabel,
+                                  String destinationSubjectLabel, String destinationSessionLabel, String anonScript,
                                   boolean anonReplacePipeline) throws Exception {
         if (sourceExperiment instanceof XnatImageassessordata) {
             throw new Exception("Reimport operation is not supported for assessors.");
@@ -385,10 +389,13 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             }
         }
 
-        // Preserve the source XNAT labels instead of letting the destination derive them from DICOM
-        // tags. If the user asked to preserve a label but it is blank or missing, there is nothing
-        // usable to override with, so fail the item rather than silently skipping the substitution.
-        if (Boolean.TRUE.equals(preserveSubjectLabel)) {
+        // Set the destination subject/session labels (importer subject/session params, which override the
+        // labels the destination would otherwise derive from DICOM tags). Precedence per label: an explicit
+        // manifest routing value, else the preserve-source-label option, else DICOM-derived (no param set).
+        // A preserve flag with a blank source label fails the item rather than silently skipping.
+        if (StringUtils.isNotBlank(destinationSubjectLabel)) {
+            params.put("subject", destinationSubjectLabel);
+        } else if (Boolean.TRUE.equals(preserveSubjectLabel)) {
             final XnatSubjectdata sourceSubject = XnatUtils.getSubject((String) sourceExperiment.getProperty("subject_ID"), user);
             final String subjectLabel = sourceSubject.getLabel();
             if (StringUtils.isBlank(subjectLabel)) {
@@ -397,7 +404,9 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             }
             params.put("subject", subjectLabel);
         }
-        if (Boolean.TRUE.equals(preserveSessionLabel)) {
+        if (StringUtils.isNotBlank(destinationSessionLabel)) {
+            params.put("session", destinationSessionLabel);
+        } else if (Boolean.TRUE.equals(preserveSessionLabel)) {
             final String sessionLabel = sourceExperiment.getLabel();
             if (StringUtils.isBlank(sessionLabel)) {
                 throw new Exception("Cannot preserve the source session label for " + sourceExperiment.getId()

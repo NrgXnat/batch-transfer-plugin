@@ -42,13 +42,13 @@ check() {  # check <label> <condition-result 0/1>
     else echo "   FAIL $1"; FAIL=$((FAIL + 1)); fi
 }
 
-# A manifest with required + one value + one reserved column, and the three rows described above.
+# A manifest with required + one routing + one value + one reserved column, and the three rows described above.
 CSV="$(mktemp)"; trap 'rm -f "$CSV"' EXIT
 {
-    echo "source_subject_label,source_session_label,destination_patient_id,_notes"
-    echo "$MANIFEST_SUBJECT_LABEL,$MANIFEST_SESSION_LABEL,ANON-001,known good"
-    echo "$MANIFEST_SUBJECT_LABEL,__NO_SUCH_SESSION__,ANON-002,bad session"
-    echo "__NO_SUCH_SUBJECT__,__NO_SUCH_SESSION__,ANON-003,bad subject"
+    echo "source_subject_label,source_session_label,destination_subject_label,destination_patient_id,_notes"
+    echo "$MANIFEST_SUBJECT_LABEL,$MANIFEST_SESSION_LABEL,ROUTED-001,ANON-001,known good"
+    echo "$MANIFEST_SUBJECT_LABEL,__NO_SUCH_SESSION__,ROUTED-002,ANON-002,bad session"
+    echo "__NO_SUCH_SUBJECT__,__NO_SUCH_SESSION__,ROUTED-003,ANON-003,bad subject"
 } > "$CSV"
 
 echo "== validate/manifest (multipart upload) against project $SOURCE_PROJECT =="
@@ -71,8 +71,12 @@ fi
 # Column classification.
 check "required_present is true" \
     "$([ "$(echo "$BODY" | jq -r '.required_present')" = "true" ] && echo 0 || echo 1)"
-check "value_columns = [destination_patient_id]" \
+check "value_columns = [destination_patient_id] (routing column excluded)" \
     "$([ "$(echo "$BODY" | jq -c '.value_columns')" = '["destination_patient_id"]' ] && echo 0 || echo 1)"
+check "routing_columns includes destination_subject_label" \
+    "$(echo "$BODY" | jq -e '.routing_columns | index("destination_subject_label")' >/dev/null 2>&1 && echo 0 || echo 1)"
+check "row 1 echoes destination_subject_label = ROUTED-001" \
+    "$([ "$(echo "$BODY" | jq -r '.rows[] | select(.index==1) | .destination_subject_label')" = "ROUTED-001" ] && echo 0 || echo 1)"
 check "reserved_columns = [_notes]" \
     "$([ "$(echo "$BODY" | jq -c '.reserved_columns')" = '["_notes"]' ] && echo 0 || echo 1)"
 check "total_rows = 3" \

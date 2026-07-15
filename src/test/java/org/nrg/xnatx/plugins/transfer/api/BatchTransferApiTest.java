@@ -230,6 +230,35 @@ public class BatchTransferApiTest {
         verify(service, never()).submitTransferRequest(any(), any());
     }
 
+    @Test
+    public void submitManifest_routingLabels_threadedToRequests() throws Exception {
+        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
+        row.setDestinationSubjectLabel("ANON-042");
+        row.setDestinationSessionLabel("STUDY2_042");
+        when(manifestService.parse(any(), any())).thenReturn(result(true, row));
+
+        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
+        verify(service).submitTransferRequest(batch.capture(), eq(user));
+        final TransferRequest req = batch.getValue().getRequests().get(0);
+        assertEquals("ANON-042", req.getDestinationSubjectLabel());
+        assertEquals("STUDY2_042", req.getDestinationSessionLabel());
+    }
+
+    @Test
+    public void submitManifest_matchedRowWithValueError_returns400() throws Exception {
+        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
+        row.getValueErrors().add("destination_subject_label is not a valid XNAT label");
+        when(manifestService.parse(any(), any())).thenReturn(result(true, row));
+
+        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
     // ---- fixtures ------------------------------------------------------------------------------------
 
     private static ManifestValidationRequest validationRequest(final String sourceProject, final String anonScript) {

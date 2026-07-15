@@ -31,6 +31,9 @@ public class TransferItemRequest implements Serializable {
     private final Integer requestingUserId;
     private final Boolean preserveSubjectLabel;
     private final Boolean preserveSessionLabel;
+    /** Reimport routing: destination subject/session label for the importer's subject/session params, or null. */
+    private final String  destinationSubjectLabel;
+    private final String  destinationSessionLabel;
     /** The compiled (already {@code ${csv.*}}-substituted) per-item anonymization script, or null. */
     private final String  anonScript;
     /** When true the compiled script replaces the destination pipeline (the consumer also sends prevent_anon). */
