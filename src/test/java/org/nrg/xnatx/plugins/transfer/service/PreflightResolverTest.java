@@ -27,9 +27,19 @@ public class PreflightResolverTest {
         private final Map<String, List<SessionRef>> bySubjectLabel;
         private List<SessionRef> pending;
         int findSubjectCalls = 0;
+        int fileCountCalls = 0;
+        String lastFileCountExperimentId;
+        Integer stubbedFileCount = 42;
 
         StubResolver(final Map<String, List<SessionRef>> bySubjectLabel) {
             this.bySubjectLabel = bySubjectLabel;
+        }
+
+        @Override
+        protected Integer countReimportableFiles(final String experimentId, final UserI user) {
+            fileCountCalls++;
+            lastFileCountExperimentId = experimentId;
+            return stubbedFileCount;
         }
 
         @Override
@@ -119,5 +129,45 @@ public class PreflightResolverTest {
         assertEquals(ManifestRow.STATUS_MATCHED, r1.getStatus());
         assertEquals(ManifestRow.STATUS_MATCHED, r2.getStatus());
         assertEquals("the same subject is looked up only once per batch", 1, resolver.findSubjectCalls);
+    }
+
+    @Test
+    public void computesFileCountForMatchedRowWhenRequested() {
+        final StubResolver resolver = new StubResolver(
+                Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
+        final ManifestRow row = row("S1", "SESS1");
+
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), true);
+
+        assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
+        assertEquals(Integer.valueOf(42), row.getFileCount());
+        assertEquals(1, resolver.fileCountCalls);
+        assertEquals("counts the resolved experiment", "E1", resolver.lastFileCountExperimentId);
+    }
+
+    @Test
+    public void skipsFileCountByDefault() {
+        final StubResolver resolver = new StubResolver(
+                Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
+        final ManifestRow row = row("S1", "SESS1");
+
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class));
+
+        assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
+        assertNull("no file count without the flag", row.getFileCount());
+        assertEquals("the count seam is never walked by default", 0, resolver.fileCountCalls);
+    }
+
+    @Test
+    public void doesNotCountFilesForUnmatchedRowEvenWhenRequested() {
+        final StubResolver resolver = new StubResolver(
+                Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
+        final ManifestRow row = row("S1", "NOPE");
+
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), true);
+
+        assertEquals(ManifestRow.STATUS_SESSION_NOT_FOUND, row.getStatus());
+        assertNull(row.getFileCount());
+        assertEquals(0, resolver.fileCountCalls);
     }
 }

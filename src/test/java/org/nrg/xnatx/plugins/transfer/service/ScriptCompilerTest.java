@@ -5,6 +5,7 @@ import org.junit.Test;
 import org.nrg.dicom.mizer.exceptions.MizerException;
 import org.nrg.dicom.mizer.service.MizerService;
 import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferPrefsBean;
+import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 
@@ -17,6 +18,8 @@ import java.util.Set;
 import static java.util.Collections.singletonList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -174,6 +177,73 @@ public class ScriptCompilerTest {
                 .thenThrow(new MizerException("unexpected token"));
         final TransferRequest req = reimport("E1", Collections.<String, String>emptyMap());
         expectInvalid("version \"6.1\"\n(0010,0010) := \"X\"", req);
+    }
+
+    // ---- validate (advisory verdict) --------------------------------------------------------------
+
+    @Test
+    public void validateReportsValidForCleanScriptNoColumns() {
+        final ScriptValidationResult r = compiler.validate("version \"6.1\"\n(0010,0010) := \"X\"", null);
+        assertTrue(r.isValid());
+        assertEquals("DicomEdit 6.1", r.getDialect());
+        assertTrue(r.getErrors().isEmpty());
+        assertTrue(r.getRestrictionViolations().isEmpty());
+        assertTrue(r.getPlaceholders().isEmpty());
+        assertNull("binding omitted without manifest columns", r.getBinding());
+    }
+
+    @Test
+    public void validateReportsBoundWhenColumnsCoverPlaceholders() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"", singletonList("pid"));
+        assertTrue(r.isValid());
+        assertEquals(singletonList("pid"), r.getPlaceholders());
+        assertNotNull(r.getBinding());
+        assertTrue(r.getBinding().isBound());
+        assertTrue(r.getBinding().getUnbound().isEmpty());
+    }
+
+    @Test
+    public void validateReportsUnboundAndInvalidWhenColumnMissing() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"", singletonList("other"));
+        assertFalse(r.isValid());
+        assertNotNull(r.getBinding());
+        assertFalse(r.getBinding().isBound());
+        assertEquals(singletonList("pid"), r.getBinding().getUnbound());
+    }
+
+    @Test
+    public void validateTemplatedScriptWithoutColumnsNotesManifestNeeded() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"", null);
+        assertTrue(r.isValid());                       // sentinel-parses clean; binding not checked
+        assertNull(r.getBinding());
+        assertNotNull("advisory note expected", r.getMessage());
+    }
+
+    @Test
+    public void validateFlagsRestrictionViolation() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0020) := mapUID(this)", null);
+        assertFalse(r.isValid());
+        assertFalse(r.getRestrictionViolations().isEmpty());
+    }
+
+    @Test
+    public void validateFlagsParseErrorFromMizerSeam() throws Exception {
+        when(mizer.createContext(any(), any(), any(), anyLong(), any(), anyBoolean(), anyBoolean()))
+                .thenThrow(new MizerException("unexpected token"));
+        final ScriptValidationResult r = compiler.validate("version \"6.1\"\n(0010,0010) := \"X\"", null);
+        assertFalse(r.isValid());
+        assertFalse(r.getErrors().isEmpty());
+    }
+
+    @Test
+    public void validateRejectsBlankScript() {
+        final ScriptValidationResult r = compiler.validate("   ", null);
+        assertFalse(r.isValid());
+        assertFalse(r.getErrors().isEmpty());
     }
 
     // ---- helpers ----------------------------------------------------------------------------------

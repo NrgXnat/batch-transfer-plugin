@@ -7,6 +7,7 @@ import org.nrg.xnatx.plugins.transfer.model.ManifestSubmitResult;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSummary;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
+import org.nrg.xnatx.plugins.transfer.model.ScriptValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.TransferCapabilities;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
@@ -165,6 +166,23 @@ public class BatchTransferApi extends AbstractXapiRestController {
         return new ResponseEntity<>(capabilitiesService.getCapabilities(), HttpStatus.OK);
     }
 
+    // ---- Script validation (advisory) ------------------------------------------------------------------
+
+    @ApiOperation(value = "Validates a custom DicomEdit anon script (parse + ${csv.*} binding + thread-safety "
+            + "restriction); advisory — validity is in the body, not the status")
+    @ApiResponses({ @ApiResponse(code = 200, message = "Verdict returned (valid true/false)"),
+                    @ApiResponse(code = 400, message = "Malformed request (missing anon_script)") })
+    @XapiRequestMapping(value = {"validate/script"}, consumes = APPLICATION_JSON_VALUE,
+            produces = APPLICATION_JSON_VALUE, method = POST)
+    @ResponseBody
+    public ResponseEntity<?> validateScript(@RequestBody final ScriptValidationRequest request) {
+        if (request == null || StringUtils.isBlank(request.getAnonScript())) {
+            return new ResponseEntity<>("anon_script is required.", HttpStatus.BAD_REQUEST);
+        }
+        return new ResponseEntity<>(
+                scriptCompiler.validate(request.getAnonScript(), request.getManifestColumns()), HttpStatus.OK);
+    }
+
     // ---- Manifest: parse + light preflight (validate) --------------------------------------------------
 
     @ApiOperation(value = "Parses a manifest CSV and resolves each row to a source session (no data touched)")
@@ -178,7 +196,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
     public ResponseEntity<?> validateManifest(@RequestBody final ManifestValidationRequest request) {
         final TransferMode mode = request.getMode() == null ? TransferMode.REIMPORT : request.getMode();
         return doValidateManifest(request.getSourceProject(), mode, request.getManifestCsv(),
-                request.getAnonScript(), getSessionUser());
+                request.getAnonScript(), request.isFileCount(), getSessionUser());
     }
 
     @ApiOperation(value = "Parses an uploaded manifest CSV and resolves each row to a source session")
@@ -189,7 +207,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
             @RequestParam("manifest") final MultipartFile manifest,
             @RequestParam("source_project") final String sourceProject,
             @RequestParam(value = "mode", required = false) final String mode,
-            @RequestParam(value = "anon_script", required = false) final String anonScript) {
+            @RequestParam(value = "anon_script", required = false) final String anonScript,
+            @RequestParam(value = "file_count", required = false) final Boolean fileCount) {
         final TransferMode resolvedMode = resolveMode(mode);
         if (resolvedMode == null) {
             return new ResponseEntity<>("Invalid mode: " + mode, HttpStatus.BAD_REQUEST);
@@ -201,11 +220,13 @@ public class BatchTransferApi extends AbstractXapiRestController {
             return new ResponseEntity<>("Could not read the uploaded manifest: " + e.getMessage(),
                     HttpStatus.BAD_REQUEST);
         }
-        return doValidateManifest(sourceProject, resolvedMode, csv, anonScript, getSessionUser());
+        return doValidateManifest(sourceProject, resolvedMode, csv, anonScript,
+                Boolean.TRUE.equals(fileCount), getSessionUser());
     }
 
     private ResponseEntity<?> doValidateManifest(final String sourceProject, final TransferMode mode,
-                                                 final String csv, final String anonScript, final UserI user) {
+                                                 final String csv, final String anonScript,
+                                                 final boolean includeFileCount, final UserI user) {
         if (StringUtils.isBlank(sourceProject)) {
             return new ResponseEntity<>("source_project is required.", HttpStatus.BAD_REQUEST);
         }
@@ -222,7 +243,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         if (result.isRequiredPresent() && !result.getRows().isEmpty()) {
-            preflightResolver.resolveAll(sourceProject, result.getRows(), user);
+            preflightResolver.resolveAll(sourceProject, result.getRows(), user, includeFileCount);
             int matched = 0;
             for (final ManifestRow row : result.getRows()) {
                 if (ManifestRow.STATUS_MATCHED.equals(row.getStatus())) {

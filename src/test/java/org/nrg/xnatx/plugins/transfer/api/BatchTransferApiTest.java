@@ -13,6 +13,8 @@ import org.nrg.xnatx.plugins.transfer.model.ManifestSubmitRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSubmitResult;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
+import org.nrg.xnatx.plugins.transfer.model.ScriptValidationRequest;
+import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
@@ -131,16 +133,29 @@ public class BatchTransferApiTest {
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user));
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
         final ManifestValidationResult body = (ManifestValidationResult) resp.getBody();
         assertEquals(1, body.getSummary().getMatched());
         assertEquals(1, body.getSummary().getNotFound());
     }
 
     @Test
+    public void validateManifest_fileCountFlag_threadedToResolver() throws Exception {
+        when(manifestService.parse(any(), any())).thenReturn(result(true,
+                matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
+
+        final ManifestValidationRequest req = validationRequest(SRC, null);
+        req.setFileCount(true);
+        final ResponseEntity<?> resp = api.validateManifest(req);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(true));
+    }
+
+    @Test
     public void validateManifestUpload_invalidMode_returns400() throws Exception {
         final ResponseEntity<?> resp = api.validateManifestUpload(
-                mock(MultipartFile.class), SRC, "NotAMode", null);
+                mock(MultipartFile.class), SRC, "NotAMode", null, null);
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
         verify(manifestService, never()).parse(any(), any());   // rejected before reading the file
     }
@@ -153,9 +168,38 @@ public class BatchTransferApiTest {
         when(manifestService.parse(any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
 
-        final ResponseEntity<?> resp = api.validateManifestUpload(file, SRC, null, null);
+        final ResponseEntity<?> resp = api.validateManifestUpload(file, SRC, null, null, null);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
+    }
+
+    // ---- validate/script -----------------------------------------------------------------------------
+
+    @Test
+    public void validateScript_blankScript_returns400() {
+        assertEquals(HttpStatus.BAD_REQUEST,
+                api.validateScript(new ScriptValidationRequest()).getStatusCode());
+        final ScriptValidationRequest blank = new ScriptValidationRequest();
+        blank.setAnonScript("   ");
+        assertEquals(HttpStatus.BAD_REQUEST, api.validateScript(blank).getStatusCode());
+        verify(scriptCompiler, never()).validate(anyString(), any());
+    }
+
+    @Test
+    public void validateScript_returnsCompilerVerdictWith200() {
+        final ScriptValidationResult verdict = new ScriptValidationResult();
+        verdict.setValid(true);
+        when(scriptCompiler.validate(anyString(), any())).thenReturn(verdict);
+
+        final ScriptValidationRequest req = new ScriptValidationRequest();
+        req.setAnonScript("version \"6.1\"\n(0010,0010) := \"${csv.pid}\"");
+        req.setManifestColumns(Arrays.asList("pid"));
+
+        final ResponseEntity<?> resp = api.validateScript(req);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals(verdict, resp.getBody());
+        verify(scriptCompiler).validate(req.getAnonScript(), req.getManifestColumns());
     }
 
     // ---- manifest (one-shot submit) ------------------------------------------------------------------

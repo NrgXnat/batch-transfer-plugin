@@ -5,6 +5,8 @@ import org.apache.commons.text.StringSubstitutor;
 import org.apache.commons.text.lookup.StringLookup;
 import org.nrg.dicom.mizer.exceptions.MizerException;
 import org.nrg.dicom.mizer.service.MizerService;
+import org.nrg.xnatx.plugins.transfer.model.ScriptBinding;
+import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -205,6 +208,80 @@ public class ScriptCompiler {
         // Sanitized values can't introduce new syntax, so one representative substituted form validates the
         // whole batch.
         parseValidate(compile(anonScript, requests.get(0).getCsvValues()));
+    }
+
+    // ---- Advisory verdict (for /validate/script) ----------------------------------------------------
+
+    /**
+     * Non-throwing advisory validation for the {@code /validate/script} endpoint. Unlike {@link #validateBatch}
+     * (fail-fast, for submit), this gathers <em>all</em> feedback into one verdict so the UI can surface it at
+     * once: size + parse {@code errors}, the thread-safety {@code restrictionViolations}, the declared
+     * placeholders, and — when {@code manifestColumns} is supplied — the {@code binding}. It reuses the same
+     * seams submit enforces ({@link #checkSize}, {@link #restrictionViolations}, {@link #parseValidate},
+     * {@link #unboundPlaceholders}), so {@code valid == true} means the script would clear submit for these
+     * columns.
+     *
+     * <p>The raw template's {@code ${csv.*}} placeholders aren't DE6 tokens, so a templated script is parsed
+     * against a neutral sentinel (a bare {@code 0}, which survives both string and numeric contexts); with no
+     * {@code manifestColumns} the verdict notes that a manifest is needed to fully validate substitution.
+     */
+    public ScriptValidationResult validate(final String anonScript, final List<String> manifestColumns) {
+        final ScriptValidationResult result = new ScriptValidationResult();
+        result.setErrors(new ArrayList<String>());
+        result.setRestrictionViolations(new ArrayList<String>());
+
+        if (StringUtils.isBlank(anonScript)) {
+            result.setPlaceholders(Collections.<String>emptyList());
+            result.getErrors().add("No anonymization script supplied.");
+            result.setValid(false);
+            return result;
+        }
+
+        result.setSizeBytes(anonScript.getBytes(StandardCharsets.UTF_8).length);
+
+        final Matcher version = VERSION_DECL.matcher(anonScript);
+        if (version.find()) {
+            result.setDialect("DicomEdit " + version.group(1));
+        }
+
+        final Set<String> placeholderColumns = extractPlaceholders(anonScript);
+        result.setPlaceholders(new ArrayList<>(placeholderColumns));
+
+        try {
+            checkSize(anonScript);
+        } catch (ScriptValidationException e) {
+            result.getErrors().add(e.getMessage());
+        }
+
+        result.setRestrictionViolations(restrictionViolations(anonScript));
+
+        String toParse = anonScript;
+        if (!placeholderColumns.isEmpty()) {
+            final Map<String, String> sentinel = new HashMap<>();
+            for (final String column : placeholderColumns) {
+                sentinel.put(column, "0");
+            }
+            toParse = compile(anonScript, sentinel);
+            if (manifestColumns == null) {
+                result.setMessage("Provide a manifest to fully validate ${csv.*} substitution.");
+            }
+        }
+        try {
+            parseValidate(toParse);
+        } catch (ScriptValidationException e) {
+            result.getErrors().add(e.getMessage());
+        }
+
+        if (manifestColumns != null) {
+            final List<String> unbound = unboundPlaceholders(anonScript, new LinkedHashSet<>(manifestColumns));
+            result.setBinding(new ScriptBinding(unbound.isEmpty(), unbound));
+        }
+
+        final boolean bindingOk = result.getBinding() == null || result.getBinding().isBound();
+        result.setValid(result.getErrors().isEmpty()
+                && result.getRestrictionViolations().isEmpty()
+                && bindingOk);
+        return result;
     }
 
     /** Reject a script larger than the configured byte cap. */

@@ -38,6 +38,13 @@ public class ManifestRow {
     private String status;
     /** The resolved experiment id when {@code status == matched}; otherwise null. */
     private String resolvedId;
+    /**
+     * Reimportable DICOM file count for a matched session — a display-only advisory number. Populated only
+     * when {@code file_count} was requested (computed lazily, per row, on cohort-table expand); omitted from
+     * the JSON otherwise.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Integer fileCount;
     /** The subject's session labels when {@code status == session_not_found}; otherwise null. */
     private List<String> availableSessions;
 

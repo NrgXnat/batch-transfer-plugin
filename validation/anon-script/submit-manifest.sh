@@ -4,12 +4,15 @@
 # path: a manifest of source_subject_label / source_session_label is resolved to sessions server-side and
 # the matched rows are submitted as a batch transfer. THIS CREATES DATA in DEST_PROJECT.
 #
-#   auth -> (capabilities gate, only if an anon script is used) -> upload manifest -> poll.
+#   auth -> (capabilities gate, only if an anon script is used) -> upload manifest -> poll ->
+#   verify (routing subject exists, and/or the anon script's sentinel landed).
 #
 # By default it submits a plain Reimport (destination pipeline only). Options:
 #   MANIFEST_FILE=./my.csv        use a real manifest instead of the one-row manifest built from the labels
 #   MANIFEST_MODE=Reimport        Reimport (default) | Share | Clone
-#   ANON_SCRIPT_FILE=./x.des      also apply a custom anon script (Reimport only; gates on capabilities)
+#   ANON_SCRIPT_FILE=./x.des      also apply a custom anon script (Reimport only; gates on capabilities; after
+#                                 completion the sentinel is verified in the destination via verify-anon-applied.sh)
+#   SENTINEL=API_ANON_OK          the StudyDescription marker verify-anon-applied.sh looks for (default shown)
 #   ANON_REPLACE_PIPELINE=1       with a script, also send anon_replace_pipeline=true
 #
 # Usage:  ./submit-manifest.sh [config.env]
@@ -145,6 +148,27 @@ if [ "$succeeded" = "true" ]; then
         else
             echo "FAIL: routed subject '$DEST_SUBJECT_LABEL' not found in $DEST_PROJECT (HTTP $RC) —"
             echo "      the reimport completed but did not route to the requested subject."
+            exit 1
+        fi
+    fi
+    if [ -n "${ANON_SCRIPT_FILE:-}" ]; then
+        # Anonymization acceptance: confirm the script's sentinel edit landed — proof the Anon-Script param
+        # reached the importer and applied. Reuses verify-anon-applied.sh (SENTINEL from config.env, default
+        # API_ANON_OK). If routing is set we target the routed session by label; else verify auto-picks the
+        # newest session in DEST_PROJECT.
+        echo "== 5. Verify anonymization =="
+        VSESS=""
+        if [ -n "${DEST_SESSION_LABEL:-}" ]; then
+            VSESS="$("${CURL[@]}" "${COOKIE[@]}" \
+                "$XNAT_URL/data/projects/$DEST_PROJECT/experiments?format=json&columns=ID,label" \
+                | jq -r --arg L "$DEST_SESSION_LABEL" '.ResultSet.Result[] | select(.label==$L) | .ID' 2>/dev/null | head -1)"
+        fi
+        if "$HERE/verify-anon-applied.sh" "$VSESS" "$CONFIG"; then
+            echo "      anonymization verified: the script's sentinel edit is present in the reimported session."
+        else
+            echo "FAIL: the anon script was submitted but its sentinel edit was not found in the destination —"
+            echo "      either Anon-Script did not apply, or the destination pipeline overwrote the sentinel tag."
+            echo "      (Set SENTINEL in config.env if your script uses a marker other than API_ANON_OK.)"
             exit 1
         fi
     fi
