@@ -18,9 +18,10 @@ var XNAT = getObject(XNAT || {});
     var selectedAnon = null;
     var config = {};
     var submitInFlight = false;
+    var cohortMode = 'tree';       // 'tree' (interactive) | 'csv' (manifest upload, wired in a later step)
 
-    // Row index, built once after load (rows are static — only classes/visibility change).
-    // Replaces per-row `$('#bt-data-body tr[data-id=…]')` scans that made tree walks O(n²).
+    // Row index, built once after load (rows are static - only classes/visibility change).
+    // Replaces per-row `$('#bt-data-body tr[data-id=...]')` scans that made tree walks O(n2).
     var rowById = {};              // data-id  -> DOM <tr>
     var childrenByParent = {};     // data-parent -> [DOM <tr>, ...]
 
@@ -32,11 +33,11 @@ var XNAT = getObject(XNAT || {});
                'The cloned data is editable separately from the source and is not anonymized. ' +
                'Cloned session files are hard-linked to the source, requiring no additional disk space at the time of cloning.',
         Reimport: 'Reimports the selected image sessions through the destination project\'s ' +
-                  'anonymization pipeline. Only DICOM files are transferred; target session metadata ' +
+                  'anonymization. Only DICOM files are transferred; target session metadata ' +
                   'is derived from DICOM tags and/or anonymization parameters.'
     };
 
-    // ── Initialization ──
+    // -- Initialization --
 
     XNAT.plugin.batchtransfer.init = function(cfg) {
         config = cfg || {};
@@ -59,6 +60,7 @@ var XNAT = getObject(XNAT || {});
         bindOperationCards();
         bindProjectSelect();
         bindTableInteractions();
+        bindCohortToggle();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
         applyOperationEligibility('Share');
@@ -97,7 +99,7 @@ var XNAT = getObject(XNAT || {});
         return (arr && arr.length) ? $(arr) : $();
     }
 
-    // ── Project Loading ──
+    // -- Project Loading --
 
     function loadProjects() {
         window.projectLoader = new ProjectLoader();
@@ -112,7 +114,7 @@ var XNAT = getObject(XNAT || {});
         window.projectLoader.init();
     }
 
-    // ── Anonymization Check ──
+    // -- Anonymization Check --
 
     XNAT.plugin.batchtransfer.checkProjectAnon = function(projectId, callback, forceRefresh) {
         if (!projectId) {
@@ -139,11 +141,11 @@ var XNAT = getObject(XNAT || {});
         });
     };
 
-    // ── Operation Banners ──
-    // Renders 0–2 alert banners into the "About this transfer" panel:
-    //   1) Anon-status banner — only "warn" or "good" severities; never shown when there's
+    // -- Operation Banners --
+    // Renders 0-2 alert banners into the "About this transfer" panel:
+    //   1) Anon-status banner - only "warn" or "good" severities; never shown when there's
     //      nothing actionable to say (e.g. Share into a non-anonymized project).
-    //   2) Storage caution banner — shown for Reimport (its storage/time cost is a property
+    //   2) Storage caution banner - shown for Reimport (its storage/time cost is a property
     //      of the operation). Clone's storage note lives in its operation description instead.
 
     function updateAnonBanner() {
@@ -152,7 +154,7 @@ var XNAT = getObject(XNAT || {});
 
         var html = '';
 
-        // Anon banner — needs a destination + a known anon state.
+        // Anon banner - needs a destination + a known anon state.
         if (selectedProject) {
             var anonEnabled = projectAnonCache[selectedProject];
             if (anonEnabled === true) {
@@ -167,17 +169,17 @@ var XNAT = getObject(XNAT || {});
                 } else if (selectedOp === 'Reimport') {
                     html += '<div class="bt-anon-banner bt-anon-good">' +
                         '<span class="bt-anon-icon">&#10003;</span>' +
-                        '<div>Image sessions will be re-anonymized using <strong>' + selectedProject + '</strong>\'s anonymization pipeline.</div></div>';
+                        '<div>Image sessions will be anonymized by <strong>' + selectedProject + '</strong>\'s anonymization on reimport.</div></div>';
                 }
             } else if (anonEnabled === false && selectedOp === 'Reimport') {
                 html += '<div class="bt-anon-banner bt-anon-warn">' +
                     '<span class="bt-anon-icon">&#9888;</span>' +
                     '<div><strong>' + selectedProject + ' has no anonymization configured.</strong> Reimport will pass image sessions through without re-anonymization.</div></div>';
             }
-            // Share + no anon, Clone + no anon: no banner — nothing actionable to flag.
+            // Share + no anon, Clone + no anon: no banner - nothing actionable to flag.
         }
 
-        // Storage caution — shown for Reimport (Clone's storage note is in its description).
+        // Storage caution - shown for Reimport (Clone's storage note is in its description).
         if (selectedOp === 'Reimport') {
             html += '<div class="bt-anon-banner bt-anon-caution">' +
                 '<span class="bt-anon-icon">&#9888;</span>' +
@@ -187,15 +189,31 @@ var XNAT = getObject(XNAT || {});
         area.innerHTML = html;
     }
 
-    // ── Operation Detail ──
+    // -- Operation Detail --
 
     function updateOperationDetail() {
         $('#bt-op-detail-desc').text(operationDetails[selectedOp] || '');
-        // The preserve-source-label checkboxes only apply to Reimport.
+        // Reimport-only affordances: the Anonymization band and the preserve-source-label checkboxes.
+        $('#bt-anon-band').toggle(selectedOp === 'Reimport');
         $('#bt-reimport-label-option').toggle(selectedOp === 'Reimport');
     }
 
-    // ── Operation Selection ──
+    // -- Cohort mode (interactive tree | CSV manifest) --
+    // Interactive is the working path; CSV upload is wired in a later build step, so selecting it
+    // shows the placeholder and blocks submit until it is implemented.
+    function bindCohortToggle() {
+        $(document).on('click', '.bt-cohort-mode', function() {
+            cohortMode = $(this).data('cohort');
+            $('.bt-cohort-mode').removeClass('selected');
+            $(this).addClass('selected');
+            var tree = cohortMode === 'tree';
+            $('#bt-cohort-tree').toggle(tree);
+            $('#bt-cohort-csv').toggle(!tree);
+            $('#bt-submit-btn').prop('disabled', !tree);
+        });
+    }
+
+    // -- Operation Selection --
 
     function bindOperationCards() {
         $(document).on('click', '.bt-op-card-sm', function() {
@@ -235,9 +253,9 @@ var XNAT = getObject(XNAT || {});
 
     // Hide+disable rows not eligible for the chosen operation (excluded from counts/submission
     // and from view). Eligibility is a per-row data attribute, uniform across operations:
-    //   Share    → data-shareable    (per project's sharing feature)
-    //   Clone    → data-cloneable    (per project's copying feature)
-    //   Reimport → data-reimportable (per item type — only image sessions; never feature-gated)
+    //   Share    -> data-shareable    (per project's sharing feature)
+    //   Clone    -> data-cloneable    (per project's copying feature)
+    //   Reimport -> data-reimportable (per item type - only image sessions; never feature-gated)
     // A non-reimportable subject is hidden, but its (reimportable) sessions still render:
     // showRows() treats a bt-import-hidden parent as logically visible.
     function applyOperationEligibility(op) {
@@ -267,7 +285,7 @@ var XNAT = getObject(XNAT || {});
     }
 
     // Does any selected, still-eligible descendant exist under parentId? Raw-DOM walk via the
-    // index, short-circuiting on the first hit — no jQuery set building.
+    // index, short-circuiting on the first hit - no jQuery set building.
     function subtreeHasSelected(parentId) {
         var kids = childrenByParent[parentId];
         if (!kids) return false;
@@ -283,7 +301,7 @@ var XNAT = getObject(XNAT || {});
     // A subject is selected iff it has at least one selected, eligible descendant. Used when
     // leaving Reimport so the (hidden) subjects reflect the session choices made there.
     // Raw DOM + short-circuit + write only on an actual flip, so the common (unchanged) case
-    // costs nothing — this is what removes the Reimport→Share/Clone lag at ~1,000 subjects.
+    // costs nothing - this is what removes the Reimport->Share/Clone lag at ~1,000 subjects.
     function reconcileSubjectsFromSessions() {
         var subs = document.querySelectorAll('#bt-data-body tr[data-type="subject"]');
         for (var i = 0; i < subs.length; i++) {
@@ -291,7 +309,7 @@ var XNAT = getObject(XNAT || {});
             var id = el.getAttribute('data-id');
             if (!id) continue;
             var want = subtreeHasSelected(id);
-            if (want === el.classList.contains('selected')) continue;   // unchanged → no DOM write
+            if (want === el.classList.contains('selected')) continue;   // unchanged -> no DOM write
             el.classList.toggle('selected', want);
             syncCheckbox($(el));
         }
@@ -301,12 +319,12 @@ var XNAT = getObject(XNAT || {});
         var $cb = $row.find('.bt-cb');
         if (!$cb.length) return;
         var want = $row.hasClass('selected');
-        if (want === $cb.hasClass('checked')) return;   // checkmark already correct — skip the DOM write
+        if (want === $cb.hasClass('checked')) return;   // checkmark already correct - skip the DOM write
         if (want) $cb.addClass('checked').html('&#10003;');
         else $cb.removeClass('checked').html('');
     }
 
-    // ── Project Selection ──
+    // -- Project Selection --
 
     function bindProjectSelect() {
         $(document).on('change', '#bt-project-select', function() {
@@ -326,7 +344,7 @@ var XNAT = getObject(XNAT || {});
         });
     }
 
-    // ── Data Table Interactions ──
+    // -- Data Table Interactions --
 
     function bindTableInteractions() {
         // Row checkbox toggle
@@ -358,7 +376,7 @@ var XNAT = getObject(XNAT || {});
             toggleSelectAll();
         });
 
-        // Filter — debounced so fast typing doesn't run the filter on every keystroke.
+        // Filter - debounced so fast typing doesn't run the filter on every keystroke.
         var filterTimer = null;
         $(document).on('input', '#bt-data-search', function() {
             var val = this.value;
@@ -444,10 +462,10 @@ var XNAT = getObject(XNAT || {});
         }
     }
 
-    // Show rows respecting expand/collapse state — WITHOUT reading layout. The previous version
+    // Show rows respecting expand/collapse state - WITHOUT reading layout. The previous version
     // called jQuery :visible on each parent, which forces a reflow; interleaved with the
     // show/hide writes that is layout thrashing (O(n) reflows), and it's what made clearing the
-    // filter lag badly (clearing transitions ~all rows from display:none → shown). Here we
+    // filter lag badly (clearing transitions ~all rows from display:none -> shown). Here we
     // compute each row's visibility top-down from the index + expand classes into a map and
     // write `display` in a single pass, so the browser reflows once.
     // Rows render in parent-before-child document order, so a parent's visibility is already
@@ -556,7 +574,7 @@ var XNAT = getObject(XNAT || {});
             return;
         }
 
-        // Raw DOM, matching against text cached at index time, one batched display pass — so
+        // Raw DOM, matching against text cached at index time, one batched display pass - so
         // each keystroke stays cheap even at tens of thousands of rows.
         var rows = document.querySelectorAll('#bt-data-body tr');
         var i, el, parentId, parentEl;
@@ -584,7 +602,7 @@ var XNAT = getObject(XNAT || {});
             }
         }
 
-        // Pass 3: show matches (and ancestors), hide the rest — raw display writes (one reflow).
+        // Pass 3: show matches (and ancestors), hide the rest - raw display writes (one reflow).
         // Selection state is left untouched.
         for (i = 0; i < rows.length; i++) {
             el = rows[i];
@@ -594,7 +612,7 @@ var XNAT = getObject(XNAT || {});
         updateSummary();
     }
 
-    // ── Summary + selection counts ──
+    // -- Summary + selection counts --
     // Single O(n) pass drives both the selection bar and the sidebar summary (previously two
     // or three separate full scans ran on every click).
 
@@ -660,7 +678,7 @@ var XNAT = getObject(XNAT || {});
         $('#bt-submit-btn').text(label);
     }
 
-    // ── Submit ──
+    // -- Submit --
 
     XNAT.plugin.batchtransfer.submitTransfer = function() {
         if (!selectedProject) {

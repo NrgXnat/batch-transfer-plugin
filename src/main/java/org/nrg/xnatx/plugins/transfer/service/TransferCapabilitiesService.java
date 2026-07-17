@@ -36,7 +36,7 @@ public class TransferCapabilitiesService {
 
     public TransferCapabilities getCapabilities() {
         return new TransferCapabilities(isPerImportAnonSupported(), ANON_SCRIPT_DIALECT, PLACEHOLDER_SYNTAX,
-                policy.getManifestMaxRows());
+                policy.getManifestMaxRows(), policy.getMaxAnonScriptBytes(), policy.getAnonValueCharset());
     }
 
     public synchronized boolean isPerImportAnonSupported() {

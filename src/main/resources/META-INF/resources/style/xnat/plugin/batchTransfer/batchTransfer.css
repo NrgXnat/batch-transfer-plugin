@@ -1,4 +1,4 @@
-/* Batch Transfer — Two-Panel Layout */
+/* Batch Transfer - Two-Panel Layout */
 
 .bt-shell {
     display: flex;
@@ -34,7 +34,7 @@
     padding: 24px 32px;
 }
 
-/* ── Sidebar sections ── */
+/* -- Sidebar sections -- */
 
 .bt-sidebar-header {
     padding: 14px 20px 10px;
@@ -83,7 +83,7 @@
     margin-top: 8px;
 }
 
-/* ── Main header ── */
+/* -- Main header -- */
 
 .bt-main-header {
     padding: 16px 32px;
@@ -101,7 +101,7 @@
     margin: 0;
 }
 
-/* ── Operation cards (compact sidebar) ── */
+/* -- Operation cards (compact sidebar) -- */
 
 .bt-op-card-sm {
     display: flex;
@@ -154,7 +154,7 @@
     color: #5f6368;
 }
 
-/* ── Project dropdown (compact) ── */
+/* -- Project dropdown (compact) -- */
 
 .bt-proj-select {
     width: 100%;
@@ -183,7 +183,7 @@
     cursor: wait;
 }
 
-/* ── Summary in sidebar ── */
+/* -- Summary in sidebar -- */
 
 .bt-summary-row {
     display: flex;
@@ -201,7 +201,7 @@
     font-weight: 600;
 }
 
-/* ── Responsive ── */
+/* -- Responsive -- */
 
 @media (max-width: 860px) {
     .bt-shell {
@@ -218,7 +218,7 @@
     }
 }
 
-/* ── Legacy container (wizard mockup) ── */
+/* -- Legacy container (wizard mockup) -- */
 
 .bt-container {
     max-width: 960px;
@@ -1047,3 +1047,204 @@ tr.bt-import-disabled[data-type="subject"]:hover {
     margin: 0 6px 0 0;
     vertical-align: middle;
 }
+
+/* ===================================================================== */
+/* Phase 4 - horizontal band layout (New transfer).                       */
+/* Sections stack: Project -> Operation -> Cohort (tree/CSV) ->            */
+/* (Reimport) Anonymization -> Summary + Submit. The two-panel            */
+/* .bt-shell/.bt-sidebar rules above are unused by this screen.           */
+/* ===================================================================== */
+
+.bt-bands {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: white;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+}
+
+/* Project selection band (Source -> Destination) */
+.bt-proj-bar {
+    display: flex;
+    align-items: stretch;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e8eaed;
+    background: #fbfcfe;
+    border-radius: 10px 10px 0 0;
+}
+.bt-proj-btn {
+    border: 2px solid #e8eaed;
+    border-radius: 10px;
+    padding: 8px 16px;
+    min-width: 240px;
+    background: white;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.bt-proj-btn.frozen { background: #f1f3f4; }
+.bt-proj-btn.select { border-color: #c8d6f5; }
+.bt-proj-lbl {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #9aa0a6;
+}
+.bt-proj-name {
+    font-size: 15px;
+    font-weight: 500;
+    color: #202124;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.bt-proj-ic { color: #9aa0a6; }
+.bt-proj-arrow {
+    display: flex;
+    align-items: center;
+    color: #9aa0a6;
+    font-size: 20px;
+    padding: 0 18px;
+}
+.bt-proj-bar .bt-proj-select { margin: 2px 0 0; }
+
+/* Generic band */
+.bt-band {
+    padding: 12px 20px;
+    border-bottom: 1px solid #eef0f2;
+}
+.bt-band-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: #9aa0a6;
+    margin-bottom: 8px;
+}
+.bt-band-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.bt-band-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: #5f6368;
+}
+
+/* Operation cards as rounded-box radios (override the sidebar .bt-op-card-sm) */
+.bt-op-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.bt-op-row .bt-op-card-sm {
+    display: block;
+    min-width: 200px;
+    margin-bottom: 0;
+    padding: 8px 16px;
+}
+.bt-op-row .bt-op-card-sm .bt-op-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #202124;
+}
+.bt-op-row .bt-op-card-sm.selected .bt-op-label { color: #1a57c2; }
+.bt-op-row .bt-op-card-sm .bt-op-desc {
+    font-size: 11px;
+    color: #5f6368;
+    margin-top: 1px;
+}
+
+/* Cohort mode toggle */
+.bt-cohort-toggle {
+    display: inline-flex;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.bt-cohort-mode {
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    background: white;
+    color: #5f6368;
+    border: none;
+    border-right: 1px solid #e8eaed;
+}
+.bt-cohort-mode:last-child { border-right: none; }
+.bt-cohort-mode.selected { background: #e8f0fe; color: #1a73e8; }
+
+/* Cohort workspace */
+.bt-workarea {
+    padding: 16px 20px;
+    background: #f8f9fa;
+}
+.bt-workarea .bt-data-toolbar { margin-bottom: 12px; }
+
+/* CSV dropzone placeholder (wired in a later step) */
+.bt-dropzone {
+    border: 2px dashed #c8ccd1;
+    border-radius: 10px;
+    padding: 34px 20px;
+    text-align: center;
+    color: #5f6368;
+    background: #fafbfc;
+}
+.bt-dz-ic { font-size: 28px; }
+.bt-dz-big { font-size: 14px; color: #3c4043; margin: 8px 0 2px; }
+.bt-dz-sm { font-size: 12px; }
+
+/* Anonymization band placeholder */
+.bt-anon-placeholder {
+    font-size: 12.5px;
+    color: #5f6368;
+}
+
+/* Banner region (JS renders .bt-anon-banner children here) */
+.bt-banner-region { padding: 0 20px; }
+.bt-banner-region:empty { display: none; }
+.bt-banner-region .bt-anon-banner:first-child { margin-top: 12px; }
+
+/* Summary + submit (the submit area) */
+.bt-action-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid #e8eaed;
+    background: white;
+    position: sticky;
+    bottom: 0;
+    border-radius: 0 0 10px 10px;
+    box-shadow: 0 -2px 6px rgba(60,64,67,.06);
+}
+.bt-action-main {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.bt-action-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: #3c4043;
+    flex-wrap: wrap;
+}
+.bt-sum-counts { color: #5f6368; }
+.bt-action-bar .bt-spacer { flex: 1; }
+
+/* Preserve-source-labels box in the submit area (reuses the .bt-label-* inner styles) */
+.bt-reimport-opts {
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border: 1px solid #eef0f2;
+    border-radius: 8px;
+    max-width: 560px;
+}
+.bt-reimport-opts .bt-label-options-title { font-size: 12px; }

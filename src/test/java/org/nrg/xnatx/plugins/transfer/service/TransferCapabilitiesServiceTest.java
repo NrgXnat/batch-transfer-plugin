@@ -21,6 +21,8 @@ public class TransferCapabilitiesServiceTest {
     private static BatchTransferPolicy policy(final int maxRows) {
         final BatchTransferPolicy policy = mock(BatchTransferPolicy.class);
         when(policy.getManifestMaxRows()).thenReturn(maxRows);
+        when(policy.getMaxAnonScriptBytes()).thenReturn(262144);
+        when(policy.getAnonValueCharset()).thenReturn("A-Za-z0-9 ^_.-");
         return policy;
     }
 
@@ -34,6 +36,23 @@ public class TransferCapabilitiesServiceTest {
         assertEquals("DicomEdit 6", cap.getAnonScriptDialect());
         assertEquals("${csv.<column>}", cap.getPlaceholderSyntax());
         assertEquals(Integer.valueOf(5000), cap.getManifestMaxRows());
+        assertEquals(Integer.valueOf(262144), cap.getMaxAnonScriptBytes());
+        assertEquals("A-Za-z0-9 ^_.-", cap.getAnonValueCharset());
+    }
+
+    @Test
+    public void reportsConfiguredAnonLimits() {
+        final BatchTransferPolicy policy = mock(BatchTransferPolicy.class);
+        when(policy.getManifestMaxRows()).thenReturn(1000);
+        when(policy.getMaxAnonScriptBytes()).thenReturn(1024);
+        when(policy.getAnonValueCharset()).thenReturn("A-Za-z0-9");
+        final TransferCapabilitiesService svc = spy(new TransferCapabilitiesService(policy));
+        doReturn(true).when(svc).detectPerImportAnonSupported();
+
+        final TransferCapabilities cap = svc.getCapabilities();
+        assertEquals("configured cap is reported, not a constant", Integer.valueOf(1024), cap.getMaxAnonScriptBytes());
+        assertEquals("A-Za-z0-9", cap.getAnonValueCharset());
+        assertEquals(Integer.valueOf(1000), cap.getManifestMaxRows());
     }
 
     @Test

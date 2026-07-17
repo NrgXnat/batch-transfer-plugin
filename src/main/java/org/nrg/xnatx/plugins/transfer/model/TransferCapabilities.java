@@ -23,4 +23,11 @@ public class TransferCapabilities {
     private String  placeholderSyntax;
     /** Admin-tunable cap on manifest data rows for the synchronous preflight. Wire name: {@code manifest_max_rows}. */
     private Integer manifestMaxRows;
+    /** Admin-tunable cap on a custom anon-script (UTF-8 bytes). Wire name: {@code max_anon_script_bytes}. */
+    private Integer maxAnonScriptBytes;
+    /**
+     * Admin-tunable allowed charset (a regex character-class body) for {@code ${csv.*}} values — the same set
+     * the server enforces, so the UI can pre-check cells client-side. Wire name: {@code anon_value_charset}.
+     */
+    private String  anonValueCharset;
 }
