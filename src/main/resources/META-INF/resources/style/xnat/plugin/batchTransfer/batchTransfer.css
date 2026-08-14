@@ -1198,46 +1198,117 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-dz-big { font-size: 14px; color: #3c4043; margin: 8px 0 2px; }
 .bt-dz-sm { font-size: 12px; }
 
-/* Anonymization band placeholder */
-.bt-anon-placeholder {
-    font-size: 12.5px;
-    color: #5f6368;
+/* Anonymization band: segmented control + custom-script editor + verdict */
+.bt-anon-placeholder { font-size: 12.5px; color: #5f6368; }
+.bt-anon-seg {
+    display: inline-flex;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    overflow: hidden;
 }
-
-/* Banner region (JS renders .bt-anon-banner children here) */
-.bt-banner-region { padding: 0 20px; }
-.bt-banner-region:empty { display: none; }
-.bt-banner-region .bt-anon-banner:first-child { margin-top: 12px; }
-
-/* Summary + submit (the submit area) */
-.bt-action-bar {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-    padding: 12px 20px;
-    border-top: 1px solid #e8eaed;
+.bt-anon-mode {
+    padding: 6px 12px;
+    font-size: 11.5px;
+    border: none;
+    border-right: 1px solid #e8eaed;
     background: white;
-    position: sticky;
-    bottom: 0;
-    border-radius: 0 0 10px 10px;
-    box-shadow: 0 -2px 6px rgba(60,64,67,.06);
+    color: #5f6368;
+    cursor: pointer;
 }
-.bt-action-main {
+.bt-anon-mode:last-child { border-right: none; }
+.bt-anon-mode.selected { background: #e6f4ea; color: #137333; }
+.bt-anon-unsupported {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #5f6368;
+    font-style: italic;
+}
+
+.bt-anon-editor {
+    margin-top: 10px;
+    background: white;
+    border: 1px solid #e8eaed;
+    border-radius: 8px;
+    padding: 12px;
+    max-width: 760px;
+}
+.bt-anon-editor-hint { font-size: 11px; color: #5f6368; margin-bottom: 6px; }
+.bt-anon-editor-hint code { background: #eef0f2; padding: 0 3px; border-radius: 3px; }
+.bt-anon-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 96px;
+    padding: 11px 13px;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: #fbfbfb;
+    resize: vertical;
+}
+.bt-anon-textarea:focus { border-color: #1a73e8; outline: none; }
+.bt-anon-editor-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 10px;
+}
+.bt-anon-verdict { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.bt-verdict-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 11px;
+    border-radius: 7px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+.bt-verdict-ok { background: #e6f4ea; border: 1px solid #34a853; color: #137333; }
+.bt-verdict-bad { background: #fce8e6; border: 1px solid #ea4335; color: #c5221f; }
+.bt-verdict-meta { font-size: 11px; color: #5f6368; padding-left: 2px; }
+
+/* Banner region (JS renders .bt-anon-banner children here); sits inside the padded workspace */
+.bt-banner-region { padding: 0; }
+.bt-banner-region:empty { display: none; }
+.bt-banner-region .bt-anon-banner:first-child { margin-top: 0; }
+
+/* Summary + submit: full-width action bar under both columns */
+.bt-action-bar {
     display: flex;
     align-items: center;
     gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 20px;
+    border-top: 1px solid #e8eaed;
+    background: white;
+    border-radius: 0 0 10px 10px;
 }
 .bt-action-summary {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     font-size: 13px;
     color: #3c4043;
     flex-wrap: wrap;
 }
-.bt-sum-counts { color: #5f6368; }
+.bt-action-summary strong { color: #202124; }
 .bt-action-bar .bt-spacer { flex: 1; }
+.bt-submit-note { font-size: 11.5px; color: #c5221f; }
+
+/* Anonymization status chips in the action bar (severity mirrors the banners) */
+.bt-mini-good, .bt-mini-warn, .bt-mini-caution {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    padding: 3px 10px;
+    border-radius: 13px;
+    white-space: nowrap;
+}
+.bt-mini-good { background: #e6f4ea; color: #137333; }
+.bt-mini-warn { background: #fce8e6; color: #c5221f; }
+.bt-mini-caution { background: #fef7e0; color: #b06000; }
 
 /* Preserve-source-labels box in the submit area (reuses the .bt-label-* inner styles) */
 .bt-reimport-opts {
@@ -1248,3 +1319,238 @@ tr.bt-import-disabled[data-type="subject"]:hover {
     max-width: 560px;
 }
 .bt-reimport-opts .bt-label-options-title { font-size: 12px; }
+
+/* CSV manifest mode: dropzone, resolved cohort table, per-cell notes */
+.bt-dz-link { color: #1a73e8; cursor: pointer; text-decoration: none; }
+.bt-dropzone.dragover { border-color: #1a73e8; background: #e8f0fe; }
+.bt-dz-cols { margin-top: 10px; color: #5f6368; }
+.bt-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.bt-csv-loading { padding: 14px; font-size: 13px; color: #5f6368; }
+.bt-csv-error { padding: 14px; font-size: 13px; color: #c5221f; }
+.bt-csv-head { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; }
+.bt-csv-ok { color: #137333; }
+.bt-csv-miss { color: #c5221f; }
+.bt-csv-file {
+    background: #f1f3f4;
+    border: 1px solid #dadce0;
+    border-radius: 13px;
+    padding: 2px 10px;
+    font-size: 11.5px;
+}
+
+/* Manifest bar: loaded file name + a control to clear the manifest and return to the dropzone. */
+.bt-manifest-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.bt-csv-replace-link {
+    margin-left: auto;
+    color: #1a73e8;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 12.5px;
+}
+.bt-csv-replace-link:hover { text-decoration: underline; }
+
+/* The resolved manifest table can be wider than the workspace (routing + value columns), so it
+   scrolls horizontally within its own wrapper instead of being clipped by .bt-table-wrap. Only the
+   table scrolls sideways; the About panel and script editor above stay put. */
+.bt-cohort-scroll {
+    overflow-x: auto;
+    border: 1px solid #e8eaed;
+    border-radius: 8px;
+    background: white;
+}
+
+.bt-cohort-table { font-size: 12.5px; }
+/* Keep columns from squishing so they hold a stable width and the table scrolls cleanly. The
+   not-found reason cell is exempted just below so its message can still wrap. */
+.bt-cohort-table th,
+.bt-cohort-table td { white-space: nowrap; }
+.bt-cohort-table th.bt-route-head { color: #8430ce; }
+.bt-cohort-table th.bt-val-head { color: #1a73e8; }
+.bt-cohort-table td.bt-route { color: #6a1b9a; }
+.bt-cohort-table .bt-csv-caret-col { width: 20px; }
+.bt-cohort-table .bt-csv-caret,
+.bt-cohort-table .bt-files-lazy { color: #1a73e8; cursor: pointer; }
+.bt-cohort-table .bt-files-lazy { text-decoration: underline dotted; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-missrow { background: #fef6f5; }
+.bt-cohort-table tr.bt-csv-missrow:hover { background: #fef6f5; }
+.bt-cohort-table .bt-csv-x { color: #ea4335; font-weight: 700; }
+.bt-cohort-table .bt-csv-reason { color: #c5221f; white-space: normal; }
+.bt-cohort-table tr.bt-csv-rowerr { background: #fef6f5; }
+.bt-cohort-table tr.bt-csv-errrow td { color: #c5221f; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-warnrow td { color: #b06000; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-detailrow td { background: #fafbfc; }
+.bt-csv-detail-line { font-size: 11.5px; color: #3c4043; margin: 2px 0; }
+.bt-muted { color: #9aa0a6; }
+.bt-script-preview {
+    background: #0d1117;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 11px 13px;
+    margin: 4px 0 0;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+}
+
+/* ===================================================================== */
+/* Phase 4 - left-column layout (New transfer). Supersedes the band       */
+/* layout: a left config rail (source/dest, operation, cohort mode,       */
+/* anonymization, preserve labels) + a right cohort workspace (banners,   */
+/* script editor, tree/CSV), with a full-width action bar below both.     */
+/* Reuses the component styles above (op cards, toggles, tables, CSV).    */
+/* ===================================================================== */
+
+.bt-screen {
+    display: flex;
+    flex-direction: column;
+    max-width: 1100px;
+    margin: 0 auto;
+    /* Fill at least the available screen height so the columns reach the bottom even when the rail is
+       short. min-height (not height) lets a tall rail grow the shell and scroll the PAGE instead of
+       giving the rail its own scrollbar. Tune the 160px offset to the XNAT chrome above + footer. */
+    min-height: calc(100vh - 160px);
+    background: white;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* The body grows to fill the shell above the action bar. A short rail stretches to fill it (no
+   scrollbar); a tall rail grows the shell (page scrolls). The workspace scrolls within the body. */
+.bt-body {
+    flex: 1;
+    display: flex;
+}
+
+/* -- Left config rail: defines the height and is never scrolled itself -- */
+.bt-rail {
+    width: 332px;
+    flex-shrink: 0;
+    border-right: 1px solid #e8eaed;
+    background: #fbfcfe;
+    display: flex;
+    flex-direction: column;
+}
+.bt-rail-sect {
+    padding: 13px 16px;
+    border-bottom: 1px solid #eef0f2;
+}
+.bt-rail-sect:last-child { border-bottom: none; }
+/* Section headers: prominent so each rail section reads as a clear step. */
+.bt-rail-lbl {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #202124;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bt-rail-lbl::before {
+    content: "";
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: #1a73e8;
+    flex-shrink: 0;
+}
+
+/* Source -> Destination, stacked with a down arrow */
+.bt-proj-stack .bt-proj-btn { min-width: 0; width: 100%; box-sizing: border-box; }
+.bt-proj-down { text-align: center; color: #9aa0a6; font-size: 16px; line-height: 1; margin: 5px 0; }
+.bt-rail .bt-proj-select { width: 100%; margin: 2px 0 0; }
+
+/* Operation cards stacked in the rail */
+.bt-op-stack .bt-op-card-sm { display: block; margin-bottom: 8px; }
+.bt-op-stack .bt-op-card-sm:last-child { margin-bottom: 0; }
+.bt-op-stack .bt-op-card-sm.selected .bt-op-label { color: #1a57c2; }
+
+/* Rail segmented toggles span the column width; tighten padding/size so labels stay on one line */
+.bt-rail .bt-cohort-toggle,
+.bt-rail .bt-anon-seg { display: flex; width: 100%; }
+.bt-rail .bt-cohort-mode,
+.bt-rail .bt-anon-mode {
+    flex: 1;
+    text-align: center;
+    padding: 7px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.bt-rail .bt-anon-unsupported { margin-top: 8px; }
+
+/* -- Right cohort workspace: capped to the rail height, scrolls internally.
+   The scroll area is absolutely positioned so it fills the rail-defined height
+   without contributing to it (the rail alone drives the shell height). -- */
+.bt-workspace {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    background: #f8f9fa;
+}
+.bt-work-scroll {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    overflow: auto;
+    padding: 14px 18px;
+}
+/* The script editor and the cohort workspace take the full workspace width here. */
+.bt-workspace .bt-anon-editor { max-width: none; margin: 0 0 12px; }
+.bt-work-scroll .bt-workarea { padding: 0; background: transparent; }
+
+/* "About this transfer": selected operation description + anon/storage banners, atop the
+   workspace (recreates the 1.1.1 About panel). */
+.bt-about {
+    background: #fff;
+    border: 1px solid #e8eaed;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+.bt-about-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #202124;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bt-about-title::before {
+    content: "";
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: #1a73e8;
+    flex-shrink: 0;
+}
+.bt-about .bt-op-detail-desc {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #3c4043;
+}
+.bt-about .bt-banner-region { margin-top: 10px; }
+
+/* Narrow viewports: the rail stacks above the workspace; both flow naturally
+   (the absolute-scroll cap is dropped so the list is not squeezed). */
+@media (max-width: 820px) {
+    .bt-body { flex-direction: column; min-height: 0; }
+    .bt-rail {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #e8eaed;
+    }
+    .bt-workspace { position: static; overflow: visible; }
+    .bt-work-scroll { position: static; overflow: visible; }
+}
