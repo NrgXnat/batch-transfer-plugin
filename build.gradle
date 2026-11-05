@@ -15,7 +15,7 @@ plugins {
 }
 
 group "org.nrg.xnatx.plugins"
-version "1.1.1"
+version "1.2.0-SNAPSHOT"
 description "XNAT Batch Transfer Plugin"
 
 sourceCompatibility = 1.8
@@ -34,10 +34,17 @@ dependencyManagement {
         mavenBom("org.nrg:parent:${vXnat}")
     }
 }
+configurations {
+    implementAndInclude
+    implementation.extendsFrom(implementAndInclude)
+}
 configurations.all {
     resolutionStrategy.capabilitiesResolution.withCapability("com.google.collections:google-collections") {
         selectHighestVersion()
     }
+}
+configurations.testRuntimeClasspath {
+    exclude group: "org.slf4j", module: "log4j-over-slf4j"
 }
 dependencies {
     implementation platform("org.nrg:parent:${vXnat}")
@@ -46,6 +53,9 @@ dependencies {
     implementation "org.nrg.xnat:web"
     implementation "org.nrg.xdat:core"
     implementation "org.nrg:dicom-xnat-util"
+    implementation "org.nrg.dicom:mizer"
+    implementation "org.apache.commons:commons-text"
+    implementAndInclude "org.apache.commons:commons-csv:1.10.0"
     implementation "org.springframework:spring-beans"
     implementation "org.springframework:spring-context"
     implementation "org.springframework:spring-jms"
@@ -63,6 +73,23 @@ dependencies {
 
 test {
     useJUnit()
+}
+
+task fatJar(type: Jar) {
+    archiveClassifier.set('')
+    duplicatesStrategy 'exclude'
+    from {
+        configurations.implementAndInclude.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude "META-INF/*.SF"
+        exclude "META-INF/*.DSA"
+        exclude "META-INF/*.RSA"
+    }
+    with jar
+}
+assemble.dependsOn fatJar
+jar {
+    archiveClassifier.set('thin')
 }
 
 task sourceJar(type: Jar, dependsOn: classes) {
@@ -88,7 +115,8 @@ publishing {
             artifacts {
                 artifact sourceJar
                 artifact javadocJar
-                artifact jar
+                // Publish the fatJar (plugin classes + bundled commons-csv) as the main artifact, not the thin jar.
+                artifact fatJar
             }
 
             pom.withXml {

@@ -1,9 +1,78 @@
 ####
-#### Batch Transfer — Site-wide JMS Queue Settings
-#### Adds a "Batch Transfer" group to Site Administration with a "JMS Queue" tab. The form is bound
-#### to BatchTransferQueueSettingsApi (/xapi/batch_transfer/jms_queues), which reads/writes
-#### BatchTransferQueuePrefsBean. Field names match the preference keys.
+#### Batch Transfer -- Site Administration settings
+#### Adds a "Batch Transfer" group with two tabs:
+####   - Anonymization & Cohort Limits  (Panel A)
+####   - JMS Queue                       (Panel B)
+#### Both forms bind to BatchTransferQueueSettingsApi (/xapi/batch_transfer/jms_queues), which reads/writes
+#### BatchTransferPrefsBean (GET returns the whole bean; POST setBatch updates whatever keys are sent).
+#### Field names must match the preference keys on the bean.
 ####
+
+batchTransferAnonLimitsForm:
+    label: "Anonymization & Cohort Limits"
+    kind: panel.form
+    name: batchTransferAnonLimits
+    id: batch-transfer-anon-limits-form
+    contentType: json
+    method: POST
+    action: "/xapi/batch_transfer/jms_queues"
+    contents:
+        anonLimitsDescription:
+            tag: div.message
+            contents:
+                "Limits and guardrails for custom per-import (Reimport) anonymization scripts and manifest cohorts. These values are enforced at submit and reported by GET /xapi/transfer/capabilities, which the New transfer screen reads to pre-check input."
+        maxAnonScriptBytes:
+            kind: panel.input.text
+            name: maxAnonScriptBytes
+            label: Max anon-script size (bytes)
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Maximum size, in UTF-8 bytes, of a custom anonymization script
+            description: >
+                Maximum size (UTF-8 bytes) of a custom anon_script; submit rejects anything larger.
+                Default is 262144 (256 KB).
+        manifestMaxRows:
+            kind: panel.input.text
+            name: manifestMaxRows
+            label: Max manifest rows
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Maximum number of data rows in a manifest for the synchronous preflight
+            description: >
+                Maximum number of data rows a manifest may carry for the synchronous preflight.
+                Default is 5000.
+        anonValueCharset:
+            kind: panel.input.text
+            name: anonValueCharset
+            label: Allowed ${csv.*} value charset
+            element:
+                title: Regex character-class body of characters allowed in substituted manifest values
+            description: >
+                Allowed character set (a regex character-class body) for ${csv.*} substitution values;
+                a value with any character outside this set is rejected at submit. Default is "A-Za-z0-9 ^_.-".
+        restrictedAnonVerbs:
+            kind: panel.input.text
+            name: restrictedAnonVerbs
+            label: Restricted DicomEdit verbs
+            element:
+                title: Comma or space separated DicomEdit verbs forbidden in a custom script
+            description: >
+                Comma/space-separated DicomEdit verbs forbidden in a custom anon_script (thread-safety and
+                untrusted-input guardrail). Add a newly-discovered unsafe verb here, or relax once xnat-web
+                carries the engine fix. Default is "mapUID,mapReferencedUIDs,lookup,getURL,alterPixels,newUID".
+        allowedAnonVersionPattern:
+            kind: panel.input.text
+            name: allowedAnonVersionPattern
+            label: Allowed DicomEdit version pattern
+            element:
+                title: Regex the script's declared version "x.y" must match
+            description: >
+                Regex a custom anon_script's declared version "x.y" must match; a missing or non-matching
+                version is rejected at submit. Default is "^6\.[0-7]$" (DicomEdit 6.0 to 6.7).
+        detectedNote:
+            tag: div.message
+            contents:
+                "Detected at runtime (not editable): per-import anonymization support (whether this XNAT build carries the Anon-Script importer param), the script dialect (DicomEdit 6), and the placeholder syntax (${csv.<column>}). See GET /xapi/transfer/capabilities."
 
 batchTransferQueueSettingsForm:
     label: "Site-wide JMS Queue Settings"
@@ -77,11 +146,18 @@ siteSettings:
             batchTransferTabGroup: Batch Transfer
     contains: tabs
     tabs:
+        batchTransferAnonTab:
+            kind: tab
+            name: batchTransferAnonTab
+            label: Anonymization & Cohort Limits
+            group: batchTransferTabGroup
+            active: true
+            contents:
+                ${batchTransferAnonLimitsForm}
         batchTransferQueueTab:
             kind: tab
             name: batchTransferQueueTab
             label: JMS Queue
             group: batchTransferTabGroup
-            active: true
             contents:
                 ${batchTransferQueueSettingsForm}

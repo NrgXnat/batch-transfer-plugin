@@ -6,6 +6,7 @@ import org.nrg.framework.services.ContextService;
 import org.nrg.framework.services.NrgEventService;
 import org.nrg.xnat.helpers.merge.AnonUtils;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -26,7 +27,8 @@ public class BatchTransferServiceConfig {
                                                    final ExecutorService executorService,
                                                    final AnonUtils anonUtils,
                                                    final ContextService contextService,
-                                                   final BatchTransferMonitor batchTransferMonitor) {
-        return Mockito.spy(new BatchTransferServiceImpl(nrgEventService, executorService, anonUtils, contextService, batchTransferMonitor));
+                                                   final BatchTransferMonitor batchTransferMonitor,
+                                                   final ScriptCompiler scriptCompiler) {
+        return Mockito.spy(new BatchTransferServiceImpl(nrgEventService, executorService, anonUtils, contextService, batchTransferMonitor, scriptCompiler));
     }
 }

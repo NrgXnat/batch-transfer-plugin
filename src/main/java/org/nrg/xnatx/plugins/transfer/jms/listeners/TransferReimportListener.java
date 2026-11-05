@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Consumes one Reimport item per message; the listener-container's concurrency (from
- * {@code BatchTransferQueuePrefsBean}) is the parallelism. Reloads the requesting user and runs the
+ * {@code BatchTransferPrefsBean}) is the parallelism. Reloads the requesting user and runs the
  * shared per-item transfer logic via {@link BatchTransferService#processItem} — which, for Reimport,
  * drives the session's own persistent workflow (created inside {@code importExperiment}) to its
  * terminal state. The listener keeps no workflow of its own; it just reports each item's outcome to
@@ -70,9 +70,11 @@ public class TransferReimportListener {
         try {
             eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
                     0, trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
-            service.processItem(new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT,
-                            request.getPreserveSubjectLabel(), request.getPreserveSessionLabel()),
-                    user, new EventInfo(trackingId, 0));
+            final TransferRequest transferRequest = new TransferRequest(request.getDestinationProject(), itemId, TransferMode.REIMPORT,
+                    request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), null,
+                    request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
+                    request.getAnonScript(), request.isAnonReplacePipeline());
+            service.processItem(transferRequest, user, new EventInfo(trackingId, 0));
         } catch (Exception e) {
             log.error("Reimport {} failed", itemId, e);
             failed = true;

@@ -1,4 +1,4 @@
-/* Batch Transfer — Two-Panel Layout */
+/* Batch Transfer - Two-Panel Layout */
 
 .bt-shell {
     display: flex;
@@ -34,7 +34,7 @@
     padding: 24px 32px;
 }
 
-/* ── Sidebar sections ── */
+/* -- Sidebar sections -- */
 
 .bt-sidebar-header {
     padding: 14px 20px 10px;
@@ -83,7 +83,7 @@
     margin-top: 8px;
 }
 
-/* ── Main header ── */
+/* -- Main header -- */
 
 .bt-main-header {
     padding: 16px 32px;
@@ -101,7 +101,7 @@
     margin: 0;
 }
 
-/* ── Operation cards (compact sidebar) ── */
+/* -- Operation cards (compact sidebar) -- */
 
 .bt-op-card-sm {
     display: flex;
@@ -154,7 +154,7 @@
     color: #5f6368;
 }
 
-/* ── Project dropdown (compact) ── */
+/* -- Project dropdown (compact) -- */
 
 .bt-proj-select {
     width: 100%;
@@ -183,7 +183,7 @@
     cursor: wait;
 }
 
-/* ── Summary in sidebar ── */
+/* -- Summary in sidebar -- */
 
 .bt-summary-row {
     display: flex;
@@ -201,7 +201,7 @@
     font-weight: 600;
 }
 
-/* ── Responsive ── */
+/* -- Responsive -- */
 
 @media (max-width: 860px) {
     .bt-shell {
@@ -218,7 +218,7 @@
     }
 }
 
-/* ── Legacy container (wizard mockup) ── */
+/* -- Legacy container (wizard mockup) -- */
 
 .bt-container {
     max-width: 960px;
@@ -236,90 +236,6 @@
     color: #5f6368;
     font-size: 14px;
     margin: 0;
-}
-
-/* Stepper */
-.bt-stepper {
-    display: flex;
-    align-items: center;
-    margin: 24px 0;
-    padding: 0 16px;
-}
-
-.bt-step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    opacity: 0.4;
-    transition: opacity 0.2s;
-}
-
-.bt-step.active,
-.bt-step.completed {
-    opacity: 1;
-}
-
-.bt-step-num {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: 600;
-    background: #dadce0;
-    color: white;
-    flex-shrink: 0;
-    transition: background 0.2s;
-}
-
-.bt-step.active .bt-step-num {
-    background: #1a73e8;
-}
-
-.bt-step.completed .bt-step-num {
-    background: #34a853;
-}
-
-.bt-step-label {
-    font-size: 14px;
-    font-weight: 500;
-    color: #5f6368;
-    white-space: nowrap;
-}
-
-.bt-step.active .bt-step-label {
-    color: #202124;
-    font-weight: 600;
-}
-
-.bt-step-connector {
-    flex: 1;
-    height: 2px;
-    background: #dadce0;
-    margin: 0 16px;
-    transition: background 0.2s;
-}
-
-.bt-step-connector.completed {
-    background: #34a853;
-}
-
-/* Step panels */
-.bt-panel {
-    display: none;
-    animation: bsFadeIn 0.25s ease-out;
-}
-
-.bt-panel.active {
-    display: block;
-}
-
-@keyframes bsFadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
 }
 
 /* Operation cards */
@@ -591,22 +507,6 @@
     border-color: #1a73e8;
 }
 
-.bt-selection-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: #e8f0fe;
-    border-radius: 8px;
-    margin-bottom: 16px;
-    font-size: 13px;
-    color: #1557b0;
-}
-
-.bt-selection-bar strong {
-    font-weight: 600;
-}
-
 .bt-select-all-link {
     margin-left: auto;
     color: #1a73e8;
@@ -768,7 +668,8 @@
 
 .bt-id-text {
     font-size: 12px;
-    color: #9aa0a6;
+    /* #9aa0a6 measured 2.64:1 against the row background - below the 4.5:1 AA floor. */
+    color: #5f6368;
     font-family: monospace;
 }
 
@@ -1046,4 +947,613 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-label-checks input[type="checkbox"] {
     margin: 0 6px 0 0;
     vertical-align: middle;
+}
+
+/* ===================================================================== */
+/* Horizontal band layout (New transfer).                                 */
+/* Sections stack: Project -> Operation -> Cohort (tree/CSV) ->            */
+/* (Reimport) Anonymization -> Summary + Submit. The two-panel            */
+/* .bt-shell/.bt-sidebar rules above are unused by this screen.           */
+/* ===================================================================== */
+
+.bt-bands {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: white;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+}
+
+/* Project selection band (Source -> Destination) */
+.bt-proj-bar {
+    display: flex;
+    align-items: stretch;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e8eaed;
+    background: #fbfcfe;
+    border-radius: 10px 10px 0 0;
+}
+.bt-proj-btn {
+    border: 2px solid #e8eaed;
+    border-radius: 10px;
+    padding: 8px 16px;
+    min-width: 240px;
+    background: white;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.bt-proj-btn.frozen { background: #f1f3f4; }
+.bt-proj-btn.select { border-color: #c8d6f5; }
+.bt-proj-lbl {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    /* #9aa0a6 measured 2.37:1 here - the worst on the screen, and at 9.5px the smallest text too. */
+    color: #5f6368;
+}
+.bt-proj-name {
+    font-size: 15px;
+    font-weight: 500;
+    color: #202124;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.bt-proj-ic { color: #9aa0a6; }
+.bt-proj-arrow {
+    display: flex;
+    align-items: center;
+    color: #9aa0a6;
+    font-size: 20px;
+    padding: 0 18px;
+}
+.bt-proj-bar .bt-proj-select { margin: 2px 0 0; }
+
+/* Generic band */
+.bt-band {
+    padding: 12px 20px;
+    border-bottom: 1px solid #eef0f2;
+}
+.bt-band-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: #9aa0a6;
+    margin-bottom: 8px;
+}
+.bt-band-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.bt-band-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: #5f6368;
+}
+
+/* Operation cards as rounded-box radios (override the sidebar .bt-op-card-sm) */
+.bt-op-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.bt-op-row .bt-op-card-sm {
+    display: block;
+    min-width: 200px;
+    margin-bottom: 0;
+    padding: 8px 16px;
+}
+.bt-op-row .bt-op-card-sm .bt-op-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #202124;
+}
+.bt-op-row .bt-op-card-sm.selected .bt-op-label { color: #1a57c2; }
+.bt-op-row .bt-op-card-sm .bt-op-desc {
+    font-size: 11px;
+    color: #5f6368;
+    margin-top: 1px;
+}
+
+/* Cohort mode toggle */
+.bt-cohort-toggle {
+    display: inline-flex;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.bt-cohort-mode {
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    background: white;
+    color: #5f6368;
+    border: none;
+    border-right: 1px solid #e8eaed;
+}
+.bt-cohort-mode:last-child { border-right: none; }
+.bt-cohort-mode.selected { background: #e8f0fe; color: #1a73e8; }
+.bt-cohort-mode:disabled { opacity: .45; cursor: not-allowed; }
+
+/* The cohort modes render inside the cohort-builder panel, which supplies their frame and spacing. */
+
+/* CSV dropzone placeholder (wired in a later step) */
+.bt-dropzone {
+    border: 2px dashed #c8ccd1;
+    border-radius: 10px;
+    padding: 34px 20px;
+    text-align: center;
+    color: #5f6368;
+    background: #fafbfc;
+}
+.bt-dz-ic { font-size: 28px; }
+.bt-dz-big { font-size: 14px; color: #3c4043; margin: 8px 0 2px; }
+.bt-dz-sm { font-size: 12px; }
+
+/* Anonymization band: segmented control + custom-script editor + verdict */
+.bt-anon-placeholder { font-size: 12.5px; color: #5f6368; }
+.bt-anon-seg {
+    display: inline-flex;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.bt-anon-mode {
+    padding: 6px 12px;
+    font-size: 11.5px;
+    border: none;
+    border-right: 1px solid #e8eaed;
+    background: white;
+    color: #5f6368;
+    cursor: pointer;
+}
+.bt-anon-mode:last-child { border-right: none; }
+.bt-anon-mode.selected { background: #e6f4ea; color: #137333; }
+.bt-anon-unsupported {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #5f6368;
+    font-style: italic;
+}
+
+/* The editor's frame comes from .bt-panel; only its inner pieces are styled here. */
+.bt-anon-editor-hint { font-size: 11px; color: #5f6368; margin-bottom: 6px; }
+.bt-anon-editor-hint code { background: #eef0f2; padding: 0 3px; border-radius: 3px; }
+.bt-anon-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 96px;
+    padding: 11px 13px;
+    border: 2px solid #e8eaed;
+    border-radius: 8px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: #fbfbfb;
+    resize: vertical;
+}
+.bt-anon-textarea:focus { border-color: #1a73e8; outline: none; }
+.bt-anon-editor-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 10px;
+}
+.bt-anon-verdict { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.bt-verdict-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 11px;
+    border-radius: 7px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+.bt-verdict-ok { background: #e6f4ea; border: 1px solid #34a853; color: #137333; }
+.bt-verdict-bad { background: #fce8e6; border: 1px solid #ea4335; color: #c5221f; }
+.bt-verdict-meta { font-size: 11px; color: #5f6368; padding-left: 2px; }
+
+/* Banner region (JS renders .bt-anon-banner children here); sits inside the padded workspace */
+.bt-banner-region { padding: 0; }
+.bt-banner-region:empty { display: none; }
+.bt-banner-region .bt-anon-banner:first-child { margin-top: 0; }
+
+/* Summary + submit: full-width action bar under both columns */
+.bt-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    /* The bar itself must never wrap. Wrapping pushed Cancel/Submit onto a second row, left-aligned,
+       and doubled the bar height, which shrinks the room the rail is pinned within. The summary absorbs
+       the overflow instead by wrapping its own chips. */
+    flex-wrap: nowrap;
+    padding: 12px 20px;
+    border-top: 1px solid #e8eaed;
+    background: white;
+    /* Pinned to the viewport bottom so the summary, the blocked-reason note and Submit stay
+       reachable while a long cohort list scrolls. Depends on no overflow:hidden ancestor. */
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, .06);
+}
+/* Takes the remaining width and absorbs all the wrapping: the operation summary, the status chips
+   and the blocked reason flow as one wrapping row. min-width:0 lets it actually shrink in the flex
+   row instead of forcing the bar wider than its container. */
+.bt-action-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #3c4043;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.bt-action-summary strong { color: #202124; }
+
+/* Only the buttons are rigid, so they hold the right edge whatever the status says. Reserving no
+   width here is what keeps the status group wide enough to stay at two lines rather than three. */
+.bt-action-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.bt-action-controls .bt-btn { flex-shrink: 0; }
+.bt-submit-note { font-size: 11.5px; color: #c5221f; line-height: 1.35; }
+
+/* Anonymization status chips in the action bar (severity mirrors the banners) */
+.bt-mini-good, .bt-mini-warn, .bt-mini-caution {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    padding: 3px 10px;
+    border-radius: 13px;
+    white-space: nowrap;
+}
+.bt-mini-good { background: #e6f4ea; color: #137333; }
+.bt-mini-warn { background: #fce8e6; color: #c5221f; }
+.bt-mini-caution { background: #fef7e0; color: #b06000; }
+
+/* Preserve-source-labels box in the submit area (reuses the .bt-label-* inner styles) */
+.bt-reimport-opts {
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border: 1px solid #eef0f2;
+    border-radius: 8px;
+    max-width: 560px;
+}
+.bt-reimport-opts .bt-label-options-title { font-size: 12px; }
+
+/* CSV manifest mode: dropzone, resolved cohort table, per-cell notes */
+.bt-dz-link { color: #1a73e8; cursor: pointer; text-decoration: none; }
+.bt-dropzone.dragover { border-color: #1a73e8; background: #e8f0fe; }
+.bt-dz-cols { margin-top: 10px; color: #5f6368; }
+.bt-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.bt-csv-loading { padding: 14px; font-size: 13px; color: #5f6368; }
+.bt-csv-error { padding: 14px; font-size: 13px; color: #c5221f; }
+.bt-csv-head { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; }
+.bt-csv-ok { color: #137333; }
+.bt-csv-miss { color: #c5221f; }
+.bt-csv-file {
+    background: #f1f3f4;
+    border: 1px solid #dadce0;
+    border-radius: 13px;
+    padding: 2px 10px;
+    font-size: 11.5px;
+}
+
+/* Manifest bar: loaded file name + a control to clear the manifest and return to the dropzone. */
+.bt-manifest-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.bt-csv-replace-link {
+    margin-left: auto;
+    color: #1a73e8;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 12.5px;
+}
+.bt-csv-replace-link:hover { text-decoration: underline; }
+
+/* Simple manifest pager: prev/next arrows around a "start-end of total" range, plus one "Show all". */
+.bt-pager { display: flex; align-items: center; gap: 12px; padding: 10px 2px 2px; font-size: 12.5px; color: #5f6368; }
+.bt-pager-nav { display: inline-flex; align-items: center; gap: 10px; }
+.bt-pager-arrow {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #dadce0;
+    border-radius: 7px;
+    background: #fff;
+    color: #3c4043;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.bt-pager-arrow:hover:not(:disabled) { background: #f1f3f4; }
+.bt-pager-arrow:disabled { opacity: .4; cursor: not-allowed; }
+.bt-pager-range { min-width: 96px; text-align: center; color: #3c4043; }
+.bt-pager-spacer { flex: 1; }
+.bt-pager-showall { color: #1a73e8; cursor: pointer; text-decoration: none; }
+.bt-pager-showall:hover { text-decoration: underline; }
+
+/* The resolved manifest table can be wider than the workspace (routing + value columns), so it
+   scrolls horizontally within its own wrapper instead of being clipped by .bt-table-wrap. Only the
+   table scrolls sideways; the About panel and script editor above stay put. */
+.bt-cohort-scroll {
+    overflow-x: auto;
+    border: 1px solid #e8eaed;
+    border-radius: 8px;
+    background: white;
+}
+
+.bt-cohort-table { font-size: 12.5px; }
+/* Cells keep a stable width so the table scrolls cleanly (the not-found reason cell is exempted just
+   below so its message can still wrap). Headers are the exception: they carry raw manifest column
+   names, and on one line it is the NAME that sets the column width - destination_subject_label
+   reserved 231px for values that need 97. Letting headers wrap reclaims ~400px of table width and
+   hides nothing - a column still grows when its own DATA needs more, which is why a long session
+   label keeps its full width.
+   No min/max-width here on purpose, both measured as wrong: a max-width never binds (word-break
+   already lets the header shrink to the data width), and a min-width applies to the narrow columns
+   too - buying 34px of header height cost 440px of table width. */
+.bt-cohort-table td { white-space: nowrap; }
+.bt-cohort-table th {
+    white-space: normal;
+    word-break: break-word;
+    vertical-align: bottom;
+}
+.bt-cohort-table th.bt-route-head { color: #8430ce; }
+.bt-cohort-table th.bt-val-head { color: #1a73e8; }
+/* A destination label the manifest states outright. */
+.bt-cohort-table td.bt-route { color: #6a1b9a; }
+/* A destination label inherited from the source rather than stated - same value as the source column,
+   so it reads as ordinary text to keep the manifest-supplied ones distinguishable at a glance. */
+.bt-cohort-table td.bt-dest-inherited { color: #5f6368; }
+.bt-cohort-table .bt-csv-caret-col { width: 20px; }
+.bt-cohort-table .bt-csv-caret,
+.bt-cohort-table .bt-files-lazy { color: #1a73e8; cursor: pointer; }
+.bt-cohort-table .bt-files-lazy { text-decoration: underline dotted; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-missrow { background: #fef6f5; }
+.bt-cohort-table tr.bt-csv-missrow:hover { background: #fef6f5; }
+.bt-cohort-table .bt-csv-x { color: #ea4335; font-weight: 700; }
+.bt-cohort-table .bt-csv-reason { color: #c5221f; white-space: normal; }
+.bt-cohort-table tr.bt-csv-rowerr { background: #fef6f5; }
+.bt-cohort-table tr.bt-csv-errrow td { color: #c5221f; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-warnrow td { color: #b06000; font-size: 11.5px; }
+.bt-cohort-table tr.bt-csv-detailrow td { background: #fafbfc; }
+.bt-csv-detail-line { font-size: 11.5px; color: #3c4043; margin: 2px 0; }
+/* Same failure as the two above: this renders as real text in manifest cells and verdicts. */
+.bt-muted { color: #5f6368; }
+.bt-script-preview {
+    background: #0d1117;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 11px 13px;
+    margin: 4px 0 0;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+}
+
+/* ===================================================================== */
+/* Left-column layout (New transfer): a left config rail, ordered by      */
+/* dependency (source/dest, operation, cohort, then the Reimport-only     */
+/* anonymization and label sections) + a right cohort workspace (banners, */
+/* script editor, tree/CSV), with a full-width action bar below both.     */
+/* Neither column has its own scrollbar - the page is the only scroller,  */
+/* so the screen uses the full window width.                             */
+/* Reuses the component styles above (op cards, toggles, tables, CSV).    */
+/* ===================================================================== */
+
+/* Full-width surface: no width cap, no clipping. overflow MUST stay visible - an overflow:hidden
+   ancestor silently disables position:sticky on the rail and the action bar. Width and side
+   gutters come from XNAT's #layout_content. */
+.bt-screen {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border-top: 1px solid #dadce0;
+    /* Deliberately no bottom border. The sticky action bar un-pins at the end of the page, and a
+       border here would draw a seam between it and #layout_content's bottom padding, reading as a
+       strip under the bar. Without it the bar's white background runs into the white page. The bar's
+       own border-top and upward shadow are what delineate it. */
+}
+
+/* Both columns are content-height. align-items keeps the rail at its natural height so it can
+   stick; the rail's tint and divider are painted here instead of on the rail, so the column reads
+   full height whichever side is taller. */
+.bt-body {
+    display: flex;
+    align-items: flex-start;
+    background: linear-gradient(to right, #fbfcfe 332px, #e8eaed 332px, #e8eaed 333px, transparent 333px);
+}
+
+/* -- Left config rail: sticks while the cohort list scrolls past. The script sets its top: 0 when it
+   fits above the action bar, negative when it is taller, so a tall rail sticks by its bottom edge and
+   its lowest controls (Reimport's label checkboxes) stay reachable on a short screen. -- */
+.bt-rail {
+    width: 332px;
+    flex-shrink: 0;
+    background: #fbfcfe;
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+}
+.bt-rail-sect {
+    padding: 13px 16px;
+}
+/* Separators go between sections rather than under each one, so the trailing Reimport-only sections
+   leave no dangling rule below the last visible section when they are hidden. */
+.bt-rail-sect + .bt-rail-sect { border-top: 1px solid #eef0f2; }
+/* Section headers: prominent so each rail section reads as a clear step. */
+.bt-rail-lbl {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #202124;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bt-rail-lbl::before {
+    content: "";
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: #1a73e8;
+    flex-shrink: 0;
+}
+
+/* Source -> Destination, stacked with a down arrow */
+.bt-proj-stack .bt-proj-btn { min-width: 0; width: 100%; box-sizing: border-box; }
+.bt-proj-down { text-align: center; color: #9aa0a6; font-size: 16px; line-height: 1; margin: 5px 0; }
+.bt-rail .bt-proj-select { width: 100%; margin: 2px 0 0; }
+
+/* Operation cards stacked in the rail */
+.bt-op-stack .bt-op-card-sm { display: block; margin-bottom: 8px; }
+.bt-op-stack .bt-op-card-sm:last-child { margin-bottom: 0; }
+.bt-op-stack .bt-op-card-sm.selected .bt-op-label { color: #1a57c2; }
+
+/* Rail segmented toggles span the column width; tighten padding/size so labels stay on one line */
+.bt-rail .bt-cohort-toggle,
+.bt-rail .bt-anon-seg { display: flex; width: 100%; }
+.bt-rail .bt-cohort-mode,
+.bt-rail .bt-anon-mode {
+    flex: 1;
+    text-align: center;
+    padding: 7px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.bt-rail .bt-anon-unsupported { margin-top: 8px; }
+
+/* -- Right cohort workspace: flows with the page, no internal scroll. Stretches so its background
+   still covers the column when the rail is the taller of the two. -- */
+.bt-workspace {
+    flex: 1;
+    min-width: 0;
+    align-self: stretch;
+    background: #f8f9fa;
+}
+/* Horizontal padding is deliberately tighter than vertical: it is the only slack left between the
+   rail and the screen edge, and every pixel of it is width the cohort table cannot use. Kept at 10px
+   rather than dropped to 0 so the panels still read as cards on the workspace grey. */
+.bt-work-scroll {
+    padding: 14px 10px;
+}
+/* The workspace holds a stack of full-width panels; each supplies its own frame and bottom margin. */
+
+/* Workspace panels. About this transfer / Anonymization script / Cohort builder are one tiled-card
+   component, so the workspace reads as a consistent stack rather than a card plus loose blocks. */
+.bt-panel {
+    background: #fff;
+    border: 1px solid #e8eaed;
+    border-radius: 8px;
+    margin-bottom: 12px;
+}
+.bt-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-bottom: 1px solid #e8eaed;
+}
+.bt-panel-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #202124;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bt-panel-title::before {
+    content: "";
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: #1a73e8;
+    flex-shrink: 0;
+}
+/* The right side of a panel header reports state; controls stay in the rail or the body. */
+.bt-panel-meta {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 11.5px;
+    color: #5f6368;
+}
+.bt-mode-pill {
+    background: #e8f0fe;
+    color: #1a57c2;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-weight: 700;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.bt-panel-body { padding: 14px; }
+.bt-panel-body .bt-op-detail-desc {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #3c4043;
+}
+.bt-panel-body .bt-banner-region { margin-top: 10px; }
+
+/* Cohort builder: the active mode's content sits flush in the panel, so a table is not a border
+   inside a border. The clip that squares the table against the panel radius also rules out a sticky
+   table header in here without dropping it. */
+.bt-builder { overflow: hidden; }
+.bt-builder-tools {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f3f4;
+}
+.bt-builder-tools .bt-data-toolbar { flex: 1; margin: 0; }
+.bt-builder-sel { font-size: 12.5px; color: #3c4043; white-space: nowrap; }
+.bt-builder-sel strong { color: #202124; font-weight: 600; }
+.bt-builder .bt-table-wrap { border: 0; border-radius: 0; background: transparent; }
+.bt-builder .bt-cohort-scroll { border: 0; border-radius: 0; }
+.bt-builder .bt-pager { padding: 10px 14px; border-top: 1px solid #f1f3f4; }
+.bt-builder .bt-manifest-bar,
+.bt-builder .bt-csv-head { margin: 0; padding: 10px 14px; border-bottom: 1px solid #f1f3f4; }
+/* Blocks needing breathing room inside the flush panel carry their own margin rather than sitting in
+   a padded wrapper - so hiding one (the dropzone) leaves no empty padded strip behind. */
+.bt-builder .bt-dropzone { margin: 14px; }
+.bt-builder .bt-warning { margin: 14px 14px 0; }
+.bt-builder .bt-csv-loading,
+.bt-builder .bt-csv-error { margin: 14px; }
+
+/* Narrow viewports: the rail stacks above the workspace and stops sticking (stacked, it would eat
+   the viewport). The body gradient is dropped since there is no left column to paint. */
+@media (max-width: 820px) {
+    .bt-body { flex-direction: column; background: none; }
+    .bt-rail {
+        width: 100%;
+        position: static;
+        border-bottom: 1px solid #e8eaed;
+    }
 }

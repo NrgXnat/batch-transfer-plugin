@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
  * consumer — so the destination subject/experiment is created once (by the first item that needs it)
  * and reused by the rest, with no cross-thread get-or-create race or shared-source mutation.
  * Parallelism is <b>across subjects</b>: the listener-container concurrency (from
- * {@code BatchTransferQueuePrefsBean}) is how many subjects clone at once.
+ * {@code BatchTransferPrefsBean}) is how many subjects clone at once.
  *
  * <p>Never rethrows (a thrown exception would trigger JMS redelivery and reprocess the bundle). Each
  * item reports its outcome to {@link BatchTransferMonitor} exactly once, so the batch's completion

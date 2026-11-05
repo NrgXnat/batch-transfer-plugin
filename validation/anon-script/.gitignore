@@ -1,0 +1,5 @@
+# Local credentials / config — never commit
+config.env
+
+# Profiling run output
+profile-results.csv

@@ -6,6 +6,7 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 
 | Plugin Version                  | Target XNAT | JDK |
 |---------------------------------|---|---|
+| `1.2.0` | 1.9.3.3 (custom anonymization script: 1.9.3.7+) | 8 |
 | `1.1.1` | 1.9.3.3 | 8 |
 
 ---
@@ -18,6 +19,12 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 | **Clone** | Full file duplication into the destination project archive; preserves original meta-data. **No anonymization.** | Independent, editable copies. |
 | **Reimport** | Re-ingests image sessions through `DicomZipImporter` → destination project's anonymization pipeline. Subjects and image assessors are not transfered; only DICOM session data. | Re-anonymizing data for a new study context. |
 
+### Cohort and anonymization options
+
+- **CSV manifest** — select sessions by uploading a CSV (`source_subject_label`, `source_session_label`) instead of ticking rows. For Reimport, other columns can set destination labels (`destination_subject_label`, `destination_session_label`) or feed `${csv.<column>}` placeholders in the script.
+- **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the destination project's anonymization (the REST API can also make it replace that anonymization). Requires XNAT 1.9.3.7 or later; on older builds the option is hidden. Requires edit access on the destination project.
+
+REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 ---
 
@@ -30,15 +37,15 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 
 ## Build & test
 
-JDK 8 only (Lombok in this Gradle 6.4.1 setup breaks on newer JDKs).
+Build and test with JDK 8 (Gradle wrapper 7.6.4).
 
 ```bash
-./gradlew build         # compile + tests
-./gradlew jar    # jar only
-./gradlew test   # tests only
+./gradlew build    # compile + tests + deployable jar
+./gradlew fatJar   # deployable jar only
+./gradlew test     # tests only
 ```
 
-Output: `build/libs/batch-transfer-1.1.1.jar`
+Output: `build/libs/batch-transfer-<version>.jar`. Deploy this one; the `-thin` jar the build also produces leaves out the bundled `commons-csv`.
 
 ## Install
 

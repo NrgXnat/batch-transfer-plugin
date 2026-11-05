@@ -1,14 +1,25 @@
 # Batch Transfer Plugin — Roadmap
 
-**Plugin Version**: 1.1.1 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
+**Plugin Version**: 1.2.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
 **Target XNAT**: 1.9.3.3
-**Last Updated**: 2026-07-02
+**Last Updated**: 2026-11-04
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
 ---
 
+
 ## Completed
+
+## [1.2.0]
+
+Cohort building and custom anonymization for Reimport. REST details: [rest-api.md](rest-api.md).
+
+- **Manifest CSV cohorts** — pick sessions by uploading a CSV instead of ticking rows; each row is resolved on upload and shown as matched / not found before submit
+- **Custom DicomEdit anonymization for Reimport** — a one-off script applied at ingest on top of the destination project's anonymization, with per-session `${csv.*}` values substituted from the manifest. Rides the importer's `Anon-Script` parameter (XNAT 1.9.3.7+) and is feature-detected, so the option is hidden on builds without it
+- **Destination label routing** — `destination_subject_label` / `destination_session_label` manifest columns set where each reimported session lands
+- **Validation and preflight** — script size, version, restricted commands, placeholder binding, and value charset checked before submit and enforced again at submit
+- **UI** — horizontal band layout (Project → Operation → Cohort → Anonymization → Summary), page-level scrolling with a pinned rail and action bar, inline-styled confirmation dialog
 
 ## [1.1.1]
 
@@ -24,7 +35,6 @@ Multi-node correctness for deployments using a shared external JMS broker (singl
 ### Added
 
 - **Preserve source labels on Reimport** ([#10](https://github.com/NrgXnat/batch-transfer-plugin/issues/10)) — the Reimport panel now offers two checkboxes (both on by default) to preserve the source **subject label** and/or **session label**. When enabled, those XNAT labels are passed to the DICOM importer as `subject_ID` / `EXPT_LABEL` overrides so the destination uses them instead of deriving labels from DICOM tags (e.g. `PatientName` / `PatientID`).
-
 
 ## 1.0.1 — Performance & hardening
 - **Parallel processing via JMS queues** — Reimport (per session) and Clone (per subject) dispatched onto in-process (`vm://`) JMS queues instead of a single sequential loop; in-memory `BatchTransferMonitor` fan-in emits one terminal event per batch
@@ -64,10 +74,20 @@ Multi-node correctness for deployments using a shared external JMS broker (singl
 
 ## Planned
 
+### Transfer history
+
+Follows the 1.2.0 cohort-building and custom-anonymization work. Deliberately does *not* adopt conduit's job engine (no job/row tables, dashboard, or per-row retry).
+
+- **Runs list and run detail** — a filterable list of past batches with per-item detail, backed by a single **`batch_transfer_history`** header table (structured / filterable / permanent) plus **`jobid`-grouped workflows** for per-item detail (requires stamping `jobid = tracking_id` on each item's workflow); live progress stays on `EventTrackingData`. One run-header table, **no per-row table**.
+- **Two top tabs** — *New transfer* (landing) / *Transfer history*.
+- **Script audit** — record a SHA-256 of the custom anonymization script on each Reimport workflow and show it in run detail.
+- **Possible REST additions** — `GET /xapi/transfer/history`, `GET /xapi/transfer/history/{tracking_id}`, and `POST /xapi/transfer/history/{tracking_id}/retry-failed` (seed a new run from a run's failed items).
+
+
 ### Operations & Workflow
 - Expand Reimport type support to include scans-based operations
 - Implement UX cohort building filters for large (>10k+) datasets where the select/deselect item workflow would be tedious 
-- Launch Advanced Search from destination project Action Menu
+- Launch Advanced Search from destination project Action Menu 
   - Include all XNAT experiment data types
 - Computed size estimate in the operation-detail panel — replace the static duplication warning with a real byte count for the current selection (e.g. "≈ 4.2 GB will be duplicated to *DestProject*"). Requires either a new XAPI endpoint that walks the archive, or per-row `data-size` attributes emitted by `XDATScreen_batch_transfer.java`, plus rollup logic in `batchTransfer.js`.
 

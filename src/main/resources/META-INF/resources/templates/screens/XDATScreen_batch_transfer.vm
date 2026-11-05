@@ -31,205 +31,261 @@
     #set($hasPresetDest = true)
 #end
 
-<div class="bt-shell">
-    <!-- ═══════════ LEFT SIDEBAR ═══════════ -->
-    <div class="bt-sidebar">
-        <div class="bt-sidebar-header">
-            #if($projectContext)
-                <h2>Batch Transfer &mdash; $!projectContext</h2>
-            #else
-                <h2>Batch Transfer</h2>
-                <p>From multiple ${displayManager.getSingularDisplayNameForProject().toLowerCase()}s</p>
-            #end
-        </div>
+## Left-column layout: config rail on the left; cohort workspace (banners, script editor, tree/CSV)
+## on the right; a full-width action bar below both. The rail is ordered by dependency - each
+## section constrains the next: source/dest, operation, cohort, then the Reimport-only anonymization
+## and label sections. All element ids/classes below are the hooks batchTransfer.js drives.
+<div class="bt-screen">
 
-        <!-- Step 1: Destination Project -->
-        <div class="bt-sidebar-section">
-            <h4>1 &mdash; Destination $displayManager.getSingularDisplayNameForProject()</h4>
-            #if($hasPresetDest)
-                <div class="bt-proj-locked">
-                    <span class="bt-proj-locked-icon">&#128274;</span>
-                    <span class="bt-proj-locked-name">$!presetDestination</span>
-                </div>
-            #else
-                <select class="bt-proj-select" id="bt-project-select" disabled="disabled">
-                    <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
-                </select>
-            #end
-        </div>
+    <div class="bt-body">
 
-        <!-- Step 2: Operation -->
-        <div class="bt-sidebar-section">
-            <h4>2 &mdash; Operation</h4>
-            <div class="bt-op-card-sm selected" data-op="Share">
-                <div class="bt-radio-sm"></div>
-                <div>
-                    <div class="bt-op-label">Share</div>
-                    <div class="bt-op-desc">Add to destination without copying</div>
-                </div>
-            </div>
-            <div class="bt-op-card-sm" data-op="Clone">
-                <div class="bt-radio-sm"></div>
-                <div>
-                    <div class="bt-op-label">Clone</div>
-                    <div class="bt-op-desc">Full data duplication</div>
-                </div>
-            </div>
-            <div class="bt-op-card-sm" data-op="Reimport">
-                <div class="bt-radio-sm"></div>
-                <div>
-                    <div class="bt-op-label">Reimport</div>
-                    <div class="bt-op-desc">Re-anonymize image sessions</div>
-                </div>
-            </div>
-            <!-- Reimport only: preserve source XNAT labels instead of deriving them from DICOM tags. -->
-            <div id="bt-reimport-label-option" class="bt-label-options" style="display:none;">
-                <div class="bt-label-options-title">Preserve source labels</div>
-                <p class="bt-label-options-help">Use the source's XNAT labels instead of deriving them from DICOM tags.</p>
-                <div class="bt-label-checks">
-                    <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
-                    <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
+        <!-- ===================== LEFT CONFIG RAIL ===================== -->
+        <div class="bt-rail">
+
+            <!-- Source -> Destination -->
+            <div class="bt-rail-sect">
+                <div class="bt-rail-lbl">Transfer</div>
+                <div class="bt-proj-stack">
+                    <div class="bt-proj-btn frozen">
+                        <span class="bt-proj-lbl">Source</span>
+                        <span class="bt-proj-name">#if($projectContext)$!projectContext#{else}Multiple ${displayManager.getSingularDisplayNameForProject().toLowerCase()}s#end <span class="bt-proj-ic">&#128274;</span></span>
+                    </div>
+                    <div class="bt-proj-down">&#8595;</div>
+                    <div class="bt-proj-btn #if($hasPresetDest)frozen#{else}select#end">
+                        <span class="bt-proj-lbl">Destination $displayManager.getSingularDisplayNameForProject()</span>
+                        #if($hasPresetDest)
+                            <span class="bt-proj-name">$!presetDestination <span class="bt-proj-ic">&#128274;</span></span>
+                        #else
+                            <select class="bt-proj-select" id="bt-project-select" disabled="disabled">
+                                <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
+                            </select>
+                        #end
+                    </div>
                 </div>
             </div>
 
-        </div>
-
-        <!-- About this transfer (operation description + anon status) -->
-        <div class="bt-sidebar-section">
-            <h4>About this transfer</h4>
-            <p class="bt-op-detail-desc" id="bt-op-detail-desc"></p>
-            <div id="bt-op-detail-warning-area"></div>
-        </div>
-
-        <!-- Summary -->
-        <div class="bt-sidebar-section">
-            <h4>Summary</h4>
-            <div class="bt-summary-row">
-                <span class="bt-label">Destination</span>
-                <span class="bt-val" id="bt-sum-dest">#if($hasPresetDest)$!presetDestination#{else}&mdash;#end</span>
-            </div>
-            <div class="bt-summary-row">
-                <span class="bt-label">Operation</span>
-                <span class="bt-val" id="bt-sum-op">Share</span>
-            </div>
-            <div class="bt-summary-row">
-                <span class="bt-label">Subjects</span>
-                <span class="bt-val" id="bt-sum-subjects">0</span>
-            </div>
-            <div class="bt-summary-row">
-                <span class="bt-label">Sessions</span>
-                <span class="bt-val" id="bt-sum-sessions">0</span>
-            </div>
-            <div class="bt-summary-row">
-                <span class="bt-label">Assessors</span>
-                <span class="bt-val" id="bt-sum-assessors">0</span>
-            </div>
-        </div>
-
-        <!-- Submit -->
-        <div class="bt-sidebar-footer">
-            <button type="button" class="bt-btn bt-btn-success" id="bt-submit-btn"
-                    onclick="XNAT.plugin.batchtransfer.submitTransfer();">Share</button>
-            <button type="button" class="bt-btn bt-btn-secondary" onclick="history.go(-1);">Cancel</button>
-        </div>
-    </div>
-
-    <!-- ═══════════ RIGHT MAIN PANEL ═══════════ -->
-    <div class="bt-main">
-        <div class="bt-main-header">
-            <h3 id="bt-main-title">Select data to transfer</h3>
-        </div>
-        <div class="bt-main-scroll">
-            #if($sharingMsg)
-                <div class="bt-warning">
-                    <span class="bt-warn-icon">&#9888;</span>
-                    <div>$sharingMsg</div>
+            <!-- Operation. Ahead of Cohort because it decides what is eligible to select: the tree
+                 hides rows the operation cannot transfer, and the manifest's routing/value columns
+                 only apply to Reimport. -->
+            <div class="bt-rail-sect">
+                <div class="bt-rail-lbl">Operation</div>
+                <div class="bt-op-stack">
+                    <div class="bt-op-card-sm selected" data-op="Share">
+                        <div class="bt-op-label">Share</div>
+                        <div class="bt-op-desc">Add to destination without copying</div>
+                    </div>
+                    <div class="bt-op-card-sm" data-op="Clone">
+                        <div class="bt-op-label">Clone</div>
+                        <div class="bt-op-desc">Full data duplication</div>
+                    </div>
+                    <div class="bt-op-card-sm" data-op="Reimport">
+                        <div class="bt-op-label">Reimport</div>
+                        <div class="bt-op-desc">Re-anonymize image sessions</div>
+                    </div>
                 </div>
-            #end
-            #if($copyingMsg)
-                <div class="bt-warning" id="bt-copy-warning" style="display:none;">
-                    <span class="bt-warn-icon">&#9888;</span>
-                    <div>$copyingMsg</div>
-                </div>
-            #end
+            </div>
 
-            <div class="bt-data-toolbar">
-                <input class="bt-data-search" id="bt-data-search" type="text" placeholder="Filter subjects and sessions...">
+## Cohort mode. Ahead of Anonymization because an uploaded manifest's columns are what the
+## script's csv placeholders bind against. Velocity parses the whole template, HTML comments
+## included, so author notes use ## and avoid dollar-brace syntax that is not a real reference.
+            <div class="bt-rail-sect">
+                <div class="bt-rail-lbl">Cohort</div>
+                <div class="bt-cohort-toggle" id="bt-cohort-toggle">
+                    <button type="button" class="bt-cohort-mode selected" data-cohort="tree">Select interactively</button>
+                    <button type="button" class="bt-cohort-mode" data-cohort="csv">Upload manifest CSV</button>
+                </div>
             </div>
-            <div class="bt-selection-bar">
-                <strong id="bt-sel-count">0</strong> items selected
-                <button type="button" class="bt-select-all-link">Select all</button>
+
+            <!-- Anonymization (Reimport only): mode toggle here; the editor lives in the workspace -->
+            <div class="bt-rail-sect" id="bt-anon-band" style="display:none;">
+                <div class="bt-rail-lbl">Anonymization</div>
+                <div class="bt-anon-seg" id="bt-anon-seg">
+                    <button type="button" class="bt-anon-mode selected" data-anon="none">Destination only</button>
+                    <button type="button" class="bt-anon-mode" data-anon="script">Add custom script</button>
+                </div>
+                <div class="bt-anon-unsupported" id="bt-anon-unsupported" style="display:none;">
+                    This XNAT build does not support per-import anonymization; Reimport will use the destination's anonymization only.
+                </div>
             </div>
-            <div class="bt-table-wrap">
-                <table class="bt-table">
-                    <thead>
-                        <tr>
-                            <th style="width:40px"><span class="bt-cb checked" id="bt-header-cb">&#10003;</span></th>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>ID</th>
-                        </tr>
-                    </thead>
-                    <tbody id="bt-data-body">
-                        ## ── Single item set; per-project share/clone eligibility drives op visibility ──
-                        ## ── (Reimport is never feature-gated — all sessions are reimportable). ──
-                        #if($items && $items.size() > 0)
-                            #foreach($proj in $items)
-                                #set($projShareable = $shareableProjects.contains($proj.getId()))
-                                #set($projCloneable = $cloneableProjects.contains($proj.getId()))
-                                #foreach($subj in $proj.getChildren())
-                                    <tr class="selected" data-type="subject"
-                                        data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
-                                        data-project="$!proj.getId()"
-                                        data-shareable="$projShareable" data-cloneable="$projCloneable"
-                                        data-reimportable="$!subj.isReimportable()">
-                                        <td><span class="bt-cb checked">&#10003;</span></td>
-                                        <td>
-                                            #if($subj.getChildren().size() > 0)
-                                                <button class="bt-expand expanded">&#9654;</button>
-                                            #end
-                                            $!subj.getLabel()
-                                        </td>
-                                        <td><span class="bt-type-badge subject">Subject</span></td>
-                                        <td class="bt-id-text">$!subj.getId()</td>
+
+            <!-- Preserve source labels (Reimport only) -->
+            <div class="bt-rail-sect" id="bt-reimport-label-option" style="display:none;">
+                <div class="bt-rail-lbl">Preserve source labels</div>
+                <div class="bt-reimport-opts">
+                    <p class="bt-label-options-help">Use the source's XNAT subject/session labels instead of deriving them from DICOM tags. A manifest's <code>destination_subject_label</code> / <code>destination_session_label</code> columns override this per row.</p>
+                    <div class="bt-label-checks">
+                        <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
+                        <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ===================== RIGHT WORKSPACE ===================== -->
+        <div class="bt-workspace">
+            <div class="bt-work-scroll">
+
+                <!-- About this transfer: selected operation description + anon/storage banners (as in 1.1.1) -->
+                <div class="bt-panel">
+                    <div class="bt-panel-head">
+                        <div class="bt-panel-title">About this transfer</div>
+                    </div>
+                    <div class="bt-panel-body">
+                        <p class="bt-op-detail-desc" id="bt-op-detail-desc"></p>
+                        <div class="bt-banner-region" id="bt-op-detail-warning-area"></div>
+                    </div>
+                </div>
+
+                <!-- Custom-script editor (Reimport + custom script), full workspace width -->
+                <div class="bt-panel bt-anon-editor" id="bt-anon-editor" style="display:none;">
+                    <div class="bt-panel-head">
+                        <div class="bt-panel-title">Anonymization script</div>
+                        <div class="bt-panel-meta"><span class="bt-mode-pill">DicomEdit 6</span></div>
+                    </div>
+                    <div class="bt-panel-body">
+                        <div class="bt-anon-editor-hint">Applied per session at ingest, in addition to the destination's anonymization. <code>${csv.column}</code> placeholders bind to manifest columns.</div>
+                        <textarea id="bt-anon-script" class="bt-anon-textarea" spellcheck="false" placeholder='version "6.1"'></textarea>
+                        <div class="bt-anon-editor-row">
+                            <button type="button" class="bt-btn bt-btn-secondary" id="bt-anon-validate">Validate</button>
+                            <div class="bt-anon-verdict" id="bt-anon-verdict"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cohort builder: holds whichever cohort mode is active (interactive tree, or CSV
+                     dropzone + resolved table). Content is flush; the panel is the frame. -->
+                <div class="bt-panel bt-builder">
+                    <div class="bt-panel-head">
+                        <div class="bt-panel-title">Cohort builder</div>
+                        <div class="bt-panel-meta" id="bt-builder-mode"></div>
+                    </div>
+
+                    <!-- interactive tree (subjects / sessions / assessors) -->
+                    <div id="bt-cohort-tree">
+                        ## Both eligibility warnings are operation-specific and start hidden;
+                        ## batchTransfer.js shows the one matching the selected operation.
+                        #if($sharingMsg)
+                            <div class="bt-warning" id="bt-share-warning" style="display:none;">
+                                <span class="bt-warn-icon">&#9888;</span>
+                                <div>$sharingMsg</div>
+                            </div>
+                        #end
+                        #if($copyingMsg)
+                            <div class="bt-warning" id="bt-copy-warning" style="display:none;">
+                                <span class="bt-warn-icon">&#9888;</span>
+                                <div>$copyingMsg</div>
+                            </div>
+                        #end
+
+                        <div class="bt-builder-tools">
+                            <div class="bt-data-toolbar">
+                                <input class="bt-data-search" id="bt-data-search" type="text" placeholder="Filter subjects and sessions by name or datatype...">
+                            </div>
+                            <span class="bt-builder-sel"><strong id="bt-sel-count">0</strong> items selected</span>
+                            <button type="button" class="bt-select-all-link">Select all</button>
+                        </div>
+                        <div class="bt-table-wrap">
+                            <table class="bt-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:40px"><span class="bt-cb checked" id="bt-header-cb">&#10003;</span></th>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>ID</th>
                                     </tr>
-                                    #foreach($subj_assess in $subj.getChildren())
-                                        <tr class="bt-indent-1 selected" data-type="assessor"
-                                            data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
-                                            data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()"
-                                            data-shareable="$projShareable" data-cloneable="$projCloneable"
-                                            data-reimportable="$!subj_assess.isReimportable()">
-                                            <td><span class="bt-cb checked">&#10003;</span></td>
-                                            <td>
-                                                #if($subj_assess.getChildren().size() > 0)
-                                                    <button class="bt-expand expanded">&#9654;</button>
+                                </thead>
+                                <tbody id="bt-data-body">
+                                    ## Single item set; per-project share/clone eligibility drives op visibility.
+                                    ## Reimport is never feature-gated - all image sessions are reimportable.
+                                    #if($items && $items.size() > 0)
+                                        #foreach($proj in $items)
+                                            #set($projShareable = $shareableProjects.contains($proj.getId()))
+                                            #set($projCloneable = $cloneableProjects.contains($proj.getId()))
+                                            #foreach($subj in $proj.getChildren())
+                                                <tr class="selected" data-type="subject"
+                                                    data-id="$!subj.getId()" data-xsi="$!subj.getXsiType()"
+                                                    data-project="$!proj.getId()"
+                                                    data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                                    data-reimportable="$!subj.isReimportable()">
+                                                    <td><span class="bt-cb checked">&#10003;</span></td>
+                                                    <td>
+                                                        #if($subj.getChildren().size() > 0)
+                                                            <button class="bt-expand expanded">&#9654;</button>
+                                                        #end
+                                                        $!subj.getLabel()
+                                                    </td>
+                                                    <td><span class="bt-type-badge subject">Subject</span></td>
+                                                    <td class="bt-id-text">$!subj.getId()</td>
+                                                </tr>
+                                                #foreach($subj_assess in $subj.getChildren())
+                                                    <tr class="bt-indent-1 selected" data-type="assessor"
+                                                        data-id="$!subj_assess.getId()" data-xsi="$!subj_assess.getXsiType()"
+                                                        data-parent="$!subj.getId()" data-project="$!subj_assess.getProject()"
+                                                        data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                                        data-reimportable="$!subj_assess.isReimportable()">
+                                                        <td><span class="bt-cb checked">&#10003;</span></td>
+                                                        <td>
+                                                            #if($subj_assess.getChildren().size() > 0)
+                                                                <button class="bt-expand expanded">&#9654;</button>
+                                                            #end
+                                                            $!subj_assess.getLabel()
+                                                        </td>
+                                                        <td><span class="bt-type-badge assessor">$!subj_assess.getXsiType()</span></td>
+                                                        <td class="bt-id-text">$!subj_assess.getId()</td>
+                                                    </tr>
+                                                    #foreach($img_assess in $subj_assess.getChildren())
+                                                        <tr class="bt-indent-2 selected" data-type="assessor"
+                                                            data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
+                                                            data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()"
+                                                            data-shareable="$projShareable" data-cloneable="$projCloneable"
+                                                            data-reimportable="$!img_assess.isReimportable()">
+                                                            <td><span class="bt-cb checked">&#10003;</span></td>
+                                                            <td>$!img_assess.getLabel()</td>
+                                                            <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>
+                                                            <td class="bt-id-text">$!img_assess.getId()</td>
+                                                        </tr>
+                                                    #end
                                                 #end
-                                                $!subj_assess.getLabel()
-                                            </td>
-                                            <td><span class="bt-type-badge assessor">$!subj_assess.getXsiType()</span></td>
-                                            <td class="bt-id-text">$!subj_assess.getId()</td>
-                                        </tr>
-                                        #foreach($img_assess in $subj_assess.getChildren())
-                                            <tr class="bt-indent-2 selected" data-type="assessor"
-                                                data-id="$!img_assess.getId()" data-xsi="$!img_assess.getXsiType()"
-                                                data-parent="$!subj_assess.getId()" data-project="$!img_assess.getProject()"
-                                                data-shareable="$projShareable" data-cloneable="$projCloneable"
-                                                data-reimportable="$!img_assess.isReimportable()">
-                                                <td><span class="bt-cb checked">&#10003;</span></td>
-                                                <td>$!img_assess.getLabel()</td>
-                                                <td><span class="bt-type-badge assessor">$!img_assess.getXsiType()</span></td>
-                                                <td class="bt-id-text">$!img_assess.getId()</td>
-                                            </tr>
+                                            #end
                                         #end
                                     #end
-                                #end
-                            #end
-                        #end
-                    </tbody>
-                </table>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- CSV manifest upload -->
+                    <div id="bt-cohort-csv" style="display:none;">
+                        <div class="bt-dropzone" id="bt-dropzone">
+                            <div class="bt-dz-ic">&#128228;</div>
+                            <div class="bt-dz-big">Drop a manifest CSV here</div>
+                            <div class="bt-dz-sm">or <span class="bt-dz-link" id="bt-csv-choose">choose a file</span></div>
+                            <div class="bt-dz-sm bt-dz-cols" id="bt-csv-required"></div>
+                            <input type="file" id="bt-csv-file" accept=".csv,text/csv" style="display:none;">
+                        </div>
+                        <div id="bt-csv-results"></div>
+                    </div>
+                </div>
+
             </div>
         </div>
+
     </div>
+
+    <!-- ===================== FULL-WIDTH ACTION BAR ===================== -->
+    <div class="bt-action-bar">
+        ## The summary absorbs all the overflow - the script renders the status chips and the blocked
+        ## reason into it as one wrapping row. Only the buttons are rigid, so they hold the right edge
+        ## however much the status has to say.
+        <div class="bt-action-summary" id="bt-action-summary"></div>
+        <div class="bt-action-controls">
+            <button type="button" class="bt-btn bt-btn-secondary" onclick="history.go(-1);">Cancel</button>
+            <button type="button" class="bt-btn bt-btn-success" id="bt-submit-btn"
+                    onclick="XNAT.plugin.batchtransfer.submitTransfer();">Submit</button>
+        </div>
+    </div>
+
 </div>
 
 <script type="text/javascript">
