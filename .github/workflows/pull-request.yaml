@@ -19,5 +19,5 @@ jobs:
       - name: Build Plugin JAR
         uses: ./.github/actions/build-plugin-jar
         with:
-          java-version: '8'
-          gradle-version: '7.6.4'
+          java-version: '21'
+          gradle-version: '9.4.1'
