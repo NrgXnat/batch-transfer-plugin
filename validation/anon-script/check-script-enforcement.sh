@@ -89,8 +89,11 @@ check_case "disallowed version 4.0" "not allowed" \
     "$(req 'version "4.0"
 (0010,0010) := "X"')"
 
-# 4. Restricted verb (thread-safety / untrusted-input deny-list).
-check_case "restricted verb mapUID" "restricted command" \
+# 4. Restricted verb (thread-safety / untrusted-input deny-list), in DicomEdit 6 bracket form and paren form.
+check_case "restricted verb mapUID[...]" "restricted command" \
+    "$(req 'version "6.1"
+(0020,000D) := mapUID[(0020,000D)]')"
+check_case "restricted verb mapUID(...)" "restricted command" \
     "$(req 'version "6.1"
 (0010,0020) := mapUID(this)')"
 

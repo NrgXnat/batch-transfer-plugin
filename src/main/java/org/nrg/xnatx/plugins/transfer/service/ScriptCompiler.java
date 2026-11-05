@@ -144,7 +144,8 @@ public class ScriptCompiler {
 
     /**
      * Restriction violations: a missing/disallowed {@code version} declaration, or any deny-listed verb used
-     * in call form. Detection is plugin-side text scanning — the version is read from the raw script (so its
+     * in call form, either {@code verb[...]} (DicomEdit 6 function syntax) or {@code verb(...)}. Detection is
+     * plugin-side text scanning — the version is read from the raw script (so its
      * quoted value survives), and verbs are matched after stripping string literals and {@code //} comments
      * so a verb named in a comment or value does not false-trip. Empty list = no violations.
      */
@@ -164,7 +165,7 @@ public class ScriptCompiler {
 
         final String scannable = stripStringsAndComments(script);
         for (final String verb : restrictedVerbs()) {
-            if (Pattern.compile("\\b" + Pattern.quote(verb) + "\\s*\\(").matcher(scannable).find()) {
+            if (Pattern.compile("\\b" + Pattern.quote(verb) + "\\s*[\\[(]").matcher(scannable).find()) {
                 violations.add("The script uses restricted command '" + verb
                         + "'. Use hashUID for deterministic UID remapping.");
             }

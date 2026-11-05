@@ -125,23 +125,41 @@ public class ScriptCompilerTest {
     @Test
     public void restrictionRejectsEachDeniedVerb() {
         for (final String verb : new String[]{"mapUID", "mapReferencedUIDs", "lookup", "getURL", "alterPixels", "newUID"}) {
-            final String script = "version \"6.1\"\n(0010,0020) := " + verb + "(this)";
-            assertFalse("expected violation for " + verb, compiler.restrictionViolations(script).isEmpty());
+            final String bracketCall = "version \"6.1\"\n(0020,000D) := " + verb + "[(0020,000D)]";
+            assertFalse("expected violation for " + verb + "[...]",
+                    compiler.restrictionViolations(bracketCall).isEmpty());
+            final String parenCall = "version \"6.1\"\n(0010,0020) := " + verb + "(this)";
+            assertFalse("expected violation for " + verb + "(...)",
+                    compiler.restrictionViolations(parenCall).isEmpty());
         }
+    }
+
+    @Test
+    public void restrictionRejectsBracketCallWithWhitespaceOrNoArgs() {
+        assertFalse(compiler.restrictionViolations("version \"6.1\"\n(0008,0018) := newUID []").isEmpty());
+        assertFalse(compiler.restrictionViolations("version \"6.1\"\nmapReferencedUIDs[]").isEmpty());
     }
 
     @Test
     public void restrictionAllowsCleanHashUidScript() {
         assertTrue(compiler.restrictionViolations(
+                "version \"6.1\"\n(0020,000D) := hashUID[(0020,000D)]").isEmpty());
+        assertTrue(compiler.restrictionViolations(
                 "version \"6.1\"\n(0010,0020) := hashUID(this)").isEmpty());
+    }
+
+    @Test
+    public void restrictionDoesNotTripOnLongerIdentifier() {
+        assertTrue(compiler.restrictionViolations(
+                "version \"6.1\"\n(0010,0020) := lookupTable[(0010,0020)]").isEmpty());
     }
 
     @Test
     public void restrictionDoesNotTripOnVerbInCommentOrValue() {
         assertTrue("verb in a // comment must not trip", compiler.restrictionViolations(
-                "version \"6.1\"\n// do not use mapUID(x) here\n(0010,0010) := \"Y\"").isEmpty());
+                "version \"6.1\"\n// do not use mapUID[x] or mapUID(x) here\n(0010,0010) := \"Y\"").isEmpty());
         assertTrue("verb inside a quoted value must not trip", compiler.restrictionViolations(
-                "version \"6.1\"\n(0010,0010) := \"mapUID(x)\"").isEmpty());
+                "version \"6.1\"\n(0010,0010) := \"mapUID[x] mapUID(x)\"").isEmpty());
     }
 
     // ---- validateBatch ----------------------------------------------------------------------------
@@ -168,7 +186,7 @@ public class ScriptCompilerTest {
     @Test
     public void validateBatchRejectsRestrictedVerb() {
         final TransferRequest req = reimport("E1", Collections.<String, String>emptyMap());
-        expectInvalid("version \"6.1\"\n(0010,0020) := mapUID(this)", req);
+        expectInvalid("version \"6.1\"\n(0020,000D) := mapUID[(0020,000D)]", req);
     }
 
     @Test
@@ -225,7 +243,7 @@ public class ScriptCompilerTest {
     @Test
     public void validateFlagsRestrictionViolation() {
         final ScriptValidationResult r = compiler.validate(
-                "version \"6.1\"\n(0010,0020) := mapUID(this)", null);
+                "version \"6.1\"\n(0020,000D) := mapUID[(0020,000D)]", null);
         assertFalse(r.isValid());
         assertFalse(r.getRestrictionViolations().isEmpty());
     }
