@@ -14,6 +14,10 @@ Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Features are the same as 1
 - **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1 (6.8 and 6.9 were never script versions). An install that still has the previous default `^6\.[0-7]$` stored is updated at startup; a pattern an admin changed is kept.
 - **Build** — Gradle 9.4.1, Mockito 5, Lombok from the XNAT BOM.
 
+### Fixed
+
+- **Scripts with syntax errors are rejected** — *Validate* and submit now reject a custom script that DicomEdit can't parse, and report DicomEdit's line, column and reason (for example `Failed to parse at 2:14 due to extraneous input '='`). Before, DicomEdit only logged the parse error, so a malformed script passed validation and was submitted.
+
 ### XNAT 1.10 behavior that affects transfers
 
 These come from XNAT 1.10 itself, not from the plugin.
