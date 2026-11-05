@@ -21,7 +21,7 @@ These come from XNAT 1.10 itself, not from the plugin.
 - **Series import filters no longer apply to Reimport.** XNAT 1.10 removed them, so a destination that relied on a filter (for example, to drop secondary captures) now receives every series. Use the DicomEdit `reject` command in the destination's anonymization script or in a custom script instead.
 - **PET/MR sessions are no longer split.** A reimported PET/MR session arrives as one session.
 - **Reimported files keep their transfer syntax.** XNAT 1.10 no longer decompresses DICOM at ingest.
-- **Direct Archive append can change Clone copies.** Clone hard-links files, so the source and the clone share them. If a site enables `enableDirectArchiveAppend` and an overwrite mode, a direct-archive upload whose SOP instances match existing files rewrites them in place. The new content then appears in every project that shares those files, without passing through those projects' anonymization. Leave Direct Archive append off on sites that use Clone.
+- **Don't enable Direct Archive append on sites that use Clone.** Clone hard-links files, so the source and the clone share them. Direct Archive append (`enableDirectArchiveAppend`, off by default) can rewrite those shared files in place, which changes every project that links to them. XNAT is deprecating Direct Archive, so the plugin does not work around it.
 - **Activity tab state now lives in browser storage.** Transfers still running during the upgrade drop out of the tab; let them finish first.
 
 ## [1.2.0]
