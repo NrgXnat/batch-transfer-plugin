@@ -13,6 +13,7 @@ Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Features are the same as 1
 - **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. Use 1.2.0 on XNAT 1.9.
 - **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1 (6.8 and 6.9 were never script versions). An install that still has the previous default `^6\.[0-7]$` stored is updated at startup; a pattern an admin changed is kept.
 - **Build** — Gradle 9.4.1, Mockito 5, Lombok from the XNAT BOM.
+- **Plugin jar no longer bundles `commons-csv`** — XNAT already ships it (as a dependency of xdat core), so the build produces one plain `batch-transfer-<version>.jar` again, with no fat or `-thin` variant.
 
 ### Fixed
 
