@@ -10,7 +10,6 @@ plugins {
     id "java"
     id "maven-publish"
     id "io.spring.dependency-management" version "1.1.7"
-    id "io.freefair.lombok" version "8.6"
     id "net.linguica.maven-settings" version "0.5"
 }
 
@@ -52,6 +51,10 @@ dependencies {
     implementation platform("org.nrg:parent:${vXnat}")
 
     annotationProcessor "org.nrg:framework"
+    compileOnly "org.projectlombok:lombok"
+    annotationProcessor "org.projectlombok:lombok"
+    testCompileOnly "org.projectlombok:lombok"
+    testAnnotationProcessor "org.projectlombok:lombok"
     implementation "org.nrg.xnat:web"
     implementation "org.nrg.xdat:core"
     implementation "org.nrg:dicom-xnat-util"
