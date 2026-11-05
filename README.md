@@ -2,8 +2,6 @@
 
 Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimport** subjects, sessions, and assessors in a single batch from one screen.
 
-> Share and Clone operations directly replace those in the deprecated *Batch Share Plugin*. 
-
 | Plugin Version                  | Target XNAT | JDK |
 |---------------------------------|---|---|
 | `2.0.0` | 1.10.2.1 | 21 |
@@ -52,7 +50,7 @@ Output: `build/libs/batch-transfer-<version>.jar`. Its dependencies, including `
 
 ## Install
 
-Drop the jar into your XNAT instance's plugins directory (e.g. `${xnat.home}/plugins/`) and restart the XNAT server. If you previously ran the *Batch Share Plugin*, remove the old `batch-share-*.jar` first — XNAT will otherwise try to load both.
+Drop the jar into your XNAT instance's plugins directory (e.g. `${xnat.home}/plugins/`) and restart the XNAT server. Remove any older `batch-transfer-*.jar` first; XNAT would otherwise try to load both.
 
 
 ## License

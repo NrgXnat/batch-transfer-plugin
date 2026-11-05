@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the **Batch Transfer Plugin** (formerly *Batch Share Plugin*) will be documented in this file.
+All notable changes to the **Batch Transfer Plugin** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -75,7 +75,7 @@ Multi-node correctness fixes for deployments using a **shared external JMS broke
 
 ## [1.0.1]
 
-A performance and hardening release on top of the 1.0.0 rebrand: Reimport and Clone now run in parallel through JMS queues, mixed-operation batches route correctly, the listing query is parameterized, and workflow history is consistent across all three operations. The `/xapi/transfer` request format and the Java packages are unchanged from 1.0.0.
+A performance and hardening release: Reimport and Clone now run in parallel through JMS queues, mixed-operation batches route correctly, the listing query is parameterized, and workflow history is consistent across all three operations. The `/xapi/transfer` request format and the Java packages are unchanged from 1.0.0.
 
 ### Performance
 
@@ -182,9 +182,3 @@ The package was moved from `org.nrg.xnatx.plugins.batchshare` to `org.nrg.xnatx.
 2. Drop in `batch-transfer-1.0.0-SNAPSHOT.jar`.
 3. Restart XNAT.
 4. Update any external REST clients to POST `{ mode: … }` to `/xapi/transfer`.
-
----
-
-## Earlier history (pre-rebrand)
-
-The plugin previously developed under the name *Batch Share Plugin* on a `2.x` line through `2.0.0-SNAPSHOT`. See git history for commits prior to the 1.0.0 release.
