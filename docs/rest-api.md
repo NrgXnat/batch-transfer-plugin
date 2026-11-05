@@ -312,7 +312,7 @@ Rows that don't resolve are skipped and counted in `skipped_not_found`.
 These apply to `/validate/script`, to `script_binding` in `/validate/manifest`, and at submit.
 
 - **Version.** The script must declare `version "x.y"` matching the admin setting *allowed DicomEdit version
-  pattern* (default `^6\.[0-7]$`).
+  pattern* (default `^6\.([0-7]|10)$`: DicomEdit 6.0 to 6.7 and 6.10).
 - **Restricted commands.** Commands that are unsafe when sessions are reimported in parallel are rejected.
   Default list: `mapUID`, `mapReferencedUIDs`, `lookup`, `getURL`, `alterPixels`, `newUID`. Use `hashUID`
   for deterministic UID remapping. Commands named inside string literals or `//` comments are ignored.

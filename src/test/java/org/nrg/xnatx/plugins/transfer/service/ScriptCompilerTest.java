@@ -123,6 +123,16 @@ public class ScriptCompilerTest {
     }
 
     @Test
+    public void defaultVersionPatternMatchesDicomEdit610ScriptVersions() {
+        for (final String allowed : new String[]{"6.0", "6.7", "6.10"}) {
+            assertTrue(allowed, compiler.restrictionViolations("version \"" + allowed + "\"\n(0010,0010) := \"X\"").isEmpty());
+        }
+        for (final String rejected : new String[]{"6.8", "6.9", "6.11", "6.100", "7.0"}) {
+            assertFalse(rejected, compiler.restrictionViolations("version \"" + rejected + "\"\n(0010,0010) := \"X\"").isEmpty());
+        }
+    }
+
+    @Test
     public void restrictionRejectsEachDeniedVerb() {
         for (final String verb : new String[]{"mapUID", "mapReferencedUIDs", "lookup", "getURL", "alterPixels", "newUID"}) {
             final String bracketCall = "version \"6.1\"\n(0020,000D) := " + verb + "[(0020,000D)]";

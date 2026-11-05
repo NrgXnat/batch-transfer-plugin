@@ -42,7 +42,11 @@ public class BatchTransferPrefsBean extends EventTriggeringAbstractPreferenceBea
     public static final String MAX_ANON_SCRIPT_BYTES_DFLT       = "262144";              // 256 KB
     public static final String ANON_VALUE_CHARSET_DFLT          = "A-Za-z0-9 ^_.-";      // a regex char-class body
     public static final String RESTRICTED_ANON_VERBS_DFLT       = "mapUID,mapReferencedUIDs,lookup,getURL,alterPixels,newUID";
-    public static final String ALLOWED_ANON_VERSION_PATTERN_DFLT = "^6\\.[0-7]$";
+    // Script versions DicomEdit 6.10.0 (XNAT 1.10.2.1) accepts: 6.0-6.7, then 6.10. 6.8 and 6.9 were library
+    // releases only, never script versions.
+    public static final String ALLOWED_ANON_VERSION_PATTERN_DFLT = "^6\\.([0-7]|10)$";
+    // The default for XNAT 1.9; postProcessPreferences upgrades a stored copy of it.
+    static final String        LEGACY_ALLOWED_ANON_VERSION_PATTERN = "^6\\.[0-7]$";
 
     // Manifest preflight limit. The ManifestService and TransferCapabilitiesService read this one source of
     // truth; the synchronous preflight rejects a manifest with more data rows than this.
@@ -65,6 +69,24 @@ public class BatchTransferPrefsBean extends EventTriggeringAbstractPreferenceBea
                                        final ConfigPaths configPaths,
                                        final OrderedProperties initPrefs) {
         super(preferenceService, eventService, configPaths, initPrefs);
+    }
+
+    /**
+     * Preference defaults are stored on first start, so a changed default doesn't reach an existing install on
+     * its own. Replaces a stored version pattern that still equals the previous default; any other value is kept.
+     */
+    @Override
+    protected void postProcessPreferences() {
+        if (!LEGACY_ALLOWED_ANON_VERSION_PATTERN.equals(getAllowedAnonVersionPattern())) {
+            return;
+        }
+        try {
+            setAllowedAnonVersionPattern(ALLOWED_ANON_VERSION_PATTERN_DFLT);
+            log.info("Updated {} from the previous default {} to {}", ALLOWED_ANON_VERSION_PATTERN,
+                    LEGACY_ALLOWED_ANON_VERSION_PATTERN, ALLOWED_ANON_VERSION_PATTERN_DFLT);
+        } catch (InvalidPreferenceName e) {
+            log.error("Could not update {} to {}", ALLOWED_ANON_VERSION_PATTERN, ALLOWED_ANON_VERSION_PATTERN_DFLT, e);
+        }
     }
 
     @NrgPreference(defaultValue = REIMPORT_CONCURRENCY_MIN_DFLT)
@@ -140,7 +162,7 @@ public class BatchTransferPrefsBean extends EventTriggeringAbstractPreferenceBea
         set(value, RESTRICTED_ANON_VERBS);
     }
 
-    /** Regex a custom {@code anon_script}'s declared {@code version "x.y"} must match (default DicomEdit 6.0–6.7). */
+    /** Regex a custom {@code anon_script}'s declared {@code version "x.y"} must match (default DicomEdit 6.0–6.7 and 6.10). */
     @NrgPreference(defaultValue = ALLOWED_ANON_VERSION_PATTERN_DFLT)
     public String getAllowedAnonVersionPattern() {
         return getValue(ALLOWED_ANON_VERSION_PATTERN);
