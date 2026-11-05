@@ -6,6 +6,7 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 
 | Plugin Version                  | Target XNAT | JDK |
 |---------------------------------|---|---|
+| `2.0.0` | 1.10.2.1 | 21 |
 | `1.2.0` | 1.9.3.3 (custom anonymization script: 1.9.3.7+) | 8 |
 | `1.1.1` | 1.9.3.3 | 8 |
 
@@ -22,7 +23,7 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 ### Cohort and anonymization options
 
 - **CSV manifest** — select sessions by uploading a CSV (`source_subject_label`, `source_session_label`) instead of ticking rows. For Reimport, other columns can set destination labels (`destination_subject_label`, `destination_session_label`) or feed `${csv.<column>}` placeholders in the script.
-- **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the destination project's anonymization (the REST API can also make it replace that anonymization). Requires XNAT 1.9.3.7 or later; on older builds the option is hidden. Requires edit access on the destination project.
+- **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the destination project's anonymization (the REST API can also make it replace that anonymization). Needs the importer's `Anon-Script` parameter (XNAT 1.10.1 and later, or 1.9.3.7 and later on the 1.9 line); on builds without it the option is hidden. Requires edit access on the destination project.
 
 REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
@@ -37,7 +38,7 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 ## Build & test
 
-Build and test with JDK 8 (Gradle wrapper 7.6.4).
+Build and test with JDK 21 (Gradle wrapper 9.4.1). The plugin targets XNAT 1.10.2.1; for XNAT 1.9, use a 1.x release.
 
 ```bash
 ./gradlew build    # compile + tests + deployable jar

@@ -4,6 +4,26 @@ All notable changes to the **Batch Transfer Plugin** (formerly *Batch Share Plug
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0]
+
+Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Features are the same as 1.2.0.
+
+### Changed
+
+- **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. Use 1.2.0 on XNAT 1.9.
+- **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1 (6.8 and 6.9 were never script versions). An install that still has the previous default `^6\.[0-7]$` stored is updated at startup; a pattern an admin changed is kept.
+- **Build** — Gradle 9.4.1, Mockito 5, Lombok from the XNAT BOM.
+
+### XNAT 1.10 behavior that affects transfers
+
+These come from XNAT 1.10 itself, not from the plugin.
+
+- **Series import filters no longer apply to Reimport.** XNAT 1.10 removed them, so a destination that relied on a filter (for example, to drop secondary captures) now receives every series. Use the DicomEdit `reject` command in the destination's anonymization script or in a custom script instead.
+- **PET/MR sessions are no longer split.** A reimported PET/MR session arrives as one session.
+- **Reimported files keep their transfer syntax.** XNAT 1.10 no longer decompresses DICOM at ingest.
+- **Direct Archive append can change Clone copies.** Clone hard-links files, so the source and the clone share them. If a site enables `enableDirectArchiveAppend` and an overwrite mode, a direct-archive upload whose SOP instances match existing files rewrites them in place. The new content then appears in every project that shares those files, without passing through those projects' anonymization. Leave Direct Archive append off on sites that use Clone.
+- **Activity tab state now lives in browser storage.** Transfers still running during the upgrade drop out of the tab; let them finish first.
+
 ## [1.2.0]
 
 Custom per-session anonymization for **Reimport**, CSV manifests as an alternative way to pick a cohort, and explicit destination labels. Everything except the custom script runs on XNAT 1.9.3.3; the custom script needs **XNAT 1.9.3.7 or later**, which adds the importer's `Anon-Script` parameter (XNAT-8777). The plugin detects that parameter at runtime and hides the custom-script controls on older builds.

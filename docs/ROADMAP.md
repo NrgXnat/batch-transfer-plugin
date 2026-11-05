@@ -1,8 +1,8 @@
 # Batch Transfer Plugin — Roadmap
 
-**Plugin Version**: 1.2.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
-**Target XNAT**: 1.9.3.3
-**Last Updated**: 2026-11-04
+**Plugin Version**: 2.0.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
+**Target XNAT**: 1.10.2.1 (JDK 21)
+**Last Updated**: 2026-11-05
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
