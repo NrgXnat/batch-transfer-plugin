@@ -13,7 +13,7 @@ import java.util.Map;
 /**
  * One resolved manifest row. Parsing fills {@code index}, the source labels, {@code csvValues}, and the
  * per-cell {@code valueErrors}/{@code valueWarnings}; the preflight resolver then sets {@code status} and, for
- * a match, {@code resolvedId}, or for {@code session_not_found}, {@code availableSessions}.
+ * a match, {@code resolvedId}.
  */
 @Data
 @NoArgsConstructor
@@ -45,8 +45,6 @@ public class ManifestRow {
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private Integer fileCount;
-    /** The subject's session labels when {@code status == session_not_found}; otherwise null. */
-    private List<String> availableSessions;
 
     /** The row's value-column cells (non-required, non-reserved), keyed by column name. */
     private Map<String, String> csvValues;

@@ -15,13 +15,13 @@ var XNAT = getObject(XNAT || {});
     var selectedOp = 'Share';
     var lastOp = 'Share';          // previous operation, to detect leaving Reimport
     var selectedProject = null;
-    var selectedAnon = null;
     var config = {};
     var submitInFlight = false;
     var cohortMode = 'tree';       // 'tree' (interactive) | 'csv' (manifest upload)
     var caps = null;               // GET /capabilities (per-import anon support + limits)
     var anonMode = 'none';         // 'none' (destination only) | 'script' (custom Anon-Script), Reimport only
     var anonVerdictValid = null;   // last /validate/script: true/false, or null (not validated / n/a)
+    var anonValidateSeq = 0;       // /validate/script request counter, so a stale response can't win
 
     // Row index, built once after load (rows are static - only classes/visibility change).
     // Replaces per-row `$('#bt-data-body tr[data-id=...]')` scans that made tree walks O(n2).
@@ -50,7 +50,6 @@ var XNAT = getObject(XNAT || {});
         if (config.presetDestination) {
             selectedProject = config.presetDestination;
             XNAT.plugin.batchtransfer.checkProjectAnon(selectedProject, function(anonEnabled) {
-                selectedAnon = anonEnabled;
                 projectAnonCache[selectedProject] = anonEnabled;
                 updateAnonBanner();
                 updateSummary();
@@ -64,8 +63,10 @@ var XNAT = getObject(XNAT || {});
         bindProjectSelect();
         bindTableInteractions();
         bindCohortToggle();
+        configureCohortModes();
         bindCsvUpload();
         bindAnonBand();
+        bindViewportSync();
         fetchCapabilities();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
@@ -200,11 +201,20 @@ var XNAT = getObject(XNAT || {});
         return '<div class="bt-anon-banner ' + cls + '"><span class="bt-anon-icon">' + ic + '</span><div>' + text + '</div></div>';
     }
 
+    // The single rule for whether this build accepts a per-import Anon-Script. An unread or failed
+    // capabilities probe counts as supported, so the editor is offered AND anything the user can see
+    // and validate in it is submitted. The server's 409 is what rejects a build that genuinely lacks
+    // the param; deciding otherwise here would drop the script and reimport with no anonymization
+    // while the screen still showed a valid script.
+    function perImportAnonSupported() {
+        return !(caps && caps.per_import_anon === false);
+    }
+
     // A custom Anon-Script is "present" only for Reimport on a supporting build, in script mode, with
     // non-blank text. Drives the double-anon vs not-anonymized banner branches.
     function hasCustomScript() {
         return selectedOp === 'Reimport'
-            && !!(caps && caps.per_import_anon)
+            && perImportAnonSupported()
             && anonMode === 'script'
             && ($('#bt-anon-script').val() || '').trim().length > 0;
     }
@@ -218,15 +228,58 @@ var XNAT = getObject(XNAT || {});
         $('#bt-reimport-label-option').toggle(selectedOp === 'Reimport');
         // The script editor lives in the workspace (not inside the anon band), so hide it explicitly
         // when leaving Reimport or when the build lacks per-import anon.
-        var supported = !(caps && caps.per_import_anon === false);
-        $('#bt-anon-editor').toggle(selectedOp === 'Reimport' && anonMode === 'script' && supported);
+        $('#bt-anon-editor').toggle(selectedOp === 'Reimport' && anonMode === 'script' && perImportAnonSupported());
+        // Eligibility warnings are per operation - each explains why rows are hidden for that
+        // operation only, so a stale one must not linger after the operation changes.
+        $('#bt-share-warning').toggle(selectedOp === 'Share');
+        $('#bt-copy-warning').toggle(selectedOp === 'Clone');
+    }
+
+    // Re-pin the rail whenever the viewport, the rail or the action bar changes height: rail sections
+    // show and hide per operation, and the bar's summary chips wrap. Resize re-pins only; it never
+    // re-renders the cohort table.
+    function bindViewportSync() {
+        var timer;
+        $(window).on('resize.bttransfer', function() {
+            clearTimeout(timer);
+            timer = setTimeout(syncRailSticky, 150);
+        });
+        if (window.ResizeObserver) {
+            var ro = new ResizeObserver(syncRailSticky);
+            ['.bt-rail', '.bt-action-bar'].forEach(function(sel) {
+                var el = document.querySelector(sel);
+                if (el) { ro.observe(el); }
+            });
+        }
+        syncRailSticky();
+    }
+
+    // The rail sticks at top: 0 while it fits above the pinned action bar. Taller than that, a negative
+    // top makes it stick by its bottom edge instead: it scrolls only until its lowest controls clear the
+    // bar, so they stay reachable without the whole rail scrolling away.
+    function syncRailSticky() {
+        var rail = document.querySelector('.bt-rail');
+        if (!rail) { return; }
+        var bar = document.querySelector('.bt-action-bar');
+        var room = window.innerHeight - (bar ? bar.offsetHeight : 56);
+        rail.style.top = Math.min(0, room - rail.offsetHeight) + 'px';
     }
 
     // -- Cohort mode (interactive tree | CSV manifest) --
-    // Interactive is the working path; CSV upload is wired in a later build step, so selecting it
-    // shows the placeholder and blocks submit until it is implemented.
+    // Swaps the workspace between the interactive selection tree and the manifest dropzone; the
+    // loaded-manifest state itself is rendered by renderCsvResults.
+    // Resolving a manifest needs a source project, which the search-results entry point does not have.
+    // Disable the mode up front rather than letting the user pick a file and only then be told.
+    function configureCohortModes() {
+        if (csvSourceProject()) { return; }
+        $('.bt-cohort-mode[data-cohort="csv"]')
+            .prop('disabled', true)
+            .attr('title', 'Open Batch Transfer from a project to upload a manifest.');
+    }
+
     function bindCohortToggle() {
         $(document).on('click', '.bt-cohort-mode', function() {
+            if (this.disabled) { return; }
             cohortMode = $(this).data('cohort');
             $('.bt-cohort-mode').removeClass('selected');
             $(this).addClass('selected');
@@ -234,7 +287,6 @@ var XNAT = getObject(XNAT || {});
             $('#bt-cohort-tree').toggle(tree);
             $('#bt-cohort-csv').toggle(!tree);
             if (!tree) { refreshCsvRequiredHint(); }
-            updateCohortStatus();
             updateSummary();
         });
     }
@@ -257,7 +309,7 @@ var XNAT = getObject(XNAT || {});
     // Collapse the control to a notice when the build lacks the Anon-Script param; otherwise show it.
     // (caps null = not yet loaded: assume supported, corrected on load.)
     function configureAnonSupport() {
-        var supported = !(caps && caps.per_import_anon === false);
+        var supported = perImportAnonSupported();
         $('#bt-anon-seg').toggle(supported);
         $('#bt-anon-unsupported').toggle(!supported);
         if (!supported) {
@@ -265,7 +317,6 @@ var XNAT = getObject(XNAT || {});
             anonVerdictValid = null;
             $('#bt-anon-editor').hide();
         }
-        updateAnonStatus();
     }
 
     function bindAnonBand() {
@@ -276,14 +327,12 @@ var XNAT = getObject(XNAT || {});
             $('#bt-anon-editor').toggle(anonMode === 'script');
             if (anonMode !== 'script') { anonVerdictValid = null; $('#bt-anon-verdict').empty(); }
             else { validateAnonScript(false); }
-            updateAnonStatus();
             updateAnonBanner();
             updateSummary();
         });
         $(document).on('click', '#bt-anon-validate', function() { validateAnonScript(true); });
         var t = null;
         $(document).on('input', '#bt-anon-script', function() {
-            updateAnonStatus();
             clearTimeout(t);
             t = setTimeout(function() { validateAnonScript(false); updateAnonBanner(); updateSummary(); }, 400);
         });
@@ -292,21 +341,6 @@ var XNAT = getObject(XNAT || {});
         $(document).on('change', '#bt-preserve-subject-label, #bt-preserve-session-label', function() {
             updateSummary();
         });
-    }
-
-    function updateAnonStatus() {
-        var el = $('#bt-anon-status');
-        if (!el.length) return;
-        if (caps && caps.per_import_anon === false) {
-            el.html('<span class="bt-muted">per-import anonymization unavailable on this build</span>');
-        } else if (anonMode === 'script') {
-            var hasText = ($('#bt-anon-script').val() || '').trim().length > 0;
-            el.html(hasText
-                ? '<span class="bt-csv-ok">custom script will be applied</span>'
-                : '<span class="bt-muted">enter a custom script below</span>');
-        } else {
-            el.html('<span class="bt-muted">destination anonymization only</span>');
-        }
     }
 
     // The ${csv.*}-bindable columns for /validate/script: value + routing columns from the manifest
@@ -325,13 +359,22 @@ var XNAT = getObject(XNAT || {});
         var cols = anonManifestColumns();
         if (cols) { body.manifest_columns = cols; }
         if (showLoading) { $('#bt-anon-verdict').html('<div class="bt-verdict-line bt-muted">Validating...</div>'); }
+        // Responses can land out of order, so only the newest request may write the verdict - otherwise a
+        // slow verdict for an older draft can overwrite the current one and gate submit on stale text.
+        var seq = ++anonValidateSeq;
         $.ajax({
             type: 'POST',
             url: XNAT.url.rootUrl('/xapi/transfer/validate/script'),
             contentType: 'application/json',
             data: JSON.stringify(body),
-            success: function(v) { anonVerdictValid = !!v.valid; renderAnonVerdict(v); updateSummary(); },
+            success: function(v) {
+                if (seq !== anonValidateSeq) { return; }
+                anonVerdictValid = !!v.valid;
+                renderAnonVerdict(v);
+                updateSummary();
+            },
             error: function(xhr) {
+                if (seq !== anonValidateSeq) { return; }
                 anonVerdictValid = false;
                 $('#bt-anon-verdict').html('<div class="bt-verdict-line bt-verdict-bad">Validation request failed (' + xhr.status + ').</div>');
                 updateSummary();
@@ -498,11 +541,12 @@ var XNAT = getObject(XNAT || {});
                 // Re-query the destination's anon status on every selection so the banner is
                 // fresh, rather than reflecting whatever was cached when the page loaded.
                 XNAT.plugin.batchtransfer.checkProjectAnon(selectedProject, function(anonEnabled) {
-                    selectedAnon = anonEnabled;
+                    // The action-bar anon chips read the same status as the banner, so both have to be
+                    // re-rendered once it arrives - the updateSummary() below runs before this resolves.
                     updateAnonBanner();
+                    updateSummary();
                 }, true);
             } else {
-                selectedAnon = null;
                 updateAnonBanner();
             }
             updateSummary();
@@ -783,19 +827,27 @@ var XNAT = getObject(XNAT || {});
 
     // Module cache of the last interactive-tree counts, so the action bar renders without re-walking
     // the table (updateSummary already made one O(n) pass).
-    var lastTreeCount = { subjects: 0, sessions: 0, assessors: 0, selectedCount: 0 };
+    var lastTreeCount = { subjects: 0, sessions: 0, assessors: 0, selectedCount: 0, eligible: 0 };
 
     function updateSummary() {
-        if (cohortMode === 'csv') { renderActionSummary(); return; }
+        if (cohortMode === 'csv') { renderBuilderState(); renderActionSummary(); return; }
 
-        var subjects = 0, sessions = 0, assessors = 0, selectedCount = 0, eligibleCount = 0;
+        var subjects = 0, sessions = 0, assessors = 0, selectedCount = 0, eligible = 0;
+        var visibleEligible = 0, visibleSelected = 0;
         var rows = document.querySelectorAll('#bt-data-body tr');
         for (var i = 0; i < rows.length; i++) {
             var el = rows[i];
             if (el.classList.contains('bt-import-disabled')) continue;
-            eligibleCount++;
+            // Eligible for the chosen operation, whether or not the filter is currently hiding it -
+            // it describes the cohort's scope, so it must not drop as the user types in the filter.
+            eligible++;
+            // Every hide on this table is an inline display write (filter, expand/collapse), so this
+            // reads visibility without forcing a reflow the way :visible would.
+            var visible = el.style.display !== 'none';
+            if (visible) visibleEligible++;
             if (!el.classList.contains('selected')) continue;
             selectedCount++;
+            if (visible) visibleSelected++;
             var type = el.getAttribute('data-type') || '';
             if (type === 'subject') {
                 subjects++;
@@ -805,27 +857,41 @@ var XNAT = getObject(XNAT || {});
             }
         }
 
+        // The count is over every selected row (matching what submit sends, filtered-out rows included),
+        // but the link must describe what clicking it does - and toggleSelectAll acts on visible rows
+        // only. Measuring the label on the same set keeps it from reading "Select all" while deselecting.
         $('#bt-sel-count').text(selectedCount);
-        $('.bt-select-all-link').text(eligibleCount > 0 && selectedCount === eligibleCount ? 'Deselect all' : 'Select all');
-        lastTreeCount = { subjects: subjects, sessions: sessions, assessors: assessors, selectedCount: selectedCount };
+        $('.bt-select-all-link').text(visibleEligible > 0 && visibleSelected === visibleEligible ? 'Deselect all' : 'Select all');
+        lastTreeCount = { subjects: subjects, sessions: sessions, assessors: assessors,
+                          selectedCount: selectedCount, eligible: eligible };
+        renderBuilderState();
         renderActionSummary();
     }
 
-    // Used only by the submit confirmation (infrequent) for its "N subjects, M sessions" text.
-    function getSelectionCounts() {
-        var subjects = 0, sessions = 0, assessors = 0;
-        var rows = document.querySelectorAll('#bt-data-body tr');
-        for (var i = 0; i < rows.length; i++) {
-            var el = rows[i];
-            if (el.classList.contains('bt-import-disabled') || !el.classList.contains('selected')) continue;
-            var type = el.getAttribute('data-type') || '';
-            if (type === 'subject') subjects++;
-            else if (type === 'assessor') {
-                if (el.getAttribute('data-reimportable') === 'true') sessions++;
-                else assessors++;
-            }
-        }
-        return { subjects: subjects, sessions: sessions, assessors: assessors };
+    // -- Cohort builder panel header --
+    // Reports which cohort mode is active and one line of state for it. The mode is switched from the
+    // rail, so the pill is the panel's own statement of what it is currently building from.
+
+    function renderBuilderState() {
+        var el = document.getElementById('bt-builder-mode');
+        if (!el) return;
+        var pill = '<span class="bt-mode-pill">' + (cohortMode === 'csv' ? 'Manifest CSV' : 'Interactive') + '</span>';
+        el.innerHTML = pill + '<span>' + (cohortMode === 'csv' ? csvBuilderState() : treeBuilderState()) + '</span>';
+    }
+
+    // Eligibility is per operation, so the noun follows it: Reimport counts only image sessions
+    // (subjects are ineligible), everything else counts items.
+    function treeBuilderState() {
+        var n = lastTreeCount.eligible;
+        var noun = selectedOp === 'Reimport' ? 'session' : 'item';
+        return n + ' eligible ' + noun + (n === 1 ? '' : 's');
+    }
+
+    function csvBuilderState() {
+        if (!manifestResult) { return 'no file uploaded'; }
+        if (!manifestResult.required_present) { return 'missing required columns'; }
+        var n = (manifestResult.rows || []).length;
+        return n + ' row' + (n === 1 ? '' : 's') + ' resolved';
     }
 
     function formatItemList(counts) {
@@ -881,7 +947,9 @@ var XNAT = getObject(XNAT || {});
             var anonInEffect = anon === true || script;
             var preserved = preservedLabels();
             if (anonInEffect && preserved.length) {
-                out += chip('warn', '&#9888; preserved ' + preserved.join(' + ') + ' label'
+                // Kept short: this is the longest chip, and the action bar is a single row. The
+                // reason behind it is spelled out in the rail's label help.
+                out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
                     + (preserved.length > 1 ? 's' : '') + ' not anonymized');
             }
             return out + chip('caution', '&#9888; duplicates storage');
@@ -921,14 +989,18 @@ var XNAT = getObject(XNAT || {});
         var info = actionCountInfo();
         var src = config.projectContext || 'source';
         var dest = selectedProject || '-';
+        var reasons = submitBlockReasons();
+        // The blocked reason is rendered INSIDE the summary so it flows inline with the status chips
+        // in the same wrapping row. As a separate flex sibling it always took a line of its own,
+        // making the sticky bar a row taller than it needed to be.
+        var note = reasons.length
+            ? '<span class="bt-submit-note">Blocked: ' + escapeHtml(reasons.join('; ')) + '</span>'
+            : '';
         $('#bt-action-summary').html(
             '<span><strong>' + selectedOp + ' ' + info.count + ' ' + info.noun + '</strong> &middot; ' +
-            escapeHtml(src) + ' &#10142; ' + escapeHtml(dest) + '</span>' + anonChipsHtml());
+            escapeHtml(src) + ' &#10142; ' + escapeHtml(dest) + '</span>' + anonChipsHtml() + note);
         $('#bt-submit-btn').text(selectedOp + ' ' + info.count + ' ' + info.noun);
-
-        var reasons = submitBlockReasons();
         $('#bt-submit-btn').prop('disabled', submitInFlight || reasons.length > 0);
-        $('#bt-submit-note').text(reasons.length ? 'Blocked: ' + reasons.join('; ') : '');
     }
 
     // -- Cohort: CSV manifest mode --
@@ -941,6 +1013,38 @@ var XNAT = getObject(XNAT || {});
     var manifestFileName = '';      // uploaded file name (status + confirmation)
     var manifestExpanded = {};      // row index -> expanded?
     var manifestFileCounts = {};    // row index -> reimportable DICOM count (lazy, Reimport only)
+    var manifestFileCountErr = {};  // row index -> the count request failed (so the row stops saying "counting")
+
+    // -- Manifest pagination --------------------------------------------------------------------------
+    // Offset-based pager: prev/next around a "start-end of total" range, plus one "Show all". Slicing is
+    // by manifest-row index, so renderMatchedRow's expand/file-count state (keyed by row.index) lines up
+    // with whatever page is on screen.
+    // Only the manifest table pages; the interactive tree renders every row (its selection state lives in
+    // the DOM, so rows can't be sliced out of it).
+    // The page size is FIXED. Sizing it to the visible area only mattered while the workspace was a
+    // bounded scroll box; the page is the only scroller now, so a page taller than the viewport simply
+    // scrolls. Measuring instead produced 4 rows in the ordinary Reimport case, where an About panel plus
+    // the script editor leave ~119px above the action bar - far too few to review a cohort. Nothing here
+    // reacts to window size any more.
+    var MANIFEST_PAGE_SIZE = 25;
+    var manifestStart = 0;             // index of the first row on the current page
+    var manifestPageStack = [];        // start indices of prior pages, for Prev
+    var manifestShowAll = false;       // "Show all" -> render every row (the page scrolls)
+
+    function manifestTotal() { return (manifestResult && manifestResult.rows) ? manifestResult.rows.length : 0; }
+
+    function manifestPagerHtml(start, end, total) {
+        // No pager when a single paginated page already shows everything.
+        if (!manifestShowAll && start === 0 && end >= total) { return ''; }
+        var prevDis = manifestShowAll || manifestPageStack.length === 0;
+        var nextDis = manifestShowAll || end >= total;
+        return '<div class="bt-pager"><span class="bt-pager-nav">' +
+               '<button type="button" class="bt-pager-arrow" id="bt-page-prev"' + (prevDis ? ' disabled' : '') + '>&#8249;</button>' +
+               '<span class="bt-pager-range">' + (total ? start + 1 : 0) + '-' + end + ' of ' + total + '</span>' +
+               '<button type="button" class="bt-pager-arrow" id="bt-page-next"' + (nextDis ? ' disabled' : '') + '>&#8250;</button>' +
+               '</span><span class="bt-pager-spacer"></span>' +
+               '<a class="bt-pager-showall" id="bt-page-showall">' + (manifestShowAll ? 'Paginate' : 'Show all') + '</a></div>';
+    }
 
     function csvSourceProject() { return config.projectContext || null; }
 
@@ -961,6 +1065,22 @@ var XNAT = getObject(XNAT || {});
         $(document).on('click', '.bt-csv-caret, .bt-files-lazy', function() {
             toggleManifestRow(parseInt($(this).attr('data-row'), 10));
         });
+        // Simple pager: prev/next walk the page by row offset; Show all toggles pagination off (scrolls).
+        $(document).on('click', '#bt-page-prev', function() {
+            if (this.disabled || !manifestPageStack.length) return;
+            manifestStart = manifestPageStack.pop();
+            renderCsvResults();
+        });
+        $(document).on('click', '#bt-page-next', function() {
+            if (this.disabled || manifestStart + MANIFEST_PAGE_SIZE >= manifestTotal()) return;
+            manifestPageStack.push(manifestStart);
+            manifestStart += MANIFEST_PAGE_SIZE;
+            renderCsvResults();
+        });
+        $(document).on('click', '#bt-page-showall', function() {
+            manifestShowAll = !manifestShowAll; manifestStart = 0; manifestPageStack = [];
+            renderCsvResults();
+        });
     }
 
     function refreshCsvRequiredHint() {
@@ -972,11 +1092,12 @@ var XNAT = getObject(XNAT || {});
     }
 
     function resetManifest() {
-        manifestResult = null; manifestFileName = ''; manifestExpanded = {}; manifestFileCounts = {};
+        manifestResult = null; manifestFileName = ''; manifestExpanded = {};
+        manifestFileCounts = {}; manifestFileCountErr = {};
+        manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
         $('#bt-csv-file').val('');
         $('#bt-csv-results').empty();
         $('#bt-dropzone').show();
-        updateCohortStatus();
         updateSummary();
     }
 
@@ -1000,10 +1121,10 @@ var XNAT = getObject(XNAT || {});
             contentType: false,
             success: function(data) {
                 manifestResult = data;
-                manifestExpanded = {}; manifestFileCounts = {};
+                manifestExpanded = {}; manifestFileCounts = {}; manifestFileCountErr = {};
+                manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
                 $('#bt-dropzone').hide();
                 renderCsvResults();
-                updateCohortStatus();
                 // Re-check binding against the new manifest columns if a custom script is in play.
                 if (anonMode === 'script') { validateAnonScript(false); }
                 updateSummary();
@@ -1029,8 +1150,6 @@ var XNAT = getObject(XNAT || {});
             return;
         }
         var reimport = selectedOp === 'Reimport';
-        var routeCols = reimport ? (r.routing_columns || []) : [];
-        var valCols = reimport ? (r.value_columns || []) : [];
 
         var html = bar;
         // Share/Clone: routing/value columns are ignored - say so rather than drop them silently.
@@ -1045,16 +1164,29 @@ var XNAT = getObject(XNAT || {});
         html += '<div class="bt-csv-head"><span class="bt-csv-ok"><strong>' + matched + '</strong> matched</span>' +
                 '<span class="bt-csv-miss"><strong>' + notFound + '</strong> not found</span></div>';
 
+        // Fixed column set: where the session comes from, and what it becomes. Value columns are not
+        // shown as columns - a manifest can carry any number of them, they were what made the table
+        // scroll sideways, and a row's values are still on its expanded compiled-script preview (plus
+        // any bad value still reports itself on the row's own error line).
         var cols = '<th class="bt-csv-caret-col"></th><th>Source subject</th><th>Source session</th>';
-        routeCols.forEach(function(c) { cols += '<th class="bt-route-head">' + escapeHtml(c) + '</th>'; });
-        valCols.forEach(function(c) { cols += '<th class="bt-val-head">' + escapeHtml(c) + '</th>'; });
-        if (reimport) { cols += '<th>Files</th>'; }
-        var span = 3 + routeCols.length + valCols.length + (reimport ? 1 : 0);
+        if (reimport) {
+            cols += '<th class="bt-route-head">Destination subject</th>' +
+                    '<th class="bt-route-head">Destination session</th><th>Files</th>';
+        }
+        var span = 3 + (reimport ? 3 : 0);
+
+        // Render the current page: MANIFEST_PAGE_SIZE rows from manifestStart (or every row on Show all).
+        var allRows = r.rows || [];
+        var total = allRows.length;
+        var start = manifestShowAll ? 0 : Math.min(Math.max(0, manifestStart), total > 0 ? total - 1 : 0);
+        manifestStart = start;
+        var count = manifestShowAll ? total : MANIFEST_PAGE_SIZE;
+        var end = Math.min(start + count, total);
 
         var body = '';
-        (r.rows || []).forEach(function(row) {
+        allRows.slice(start, end).forEach(function(row) {
             body += (row.status === 'matched')
-                ? renderMatchedRow(row, reimport, routeCols, valCols, span)
+                ? renderMatchedRow(row, reimport, span)
                 : renderNotFoundRow(row, span);
         });
 
@@ -1062,10 +1194,11 @@ var XNAT = getObject(XNAT || {});
         // wider than the workspace once routing/value columns are present, so it needs its own x-scroll.
         html += '<div class="bt-cohort-scroll"><table class="bt-table bt-cohort-table"><thead><tr>' +
                 cols + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+        html += manifestPagerHtml(start, end, total);
         $('#bt-csv-results').html(html);
     }
 
-    function renderMatchedRow(row, reimport, routeCols, valCols, span) {
+    function renderMatchedRow(row, reimport, span) {
         var idx = row.index;
         var hasErr = reimport && (row.value_errors || []).length > 0;
         var hasWarn = reimport && (row.value_warnings || []).length > 0;
@@ -1080,22 +1213,22 @@ var XNAT = getObject(XNAT || {});
                  '<td class="bt-mono">' + escapeHtml(row.source_subject_label) + '</td>' +
                  '<td class="bt-mono">' + escapeHtml(row.source_session_label) + '</td>';
         if (reimport) {
-            routeCols.forEach(function(c) {
-                tr += '<td class="bt-mono bt-route">' + escapeHtml(csvColValue(row, c) || '') + '</td>';
-            });
-            valCols.forEach(function(c) {
-                tr += '<td class="bt-mono bt-val">' + escapeHtml(csvColValue(row, c) || '') + '</td>';
-            });
+            tr += destinationCell(row, 'subject') + destinationCell(row, 'session');
+            // Short labels on purpose: this cell's text sets the Files column width, and the dotted
+            // underline already marks it as clickable. The title carries the full explanation.
             var fc = manifestFileCounts[idx];
             tr += '<td>' + (fc != null ? fc
-                : '<span class="bt-files-lazy" data-row="' + idx + '">count on expand</span>') + '</td>';
+                : manifestFileCountErr[idx]
+                    ? '<span class="bt-muted" title="The file count could not be retrieved. Expand the row to retry.">n/a</span>'
+                    : '<span class="bt-files-lazy" data-row="' + idx + '"'
+                        + ' title="Count the reimportable DICOM files in this session">count</span>') + '</td>';
         }
         tr += '</tr>';
 
         if (manifestExpanded[idx] && reimport) {
             var fc2 = manifestFileCounts[idx];
             var detail = '<p class="bt-csv-detail-line">Reimportable DICOM files: <strong>' +
-                (fc2 != null ? fc2 : 'counting...') + '</strong></p>';
+                (fc2 != null ? fc2 : manifestFileCountErr[idx] ? 'unavailable' : 'counting...') + '</strong></p>';
             if (hasCustomScript()) {
                 detail += '<p class="bt-csv-detail-line bt-muted">Compiled DicomEdit for this session:</p>' +
                     '<pre class="bt-script-preview">' + escapeHtml(compileScriptForRow(row)) + '</pre>';
@@ -1112,24 +1245,44 @@ var XNAT = getObject(XNAT || {});
         return tr;
     }
 
+    // What the session will actually be called in the destination, by the same precedence the server
+    // applies at import: an explicit manifest destination_*_label wins, else the preserved source label,
+    // else the label is derived from DICOM tags during import and cannot be known here. Showing the
+    // resolved value (not just the manifest column) is the point of these two columns.
+    function destinationCell(row, which) {
+        var subject = which === 'subject';
+        var explicit = subject ? row.destination_subject_label : row.destination_session_label;
+        if (explicit) {
+            return '<td class="bt-mono bt-route">' + escapeHtml(explicit) + '</td>';
+        }
+        var preserved = subject
+            ? $('#bt-preserve-subject-label').is(':checked')
+            : $('#bt-preserve-session-label').is(':checked');
+        if (preserved) {
+            return '<td class="bt-mono bt-dest-inherited" title="Preserved from the source label">'
+                 + escapeHtml(subject ? row.source_subject_label : row.source_session_label) + '</td>';
+        }
+        return '<td class="bt-muted" title="Derived from DICOM tags when the session is imported">'
+             + 'from DICOM</td>';
+    }
+
     function renderNotFoundRow(row, span) {
-        var extra = (row.status === 'session_not_found' && row.available_sessions && row.available_sessions.length)
-            ? ' - available: ' + escapeHtml(row.available_sessions.join(', ')) : '';
         var head = '<td><span class="bt-csv-x">&#10007;</span></td>' +
                    '<td class="bt-mono">' + escapeHtml(row.source_subject_label) + '</td>' +
                    '<td class="bt-mono">' + escapeHtml(row.source_session_label) + '</td>';
         // Reimport (>=4 cols): inline reason spans the rest. Share/Clone (3 cols): reason on a sub-row.
         if (span > 3) {
             return '<tr class="bt-csv-missrow">' + head +
-                   '<td colspan="' + (span - 3) + '" class="bt-csv-reason"><strong>' + escapeHtml(row.status) + '</strong>' + extra + '</td></tr>';
+                   '<td colspan="' + (span - 3) + '" class="bt-csv-reason"><strong>' + escapeHtml(row.status) + '</strong></td></tr>';
         }
         return '<tr class="bt-csv-missrow">' + head + '</tr>' +
-               '<tr class="bt-csv-missrow"><td></td><td colspan="2" class="bt-csv-reason"><strong>' + escapeHtml(row.status) + '</strong>' + extra + '</td></tr>';
+               '<tr class="bt-csv-missrow"><td></td><td colspan="2" class="bt-csv-reason"><strong>' + escapeHtml(row.status) + '</strong></td></tr>';
     }
 
     function toggleManifestRow(idx) {
         manifestExpanded[idx] = !manifestExpanded[idx];
         if (manifestExpanded[idx] && selectedOp === 'Reimport' && manifestFileCounts[idx] == null) {
+            delete manifestFileCountErr[idx];   // re-expanding retries a count that failed
             fetchFileCount(idx);
         }
         renderCsvResults();
@@ -1151,8 +1304,15 @@ var XNAT = getObject(XNAT || {});
                 var rows = (data && data.rows) || [];
                 if (rows.length && rows[0].file_count != null) {
                     manifestFileCounts[idx] = rows[0].file_count;
-                    if (manifestExpanded[idx]) { renderCsvResults(); }
+                } else {
+                    manifestFileCountErr[idx] = true;
                 }
+                if (manifestExpanded[idx]) { renderCsvResults(); }
+            },
+            // Without this the row is stuck reading "counting..." forever.
+            error: function() {
+                manifestFileCountErr[idx] = true;
+                if (manifestExpanded[idx]) { renderCsvResults(); }
             }
         });
     }
@@ -1184,18 +1344,6 @@ var XNAT = getObject(XNAT || {});
             var v = csvColValue(row, col);
             return (v != null) ? v : m;
         });
-    }
-
-    function updateCohortStatus() {
-        var el = $('#bt-cohort-status');
-        if (cohortMode !== 'csv') { el.empty(); return; }
-        if (!manifestResult) { el.html('<span style="color:#9aa0a6;">no manifest uploaded</span>'); return; }
-        var m = (manifestResult.summary && manifestResult.summary.matched) || 0;
-        var nf = (manifestResult.summary && manifestResult.summary.not_found) || 0;
-        el.html('<span class="bt-csv-file">' + escapeHtml(manifestFileName) + '</span> ' +
-                '<span class="bt-csv-ok">' + m + ' matched</span> ' +
-                '<span class="bt-csv-miss">' + nf + ' not found</span> ' +
-                '<a id="bt-csv-replace">Replace</a>');
     }
 
     function escapeHtml(s) {
@@ -1264,7 +1412,9 @@ var XNAT = getObject(XNAT || {});
         var rows = dlgRow('Cohort', isCsv
             ? escapeHtml(manifestFileName) + ' &middot; <strong>' + count + ' matched</strong>' +
               (excluded ? ' <span style="color:#b06000;">(' + excluded + ' not-found excluded)</span>' : '')
-            : 'interactive &middot; <strong>' + escapeHtml(formatItemList(getSelectionCounts())) + '</strong>');
+            // lastTreeCount is current whenever the tree is the active cohort, which is the only case
+            // this branch runs in, so the counts need no second walk of the table.
+            : 'interactive &middot; <strong>' + escapeHtml(formatItemList(lastTreeCount)) + '</strong>');
         rows += dlgRow('Operation', selectedOp + ' &middot; ' + src + ' to ' + dest);
 
         if (selectedOp === 'Reimport') {
@@ -1359,7 +1509,9 @@ var XNAT = getObject(XNAT || {});
                     },
                     complete: function() {
                         submitInFlight = false;
-                        $('#bt-submit-btn').prop('disabled', false);
+                        // Re-render rather than force-enabling, so the button still honours any
+                        // outstanding block reason instead of being clickable regardless.
+                        renderActionSummary();
                     }
                 });
             }

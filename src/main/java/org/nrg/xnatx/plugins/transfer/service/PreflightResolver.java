@@ -28,7 +28,7 @@ import java.util.Map;
  * Resolves each manifest row's {@code source_subject_label} + {@code source_session_label} to a session in the
  * source project, honoring the user's read permission. Synchronous, no persistence — the "light preflight" the
  * CSV-selection flow needs, not a job engine. Sets each row's {@code status} to {@code matched} (+
- * {@code resolvedId}), {@code subject_not_found}, or {@code session_not_found} (+ {@code availableSessions}).
+ * {@code resolvedId}), {@code subject_not_found}, or {@code session_not_found}.
  *
  * <p>Existence only: the row is matched when the subject has an experiment with that label. Reimportability
  * (image-session-only, assessor rejection) is re-checked at submit ({@code BatchTransferServiceImpl}), which is
@@ -97,13 +97,6 @@ public class PreflightResolver {
         }
 
         row.setStatus(ManifestRow.STATUS_SESSION_NOT_FOUND);
-        final List<String> labels = new ArrayList<>();
-        for (final SessionRef session : sessions) {
-            if (StringUtils.isNotBlank(session.label)) {
-                labels.add(session.label);
-            }
-        }
-        row.setAvailableSessions(labels);
     }
 
     /**

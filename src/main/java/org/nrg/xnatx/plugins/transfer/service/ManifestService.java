@@ -59,7 +59,7 @@ public class ManifestService {
 
     /**
      * Parse and classify {@code rawCsv}, filling every field of the result except each row's resolution
-     * ({@code status}/{@code resolvedId}/{@code availableSessions}) and the summary tally, which the caller
+     * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
      * completes after running the {@link PreflightResolver}.
      */
     public ManifestValidationResult parse(final String rawCsv, final String anonScript)

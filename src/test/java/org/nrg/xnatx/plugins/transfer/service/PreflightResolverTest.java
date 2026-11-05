@@ -80,11 +80,10 @@ public class PreflightResolverTest {
 
         assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
         assertEquals("E1", row.getResolvedId());
-        assertNull(row.getAvailableSessions());
     }
 
     @Test
-    public void reportsSessionNotFoundWithAvailableSessions() {
+    public void reportsSessionNotFound() {
         final StubResolver resolver = new StubResolver(Collections.singletonMap(
                 "S1", Arrays.asList(session("E1", "SESS1"), session("E2", "SESS2"))));
         final ManifestRow row = row("S1", "NOPE");
@@ -93,7 +92,6 @@ public class PreflightResolverTest {
 
         assertEquals(ManifestRow.STATUS_SESSION_NOT_FOUND, row.getStatus());
         assertNull(row.getResolvedId());
-        assertEquals(Arrays.asList("SESS1", "SESS2"), row.getAvailableSessions());
     }
 
     @Test

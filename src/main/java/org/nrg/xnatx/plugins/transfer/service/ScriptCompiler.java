@@ -1,5 +1,6 @@
 package org.nrg.xnatx.plugins.transfer.service;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.commons.text.lookup.StringLookup;
@@ -40,6 +41,7 @@ import java.util.regex.Pattern;
  * {@link BatchTransferPolicy} (a single source of truth, admin-tunable).
  */
 @Service
+@Slf4j
 public class ScriptCompiler {
 
     /** {@code ${csv.<column>}}, column captured in group 1. */
@@ -125,6 +127,16 @@ public class ScriptCompiler {
         } catch (MizerException e) {
             throw new ScriptValidationException(HttpStatus.BAD_REQUEST,
                     "The anonymization script could not be parsed: " + e.getMessage());
+        } catch (RuntimeException e) {
+            // Mizer declares MizerException but also throws unchecked exceptions on malformed input: a
+            // script whose version declaration it cannot split reaches AbstractMizer.parseVersionString
+            // and fails with ArrayIndexOutOfBoundsException. This endpoint validates text the user is
+            // still typing, so no input may surface as a 500 - report it as a parse failure instead.
+            log.warn("Anonymization script rejected: the mizer engine threw {} while parsing it",
+                    e.getClass().getSimpleName(), e);
+            throw new ScriptValidationException(HttpStatus.BAD_REQUEST,
+                    "The anonymization script could not be parsed. Check that it declares a version, "
+                            + "for example version \"6.6\".");
         }
     }
 
@@ -266,10 +278,16 @@ public class ScriptCompiler {
                 result.setMessage("Provide a manifest to fully validate ${csv.*} substitution.");
             }
         }
-        try {
-            parseValidate(toParse);
-        } catch (ScriptValidationException e) {
-            result.getErrors().add(e.getMessage());
+        // Only hand the script to the engine when its version declaration is present and allowed. The
+        // engine keys off that declaration to pick a parser, so without it the call can only fail - and
+        // the violation is already reported above. This path deliberately does not short-circuit like
+        // validateBatch does, so the guard has to be here rather than an early return.
+        if (hasAllowedVersion(anonScript)) {
+            try {
+                parseValidate(toParse);
+            } catch (ScriptValidationException e) {
+                result.getErrors().add(e.getMessage());
+            }
         }
 
         if (manifestColumns != null) {
@@ -282,6 +300,19 @@ public class ScriptCompiler {
                 && result.getRestrictionViolations().isEmpty()
                 && bindingOk);
         return result;
+    }
+
+    /**
+     * Does the script carry a {@code version} declaration this build allows? The engine selects its parser
+     * from that declaration, so callers use this to avoid an engine parse that cannot succeed.
+     */
+    private boolean hasAllowedVersion(final String script) {
+        if (script == null) {
+            return false;
+        }
+        final Matcher version = VERSION_DECL.matcher(script);
+        return version.find()
+                && Pattern.compile(prefs.getAllowedAnonVersionPattern()).matcher(version.group(1)).matches();
     }
 
     /** Reject a script larger than the configured byte cap. */
