@@ -10,6 +10,8 @@ Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimpor
 | `1.2.0` | 1.9.3.3 (custom anonymization script: 1.9.3.7+) | 8 |
 | `1.1.1` | 1.9.3.3 | 8 |
 
+> **XNAT 1.10.2.1:** Reimports that run at the same time soon after XNAT starts can fail with `Invalid attribute ...` and stay in the prearchive. This is an XNAT bug fixed in [NrgXnat/xnat#104](https://github.com/NrgXnat/xnat/pull/104); see *Known issues* under 2.0.0 in the [CHANGELOG](CHANGELOG.md).
+
 ---
 
 ## Operations

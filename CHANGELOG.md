@@ -24,6 +24,10 @@ These come from XNAT 1.10 itself, not from the plugin.
 - **Don't enable Direct Archive append on sites that use Clone.** Clone hard-links files, so the source and the clone share them. Direct Archive append (`enableDirectArchiveAppend`, off by default) can rewrite those shared files in place, which changes every project that links to them. XNAT is deprecating Direct Archive, so the plugin does not work around it.
 - **Activity tab state now lives in browser storage.** Transfers still running during the upgrade drop out of the tab; let them finish first.
 
+### Known issues
+
+- **On XNAT 1.10.2.1, Reimports that run at the same time soon after XNAT starts can fail.** Some sessions fail with an error such as `Invalid attribute 'x' of 'xnat:mrScanData/parameters/voxelRes'` or `Invalid attribute 'manufacturer' of 'xnat:mrSessionData/scanner'` and stay in the destination project's prearchive. The cause is a race in XNAT's schema lookups, fixed in [NrgXnat/xnat#104](https://github.com/NrgXnat/xnat/pull/104) but not yet in an XNAT release. To recover, delete the failed sessions from the prearchive and run them again; once XNAT has warmed up, they succeed.
+
 ## [1.2.0]
 
 Custom per-session anonymization for **Reimport**, CSV manifests as an alternative way to pick a cohort, and explicit destination labels. Everything except the custom script runs on XNAT 1.9.3.3; the custom script needs **XNAT 1.9.3.7 or later**, which adds the importer's `Anon-Script` parameter (XNAT-8777). The plugin detects that parameter at runtime and hides the custom-script controls on older builds.
