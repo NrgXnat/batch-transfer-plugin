@@ -1393,7 +1393,7 @@ var XNAT = getObject(XNAT || {});
     // Inline-styled confirmation body. xModalConfirm ignores width props and plugin CSS may not load
     // inside the modal, so the wrapper sets min-width inline and every element is inline-styled. It
     // restates the irreversible facts (cohort + exclusions, operation, anonymization, labels) with a
-    // no-rollback caution. No script hash (surfaced with the persisted record in the history phase).
+    // no-rollback caution.
     function dlgRow(k, v) {
         return '<div style="display:flex;padding:8px 12px;border-bottom:1px solid #f1f3f4;">' +
                '<span style="width:130px;color:#5f6368;flex-shrink:0;">' + k + '</span><span>' + v + '</span></div>';

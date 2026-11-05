@@ -950,7 +950,7 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 }
 
 /* ===================================================================== */
-/* Phase 4 - horizontal band layout (New transfer).                       */
+/* Horizontal band layout (New transfer).                                 */
 /* Sections stack: Project -> Operation -> Cohort (tree/CSV) ->            */
 /* (Reimport) Anonymization -> Summary + Submit. The two-panel            */
 /* .bt-shell/.bt-sidebar rules above are unused by this screen.           */

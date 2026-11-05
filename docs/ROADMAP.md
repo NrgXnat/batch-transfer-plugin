@@ -2,16 +2,24 @@
 
 **Plugin Version**: 1.2.0 (rebranded from Batch Share Plugin 2.0.0-SNAPSHOT; version line reset at 1.0.0)
 **Target XNAT**: 1.9.3.3
-**Last Updated**: 2026-06-30
+**Last Updated**: 2026-11-04
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
 ---
 
 
+## Completed
+
 ## [1.2.0]
 
-## Completed
+Cohort building and custom anonymization for Reimport. REST details: [rest-api.md](rest-api.md).
+
+- **Manifest CSV cohorts** — pick sessions by uploading a CSV instead of ticking rows; each row is resolved on upload and shown as matched / not found before submit
+- **Custom DicomEdit anonymization for Reimport** — a one-off script applied at ingest on top of the destination project's anonymization, with per-session `${csv.*}` values substituted from the manifest. Rides the importer's `Anon-Script` parameter (XNAT 1.9.3.7+) and is feature-detected, so the option is hidden on builds without it
+- **Destination label routing** — `destination_subject_label` / `destination_session_label` manifest columns set where each reimported session lands
+- **Validation and preflight** — script size, version, restricted commands, placeholder binding, and value charset checked before submit and enforced again at submit
+- **UI** — horizontal band layout (Project → Operation → Cohort → Anonymization → Summary), page-level scrolling with a pinned rail and action bar, inline-styled confirmation dialog
 
 ## [1.1.1]
 
@@ -64,30 +72,16 @@ Multi-node correctness for deployments using a shared external JMS broker (singl
 
 ---
 
-## 2.0.0 — Cohort building, custom anonymization & transfer history (planned)
-
-Conduit-inspired UI/UX expansion. **Design + mockups: [docs/2.0.0-ui-plan.md](2.0.0-ui-plan.md) · REST API: [docs/2.0.0-rest-api.md](2.0.0-rest-api.md) · Implementation: [docs/2.0.0-implementation-plan.md](2.0.0-implementation-plan.md).** Deliberately does *not* adopt conduit's job engine (no new job/row tables, dashboard, or per-row retry).
-
-- **Cohort building as step 1** — a first-class first step; pick data by the interactive tree *or* by uploading a **manifest CSV** (synchronous resolve-on-upload, matched/not-found review). Two top tabs: *New transfer* (landing) / *Transfer history*.
-- **Custom DicomEdit anonymization for Reimport** — a one-off script applied on top of the destination pipeline, with per-session `${csv.*}` values substituted from the manifest; 256 KB cap; SHA-256 audited on the workflow. Rides the per-import `Anon-Script` importer param and is **feature-detected** (`perImportAnonSupported()`) so it degrades gracefully on XNAT builds without it.
-- **Transfer history** — runs list + per-item run detail, backed by a single **`batch_transfer_history`** header table (structured / filterable / permanent) + **`jobid`-grouped workflows** for per-item detail; live progress via `EventTrackingData`. One run-header table, **no per-row table** (still not conduit's job engine).
-- **UI** — horizontal config-band layout (Source→Destination · Operation · Cohort · Anonymization), rounded-box operation radios, sticky action bar, inline-styled confirmation dialog.
-
----
-
 ## Planned
 
-### Cohort building, custom anonymization & transfer history
+### Transfer history
 
-A Conduit-inspired expansion of Batch Transfer. The finished release adds three
-capabilities on top of Share / Clone / Reimport:
+Follows the 1.2.0 cohort-building and custom-anonymization work. Deliberately does *not* adopt conduit's job engine (no job/row tables, dashboard, or per-row retry).
 
-- **Cohort building** — pick data via the interactive tree *or* upload a **manifest CSV** (resolved on upload, with matched / not-found review).
-- **Custom DicomEdit anonymization for Reimport** — a one-off script layered on top of the destination pipeline, with per-session `${csv.*}` values substituted from the manifest. Validated before submit. 
-- Uses the per-import `Anon-Script` param and feature-detects so it degrades gracefully on builds without it.
-- **Transfer history** — a filterable runs list with per-item detail, backed by one `batch_transfer_history` header table plus `jobid`-grouped workflows.
-
-UI is a cohort-first, two-tab layout (*New transfer* / *Transfer history*) with a horizontal config band (Source → Destination · Operation · Cohort · Anonymization). 
+- **Runs list and run detail** — a filterable list of past batches with per-item detail, backed by a single **`batch_transfer_history`** header table (structured / filterable / permanent) plus **`jobid`-grouped workflows** for per-item detail (requires stamping `jobid = tracking_id` on each item's workflow); live progress stays on `EventTrackingData`. One run-header table, **no per-row table**.
+- **Two top tabs** — *New transfer* (landing) / *Transfer history*.
+- **Script audit** — record a SHA-256 of the custom anonymization script on each Reimport workflow and show it in run detail.
+- **Possible REST additions** — `GET /xapi/transfer/history`, `GET /xapi/transfer/history/{tracking_id}`, and `POST /xapi/transfer/history/{tracking_id}/retry-failed` (seed a new run from a run's failed items).
 
 
 ### Operations & Workflow
