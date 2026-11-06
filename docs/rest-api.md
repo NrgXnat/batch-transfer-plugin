@@ -13,8 +13,8 @@ submission. Applies to plugin **1.2.0**.
 - **Submission is asynchronous.** Progress is reported through XNAT's event-tracking API under the batch's
   `tracking_id` (prefix `batch_transfer_`).
 - **Error bodies** on 4xx/5xx are plain-text messages (empty for a submit with no `requests`).
-- **Custom anonymization scripts need XNAT 1.9.3.7 or later**, where the importer accepts the `Anon-Script`
-  parameter. `GET /capabilities` reports whether this XNAT build supports it.
+- **Custom anonymization scripts need the importer's `Anon-Script` parameter**, present in XNAT 1.10.1 and
+  later (and 1.9.3.7 and later on the 1.9 line). `GET /capabilities` reports whether this XNAT build supports it.
 
 ### Endpoints
 
@@ -312,7 +312,7 @@ Rows that don't resolve are skipped and counted in `skipped_not_found`.
 These apply to `/validate/script`, to `script_binding` in `/validate/manifest`, and at submit.
 
 - **Version.** The script must declare `version "x.y"` matching the admin setting *allowed DicomEdit version
-  pattern* (default `^6\.[0-7]$`).
+  pattern* (default `^6\.([0-7]|10)$`: DicomEdit 6.0 to 6.7 and 6.10).
 - **Restricted commands.** Commands that are unsafe when sessions are reimported in parallel are rejected.
   Default list: `mapUID`, `mapReferencedUIDs`, `lookup`, `getURL`, `alterPixels`, `newUID`. Use `hashUID`
   for deterministic UID remapping. Commands named inside string literals or `//` comments are ignored.

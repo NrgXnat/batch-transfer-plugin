@@ -1,8 +1,37 @@
 # Changelog
 
-All notable changes to the **Batch Transfer Plugin** (formerly *Batch Share Plugin*) will be documented in this file.
+All notable changes to the **Batch Transfer Plugin** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0]
+
+Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Features are the same as 1.2.0.
+
+### Changed
+
+- **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. Use 1.2.0 on XNAT 1.9.
+- **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1 (6.8 and 6.9 were never script versions). An install that still has the previous default `^6\.[0-7]$` stored is updated at startup; a pattern an admin changed is kept.
+- **Build** — Gradle 9.4.1, Mockito 5, Lombok from the XNAT BOM.
+- **Plugin jar no longer bundles `commons-csv`** — XNAT already ships it (as a dependency of xdat core), so the build produces one plain `batch-transfer-<version>.jar` again, with no fat or `-thin` variant.
+
+### Fixed
+
+- **Scripts with syntax errors are rejected** — *Validate* and submit now reject a custom script that DicomEdit can't parse, and report DicomEdit's line, column and reason (for example `Failed to parse at 2:14 due to extraneous input '='`). Before, DicomEdit only logged the parse error, so a malformed script passed validation and was submitted.
+
+### XNAT 1.10 behavior that affects transfers
+
+These come from XNAT 1.10 itself, not from the plugin.
+
+- **Series import filters no longer apply to Reimport.** XNAT 1.10 removed them, so a destination that relied on a filter (for example, to drop secondary captures) now receives every series. Use the DicomEdit `reject` command in the destination's anonymization script or in a custom script instead.
+- **PET/MR sessions are no longer split.** A reimported PET/MR session arrives as one session.
+- **Reimported files keep their transfer syntax.** XNAT 1.10 no longer decompresses DICOM at ingest.
+- **Don't enable Direct Archive append on sites that use Clone.** Clone hard-links files, so the source and the clone share them. Direct Archive append (`enableDirectArchiveAppend`, off by default) can rewrite those shared files in place, which changes every project that links to them. XNAT is deprecating Direct Archive, so the plugin does not work around it.
+- **Activity tab state now lives in browser storage.** Transfers still running during the upgrade drop out of the tab; let them finish first.
+
+### Known issues
+
+- **On XNAT 1.10.2.1, Reimports that run at the same time soon after XNAT starts can fail.** Some sessions fail with an error such as `Invalid attribute 'x' of 'xnat:mrScanData/parameters/voxelRes'` or `Invalid attribute 'manufacturer' of 'xnat:mrSessionData/scanner'` and stay in the destination project's prearchive. The cause is a race in XNAT's schema lookups, fixed in [NrgXnat/xnat#104](https://github.com/NrgXnat/xnat/pull/104) but not yet in an XNAT release. To recover, delete the failed sessions from the prearchive and run them again; once XNAT has warmed up, they succeed.
 
 ## [1.2.0]
 
@@ -46,7 +75,7 @@ Multi-node correctness fixes for deployments using a **shared external JMS broke
 
 ## [1.0.1]
 
-A performance and hardening release on top of the 1.0.0 rebrand: Reimport and Clone now run in parallel through JMS queues, mixed-operation batches route correctly, the listing query is parameterized, and workflow history is consistent across all three operations. The `/xapi/transfer` request format and the Java packages are unchanged from 1.0.0.
+A performance and hardening release: Reimport and Clone now run in parallel through JMS queues, mixed-operation batches route correctly, the listing query is parameterized, and workflow history is consistent across all three operations. The `/xapi/transfer` request format and the Java packages are unchanged from 1.0.0.
 
 ### Performance
 
@@ -153,9 +182,3 @@ The package was moved from `org.nrg.xnatx.plugins.batchshare` to `org.nrg.xnatx.
 2. Drop in `batch-transfer-1.0.0-SNAPSHOT.jar`.
 3. Restart XNAT.
 4. Update any external REST clients to POST `{ mode: … }` to `/xapi/transfer`.
-
----
-
-## Earlier history (pre-rebrand)
-
-The plugin previously developed under the name *Batch Share Plugin* on a `2.x` line through `2.0.0-SNAPSHOT`. See git history for commits prior to the 1.0.0 release.

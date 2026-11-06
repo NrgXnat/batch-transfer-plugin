@@ -3,7 +3,9 @@ package org.nrg.xnatx.plugins.transfer.service;
 import org.junit.Before;
 import org.junit.Test;
 import org.nrg.dicom.mizer.exceptions.MizerException;
+import org.nrg.dicom.mizer.service.MizerContext;
 import org.nrg.dicom.mizer.service.MizerService;
+import org.nrg.dicom.mizer.service.impl.MizerContextWithScript;
 import org.nrg.xnatx.plugins.transfer.jms.preferences.BatchTransferPrefsBean;
 import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
@@ -26,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -123,6 +126,16 @@ public class ScriptCompilerTest {
     }
 
     @Test
+    public void defaultVersionPatternMatchesDicomEdit610ScriptVersions() {
+        for (final String allowed : new String[]{"6.0", "6.7", "6.10"}) {
+            assertTrue(allowed, compiler.restrictionViolations("version \"" + allowed + "\"\n(0010,0010) := \"X\"").isEmpty());
+        }
+        for (final String rejected : new String[]{"6.8", "6.9", "6.11", "6.100", "7.0"}) {
+            assertFalse(rejected, compiler.restrictionViolations("version \"" + rejected + "\"\n(0010,0010) := \"X\"").isEmpty());
+        }
+    }
+
+    @Test
     public void restrictionRejectsEachDeniedVerb() {
         for (final String verb : new String[]{"mapUID", "mapReferencedUIDs", "lookup", "getURL", "alterPixels", "newUID"}) {
             final String bracketCall = "version \"6.1\"\n(0020,000D) := " + verb + "[(0020,000D)]";
@@ -191,8 +204,25 @@ public class ScriptCompilerTest {
 
     @Test
     public void validateBatchRejectsMalformedScriptFromParseSeam() throws Exception {
+        engineRejectsScriptLikeDicomEdit6();
+        final TransferRequest req = reimport("E1", Collections.<String, String>emptyMap());
+        expectInvalid("version \"6.1\"\n(0010,0010) :== \"X\"", req);
+    }
+
+    @Test
+    public void validateBatchAcceptsScriptTheEngineParses() throws Exception {
         when(mizer.createContext(any(), any(), any(), anyLong(), any(), anyBoolean(), anyBoolean()))
-                .thenThrow(new MizerException("unexpected token"));
+                .thenReturn(mock(MizerContextWithScript.class));
+        final TransferRequest req = reimport("E1", Collections.<String, String>emptyMap());
+        compiler.validateBatch("version \"6.1\"\n(0010,0010) := \"X\"", singletonList(req));
+        verify(mizer).getReferencedVariables(any(MizerContext.class));
+    }
+
+    @Test
+    public void validateBatchRejectsUncheckedEngineFailure() throws Exception {
+        when(mizer.createContext(any(), any(), any(), anyLong(), any(), anyBoolean(), anyBoolean()))
+                .thenReturn(mock(MizerContextWithScript.class));
+        when(mizer.getReferencedVariables(any(MizerContext.class))).thenThrow(new ArrayIndexOutOfBoundsException(1));
         final TransferRequest req = reimport("E1", Collections.<String, String>emptyMap());
         expectInvalid("version \"6.1\"\n(0010,0010) := \"X\"", req);
     }
@@ -250,11 +280,10 @@ public class ScriptCompilerTest {
 
     @Test
     public void validateFlagsParseErrorFromMizerSeam() throws Exception {
-        when(mizer.createContext(any(), any(), any(), anyLong(), any(), anyBoolean(), anyBoolean()))
-                .thenThrow(new MizerException("unexpected token"));
-        final ScriptValidationResult r = compiler.validate("version \"6.1\"\n(0010,0010) := \"X\"", null);
+        engineRejectsScriptLikeDicomEdit6();
+        final ScriptValidationResult r = compiler.validate("version \"6.1\"\n(0010,0010) :== \"X\"", null);
         assertFalse(r.isValid());
-        assertFalse(r.getErrors().isEmpty());
+        assertEquals(singletonList("The anonymization script could not be parsed: " + DE6_PARSE_DETAIL), r.getErrors());
     }
 
     @Test
@@ -265,6 +294,21 @@ public class ScriptCompilerTest {
     }
 
     // ---- helpers ----------------------------------------------------------------------------------
+
+    /**
+     * Stubs the mizer the way DicomEdit 6 behaves on a syntax error: createContext only wraps the script,
+     * getScriptTags logs the parse failure and returns an empty set, and getReferencedVariables throws.
+     */
+    private void engineRejectsScriptLikeDicomEdit6() throws MizerException {
+        when(mizer.createContext(any(), any(), any(), anyLong(), any(), anyBoolean(), anyBoolean()))
+                .thenReturn(mock(MizerContextWithScript.class));
+        when(mizer.getScriptTags(any(MizerContext.class))).thenReturn(Collections.emptySet());
+        when(mizer.getReferencedVariables(any(MizerContext.class)))
+                .thenThrow(new MizerException(new MizerException("Failed creating DE6Parser.",
+                        new IllegalStateException(DE6_PARSE_DETAIL))));
+    }
+
+    private static final String DE6_PARSE_DETAIL = "Failed to parse at 2:14 due to extraneous input '='";
 
     private void expectInvalid(final String script, final TransferRequest req) {
         try {

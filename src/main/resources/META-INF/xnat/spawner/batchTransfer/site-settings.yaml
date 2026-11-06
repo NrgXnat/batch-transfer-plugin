@@ -68,7 +68,7 @@ batchTransferAnonLimitsForm:
                 title: Regex the script's declared version "x.y" must match
             description: >
                 Regex a custom anon_script's declared version "x.y" must match; a missing or non-matching
-                version is rejected at submit. Default is "^6\.[0-7]$" (DicomEdit 6.0 to 6.7).
+                version is rejected at submit. Default is "^6\.([0-7]|10)$" (DicomEdit 6.0 to 6.7 and 6.10).
         detectedNote:
             tag: div.message
             contents:

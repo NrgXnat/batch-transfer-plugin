@@ -2,6 +2,7 @@ package org.nrg.xnatx.plugins.transfer.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.commons.text.lookup.StringLookup;
 import org.nrg.dicom.mizer.exceptions.MizerException;
@@ -118,15 +119,16 @@ public class ScriptCompiler {
 
     /**
      * Parse {@code script} without applying it to a DICOM file. Goes through the {@link MizerService}
-     * interface only — {@code createContext} builds (and parses) the script context, {@code getScriptTags}
-     * forces evaluation — so this stays robust to the deployed dicom-edit6 version. A malformed script throws.
+     * interface only, so this stays robust to the deployed dicom-edit6 version. {@code createContext} only wraps
+     * the script; {@code getReferencedVariables} parses it and throws on a syntax error. ({@code getScriptTags}
+     * also parses, but DicomEdit 6 logs a syntax error there and returns an empty set.)
      */
     public void parseValidate(final String script) throws ScriptValidationException {
         try {
-            mizer.getScriptTags(mizer.createContext(null, null, null, 0L, script, false, false));
+            mizer.getReferencedVariables(mizer.createContext(null, null, null, 0L, script, false, false));
         } catch (MizerException e) {
             throw new ScriptValidationException(HttpStatus.BAD_REQUEST,
-                    "The anonymization script could not be parsed: " + e.getMessage());
+                    "The anonymization script could not be parsed: " + innermostMessage(e));
         } catch (RuntimeException e) {
             // Mizer declares MizerException but also throws unchecked exceptions on malformed input: a
             // script whose version declaration it cannot split reaches AbstractMizer.parseVersionString
@@ -138,6 +140,20 @@ public class ScriptCompiler {
                     "The anonymization script could not be parsed. Check that it declares a version, "
                             + "for example version \"6.6\".");
         }
+    }
+
+    /**
+     * The innermost non-blank message in {@code e}'s cause chain. DicomEdit's "Failed to parse at line:column
+     * due to ..." detail sits beneath its "Failed creating DE6Parser" wrappers.
+     */
+    private static String innermostMessage(final Throwable e) {
+        final List<Throwable> chain = ExceptionUtils.getThrowableList(e);
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            if (StringUtils.isNotBlank(chain.get(i).getMessage())) {
+                return chain.get(i).getMessage();
+            }
+        }
+        return e.toString();
     }
 
     // ---- Restriction (text detection on a Mizer-validated script) -----------------------------------

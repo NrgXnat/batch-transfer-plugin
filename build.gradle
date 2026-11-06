@@ -1,6 +1,6 @@
 buildscript {
     ext {
-        vXnat = "1.9.3.3"
+        vXnat = "1.10.2.1"
         pluginAppName = "Batch Transfer Plugin"
     }
 }
@@ -9,23 +9,24 @@ plugins {
     id "idea"
     id "java"
     id "maven-publish"
-    id "io.spring.dependency-management" version "1.0.9.RELEASE"
-    id "io.freefair.lombok" version "8.6"
+    id "io.spring.dependency-management" version "1.1.7"
     id "net.linguica.maven-settings" version "0.5"
 }
 
-group "org.nrg.xnatx.plugins"
-version "1.2.0-SNAPSHOT"
-description "XNAT Batch Transfer Plugin"
+group = "org.nrg.xnatx.plugins"
+version = "2.0.0-SNAPSHOT"
+description = "XNAT Batch Transfer Plugin"
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
 
 repositories {
     mavenLocal()
-    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
-    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
-    maven { url "https://www.dcm4che.org/maven2" }
+    maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
+    maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
+    maven { url = "https://www.dcm4che.org/maven2" }
     mavenCentral()
 }
 
@@ -33,10 +34,6 @@ dependencyManagement {
     imports {
         mavenBom("org.nrg:parent:${vXnat}")
     }
-}
-configurations {
-    implementAndInclude
-    implementation.extendsFrom(implementAndInclude)
 }
 configurations.all {
     resolutionStrategy.capabilitiesResolution.withCapability("com.google.collections:google-collections") {
@@ -50,55 +47,48 @@ dependencies {
     implementation platform("org.nrg:parent:${vXnat}")
 
     annotationProcessor "org.nrg:framework"
+    compileOnly "org.projectlombok:lombok"
+    annotationProcessor "org.projectlombok:lombok"
+    testCompileOnly "org.projectlombok:lombok"
+    testAnnotationProcessor "org.projectlombok:lombok"
     implementation "org.nrg.xnat:web"
     implementation "org.nrg.xdat:core"
     implementation "org.nrg:dicom-xnat-util"
     implementation "org.nrg.dicom:mizer"
     implementation "org.apache.commons:commons-text"
-    implementAndInclude "org.apache.commons:commons-csv:1.10.0"
+    implementation "org.apache.commons:commons-csv"
     implementation "org.springframework:spring-beans"
     implementation "org.springframework:spring-context"
     implementation "org.springframework:spring-jms"
     implementation "org.springframework:spring-tx"
     implementation 'org.springframework:spring-webmvc'
     implementation "io.springfox:springfox-swagger2"
+    // xnat-web 1.10 exports a narrow compile API; these come from the 1.10 webapp at runtime.
+    implementation("turbine:turbine") { transitive = false }
+    implementation("org.apache.velocity:velocity") { transitive = false }
+    implementation "org.restlet:org.restlet"
+    implementation "commons-lang:commons-lang"
+    implementation "javax.jms:javax.jms-api"
+    implementation "org.apache.activemq:activemq-client"
 
-    testImplementation "log4j:log4j"
     testImplementation "junit:junit"
     testImplementation "org.hamcrest:hamcrest-library"
-    testImplementation "org.mockito:mockito-core:4.8.0"
-    testImplementation "org.mockito:mockito-inline:4.8.0"
+    testImplementation "org.mockito:mockito-core"
     testImplementation "org.springframework:spring-test"
+    testImplementation "javax.servlet:javax.servlet-api"
 }
 
 test {
     useJUnit()
 }
 
-task fatJar(type: Jar) {
-    archiveClassifier.set('')
-    duplicatesStrategy 'exclude'
-    from {
-        configurations.implementAndInclude.collect { it.isDirectory() ? it : zipTree(it) }
-    } {
-        exclude "META-INF/*.SF"
-        exclude "META-INF/*.DSA"
-        exclude "META-INF/*.RSA"
-    }
-    with jar
-}
-assemble.dependsOn fatJar
-jar {
-    archiveClassifier.set('thin')
-}
-
 task sourceJar(type: Jar, dependsOn: classes) {
-    classifier "sources"
+    archiveClassifier.set("sources")
     from sourceSets.main.allSource
 }
 
-task javadocJar(type: Jar) {
-    classifier "javadoc"
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    archiveClassifier.set("javadoc")
     from javadoc.destinationDir
 }
 
@@ -115,8 +105,7 @@ publishing {
             artifacts {
                 artifact sourceJar
                 artifact javadocJar
-                // Publish the fatJar (plugin classes + bundled commons-csv) as the main artifact, not the thin jar.
-                artifact fatJar
+                artifact jar
             }
 
             pom.withXml {
@@ -145,9 +134,9 @@ publishing {
     repositories {
         maven {
             if (project.version.endsWith("-SNAPSHOT")) {
-                url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot-local"
+                url = "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot-local"
             } else {
-                url "https://nrgxnat.jfrog.io/nrgxnat/libs-release-local"
+                url = "https://nrgxnat.jfrog.io/nrgxnat/libs-release-local"
             }
             // The value for name must match <id> in ~/.m2/settings.xml
             name = "XNAT_Artifactory"
