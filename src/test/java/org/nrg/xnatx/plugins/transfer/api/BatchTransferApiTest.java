@@ -39,7 +39,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
@@ -93,6 +96,9 @@ public class BatchTransferApiTest {
 
         // Default: the source project is readable. Individual tests override to false for the 403 case.
         doReturn(true).when(api).canReadProject(anyString(), any(UserI.class));
+        // The resolver is mocked: fixture rows already carry their statuses, so it hands them back unchanged.
+        when(preflightResolver.resolveAll(any(), any(), any(), any(), anyBoolean()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
     }
 
     @After
@@ -117,7 +123,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void validateManifest_parseOverCap_returns413() throws Exception {
-        when(manifestService.parse(any(), any()))
+        when(manifestService.parse(any(), any(), any()))
                 .thenThrow(new ManifestValidationException(HttpStatus.PAYLOAD_TOO_LARGE, "too big"));
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, resp.getStatusCode());
@@ -128,12 +134,12 @@ public class BatchTransferApiTest {
         final ManifestValidationResult result = result(true,
                 matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
                 notFoundRow("S9", "SESS9", ManifestRow.STATUS_SUBJECT_NOT_FOUND));
-        when(manifestService.parse(any(), any())).thenReturn(result);
+        when(manifestService.parse(any(), any(), any())).thenReturn(result);
 
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.REIMPORT), eq(false));
         final ManifestValidationResult body = (ManifestValidationResult) resp.getBody();
         assertEquals(1, body.getSummary().getMatched());
         assertEquals(1, body.getSummary().getNotFound());
@@ -141,7 +147,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void validateManifest_fileCountFlag_threadedToResolver() throws Exception {
-        when(manifestService.parse(any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
 
         final ManifestValidationRequest req = validationRequest(SRC, null);
@@ -149,7 +155,7 @@ public class BatchTransferApiTest {
         final ResponseEntity<?> resp = api.validateManifest(req);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(true));
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.REIMPORT), eq(true));
     }
 
     @Test
@@ -157,7 +163,7 @@ public class BatchTransferApiTest {
         final ResponseEntity<?> resp = api.validateManifestUpload(
                 mock(MultipartFile.class), SRC, "NotAMode", null, null);
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        verify(manifestService, never()).parse(any(), any());   // rejected before reading the file
+        verify(manifestService, never()).parse(any(), any(), any());   // rejected before reading the file
     }
 
     @Test
@@ -165,12 +171,43 @@ public class BatchTransferApiTest {
         final MultipartFile file = mock(MultipartFile.class);
         when(file.getInputStream()).thenReturn(new ByteArrayInputStream(
                 "source_subject_label,source_session_label\nS1,SESS1\n".getBytes(StandardCharsets.UTF_8)));
-        when(manifestService.parse(any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
 
         final ResponseEntity<?> resp = api.validateManifestUpload(file, SRC, null, null, null);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
+    }
+
+    @Test
+    public void validateManifest_summaryCountsEntriesAndRowsByStatus() throws Exception {
+        final ManifestRow sessionA = matchedRow("S1", "SESS_A", "E1", csv("pid", "ANON-1"));
+        final ManifestRow sessionB = matchedRow("S1", "SESS_B", "E2", csv("pid", "ANON-1"));
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, sessionA, sessionB,
+                notFoundRow("S2", "", ManifestRow.STATUS_NO_SESSIONS),
+                notFoundRow("S3", "", ManifestRow.STATUS_DUPLICATE_SESSION),
+                notFoundRow("S3", "SESS3", ManifestRow.STATUS_DUPLICATE_SESSION),
+                notFoundRow("S9", "SESS9", ManifestRow.STATUS_SESSION_NOT_FOUND)));
+
+        final ManifestValidationResult body =
+                (ManifestValidationResult) api.validateManifest(validationRequest(SRC, null)).getBody();
+
+        assertEquals("matched counts sessions", 2, body.getSummary().getMatched());
+        assertEquals(1, body.getSummary().getNotFound());
+        assertEquals(1, body.getSummary().getNoSessions());
+        assertEquals(2, body.getSummary().getDuplicateSession());
+    }
+
+    @Test
+    public void validateManifest_modeThreadedToResolver() throws Exception {
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+                matchedRow("S1", "", "SUBJ1", Collections.<String, String>emptyMap())));
+        final ManifestValidationRequest req = validationRequest(SRC, null);
+        req.setMode(TransferMode.CLONE);
+
+        api.validateManifest(req);
+
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.CLONE), eq(false));
     }
 
     // ---- validate/script -----------------------------------------------------------------------------
@@ -216,7 +253,7 @@ public class BatchTransferApiTest {
     public void submitManifest_missingRequiredColumns_returns400() throws Exception {
         final ManifestValidationResult result = result(false);
         result.setMissingColumns(Arrays.asList("source_session_label"));
-        when(manifestService.parse(any(), any())).thenReturn(result);
+        when(manifestService.parse(any(), any(), any())).thenReturn(result);
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
 
@@ -226,7 +263,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void submitManifest_noMatchedRows_returns400() throws Exception {
-        when(manifestService.parse(any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
                 notFoundRow("S9", "SESS9", ManifestRow.STATUS_SESSION_NOT_FOUND)));
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
@@ -237,7 +274,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void submitManifest_happyPath_submitsMatchedRowsAndSkipsNotFound() throws Exception {
-        when(manifestService.parse(any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
                 matchedRow("S2", "SESS2", "E2", csv("pid", "ANON-2")),
                 notFoundRow("S9", "SESS9", ManifestRow.STATUS_SUBJECT_NOT_FOUND)));
@@ -263,7 +300,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void submitManifest_anonScriptOnUnsupportedBuild_returns409() throws Exception {
-        when(manifestService.parse(any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"))));
         when(capabilities.isPerImportAnonSupported()).thenReturn(false);
 
@@ -279,7 +316,7 @@ public class BatchTransferApiTest {
         final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
         row.setDestinationSubjectLabel("ANON-042");
         row.setDestinationSessionLabel("STUDY2_042");
-        when(manifestService.parse(any(), any())).thenReturn(result(true, row));
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
 
@@ -295,12 +332,103 @@ public class BatchTransferApiTest {
     public void submitManifest_matchedRowWithValueError_returns400() throws Exception {
         final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
         row.getValueErrors().add("destination_subject_label is not a valid XNAT label");
-        when(manifestService.parse(any(), any())).thenReturn(result(true, row));
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
         verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submitManifest_duplicateSession_returns400() throws Exception {
+        final ManifestRow subject = notFoundRow("S1", "", ManifestRow.STATUS_DUPLICATE_SESSION);
+        subject.setIndex(1);
+        final ManifestRow session = notFoundRow("S1", "SESS1", ManifestRow.STATUS_DUPLICATE_SESSION);
+        session.setIndex(2);
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, subject, session,
+                matchedRow("S2", "SESS2", "E2", csv("pid", "ANON-2"))));
+
+        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue(((String) resp.getBody()).contains("rows 1, 2"));
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submitManifest_preserveSettings_threadedToReimportRequests() throws Exception {
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"))));
+        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
+        req.setPreserveSubjectLabel(true);
+        req.setPreserveSessionLabel(false);
+
+        api.submitManifest(req);
+
+        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
+        verify(service).submitTransferRequest(batch.capture(), eq(user));
+        final TransferRequest request = batch.getValue().getRequests().get(0);
+        assertEquals(Boolean.TRUE, request.getPreserveSubjectLabel());
+        assertEquals(Boolean.FALSE, request.getPreserveSessionLabel());
+    }
+
+    @Test
+    public void submitManifest_preserveSettings_notAppliedToShare() throws Exception {
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+                matchedRow("S1", "", "SUBJ1", Collections.<String, String>emptyMap())));
+        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
+        req.setMode(TransferMode.SHARE);
+        req.setPreserveSubjectLabel(true);
+
+        api.submitManifest(req);
+
+        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
+        verify(service).submitTransferRequest(batch.capture(), eq(user));
+        final TransferRequest request = batch.getValue().getRequests().get(0);
+        assertEquals("SUBJ1", request.getId());
+        assertEquals(TransferMode.SHARE, request.getMode());
+        assertNull(request.getPreserveSubjectLabel());
+    }
+
+    @Test
+    public void submitManifest_expandedSubjectRow_submitsEachSessionWithTheRowsValues() throws Exception {
+        final ManifestRow sessionA = matchedRow("S1", "SESS_A", "E1", csv("pid", "ANON-1"));
+        sessionA.setDestinationSubjectLabel("ANON_S1");
+        final ManifestRow sessionB = matchedRow("S1", "SESS_B", "E2", csv("pid", "ANON-1"));
+        sessionB.setDestinationSubjectLabel("ANON_S1");
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, sessionA, sessionB));
+
+        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
+
+        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
+        verify(service).submitTransferRequest(batch.capture(), eq(user));
+        final List<TransferRequest> requests = batch.getValue().getRequests();
+        assertEquals(2, requests.size());
+        for (final TransferRequest request : requests) {
+            assertEquals("ANON-1", request.getCsvValues().get("pid"));
+            assertEquals("ANON_S1", request.getDestinationSubjectLabel());
+        }
+        assertEquals(2, ((ManifestSubmitResult) resp.getBody()).getItemCount());
+    }
+
+    @Test
+    public void submitManifest_reportsSkippedRowsByReason() throws Exception {
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
+                notFoundRow("S7", "SESS7", ManifestRow.STATUS_SUBJECT_NOT_FOUND),
+                notFoundRow("S8", "SESS8", ManifestRow.STATUS_SESSION_NOT_FOUND),
+                notFoundRow("S9", "", ManifestRow.STATUS_NO_SESSIONS),
+                notFoundRow("S10", "", ManifestRow.STATUS_NO_SESSIONS)));
+
+        final ManifestSubmitResult body =
+                (ManifestSubmitResult) api.submitManifest(submitRequest(SRC, DEST, null, "trk")).getBody();
+
+        assertEquals(1, body.getItemCount());
+        assertEquals(4, body.getSkippedNotFound());
+        assertEquals(Integer.valueOf(1), body.getSkipped().get(ManifestRow.STATUS_SUBJECT_NOT_FOUND));
+        assertEquals(Integer.valueOf(1), body.getSkipped().get(ManifestRow.STATUS_SESSION_NOT_FOUND));
+        assertEquals(Integer.valueOf(2), body.getSkipped().get(ManifestRow.STATUS_NO_SESSIONS));
     }
 
     // ---- fixtures ------------------------------------------------------------------------------------

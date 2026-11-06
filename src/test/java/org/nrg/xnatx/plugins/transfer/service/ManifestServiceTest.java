@@ -5,6 +5,7 @@ import org.junit.Test;
 import org.nrg.dicom.mizer.service.MizerService;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
+import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.springframework.http.HttpStatus;
 
 import java.util.Arrays;
@@ -38,7 +39,11 @@ public class ManifestServiceTest {
     }
 
     private ManifestValidationResult parse(final String csv) throws ManifestValidationException {
-        return service.parse(csv, null);
+        return service.parse(csv, null, TransferMode.REIMPORT);
+    }
+
+    private ManifestValidationResult parse(final String csv, final TransferMode mode) throws ManifestValidationException {
+        return service.parse(csv, null, mode);
     }
 
     @Test
@@ -108,7 +113,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.destination_patient_id}\"";
         final String csv = "source_subject_label,source_session_label,destination_patient_id\n"
                 + "S1,SESS1,\n";                        // empty bound cell
-        final ManifestValidationResult r = service.parse(csv, script);
+        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
 
         assertTrue(r.getScriptBinding().isBound());
         assertFalse(r.getRows().get(0).getValueWarnings().isEmpty());
@@ -119,7 +124,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.not_a_column}\"";
         final String csv = "source_subject_label,source_session_label,destination_patient_id\n"
                 + "S1,SESS1,ANON-1\n";
-        final ManifestValidationResult r = service.parse(csv, script);
+        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
 
         assertFalse(r.getScriptBinding().isBound());
         assertTrue(r.getScriptBinding().getUnbound().contains("not_a_column"));
@@ -147,7 +152,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.destination_subject_label}\"";
         final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
                 + "S1,SESS1,ANON-042\n";
-        final ManifestValidationResult r = service.parse(csv, script);
+        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
 
         assertTrue("a routing column binds ${csv.*}", r.getScriptBinding().isBound());
     }
@@ -194,7 +199,7 @@ public class ManifestServiceTest {
 
         final String csv = "source_subject_label,source_session_label\nA,1\nB,2\nC,3\n";
         try {
-            capped.parse(csv, null);
+            capped.parse(csv, null, TransferMode.REIMPORT);
             fail("expected ManifestValidationException for exceeding the row cap");
         } catch (ManifestValidationException e) {
             assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, e.getStatus());
@@ -209,5 +214,105 @@ public class ManifestServiceTest {
         } catch (ManifestValidationException e) {
             assertEquals(HttpStatus.BAD_REQUEST, e.getStatus());
         }
+    }
+
+    // ---- subject rows and overlap ------------------------------------------------------------------------
+
+    private static final String HEADER = "source_subject_label,source_session_label,destination_session_label\n";
+
+    @Test
+    public void aBlankSessionCellMakesASubjectRow() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label,pid\n"
+                + "S1,,ANON-1\n"
+                + "S2,SESS2,ANON-2\n");
+
+        assertTrue(r.isRequiredPresent());
+        final ManifestRow subject = r.getRows().get(0);
+        assertTrue(subject.isSubjectRow());
+        assertEquals("", subject.getSourceSessionLabel());
+        assertNull("resolution is the resolver's job", subject.getStatus());
+        assertEquals("ANON-1", subject.getCsvValues().get("pid"));
+        assertFalse(r.getRows().get(1).isSubjectRow());
+    }
+
+    @Test
+    public void aSubjectRowAndASessionRowForTheSameSubjectAreDuplicateSession() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label\n"
+                + "S1,\n"
+                + "S1,SESS1\n"
+                + "S2,SESS2\n");
+
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(0).getStatus());
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(1).getStatus());
+        assertNull("another subject is unaffected", r.getRows().get(2).getStatus());
+    }
+
+    @Test
+    public void forShareAndCloneASubjectRowCanSitBesideItsSessionRows() throws Exception {
+        for (final TransferMode mode : Arrays.asList(TransferMode.SHARE, TransferMode.CLONE)) {
+            final ManifestValidationResult r = parse("source_subject_label,source_session_label\n"
+                    + "S1,\n"
+                    + "S1,SESS1\n"
+                    + "S2,\n"
+                    + "S2,\n"
+                    + "S3,SESS3\n"
+                    + "S3,SESS3\n", mode);
+
+            assertNull(mode + ": the subject record and one of its sessions", r.getRows().get(0).getStatus());
+            assertNull(r.getRows().get(1).getStatus());
+            assertEquals(mode + ": the same subject twice", ManifestRow.STATUS_DUPLICATE_SESSION,
+                    r.getRows().get(2).getStatus());
+            assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(3).getStatus());
+            assertEquals(mode + ": the same session twice", ManifestRow.STATUS_DUPLICATE_SESSION,
+                    r.getRows().get(4).getStatus());
+            assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(5).getStatus());
+        }
+    }
+
+    @Test
+    public void twoSubjectRowsForTheSameSubjectAreDuplicateSession() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label\nS1,\nS1,\n");
+
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(0).getStatus());
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(1).getStatus());
+    }
+
+    @Test
+    public void theSameSessionListedTwiceIsDuplicateSession() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label\n"
+                + "S1,SESS1\n"
+                + "S1,SESS2\n"
+                + "S1,SESS1\n");
+
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(0).getStatus());
+        assertNull("a different session of the same subject is fine", r.getRows().get(1).getStatus());
+        assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(2).getStatus());
+    }
+
+    @Test
+    public void aDestinationSessionLabelOnASubjectRowIsAValueError() throws Exception {
+        final ManifestValidationResult r = parse(HEADER + "S1,,STUDY2_S1\n");
+
+        final ManifestRow row = r.getRows().get(0);
+        assertTrue(row.isSubjectRow());
+        assertEquals(1, row.getValueErrors().size());
+        assertTrue(row.getValueErrors().get(0).contains("subject row"));
+    }
+
+    @Test
+    public void aRepeatedDestinationSessionLabelIsFlaggedOnEachRow() throws Exception {
+        final ManifestValidationResult r = parse(HEADER
+                + "S1,SESS1,STUDY2_A\n"
+                + "S2,SESS2,STUDY2_B\n"
+                + "S3,SESS3,STUDY2_A\n");
+
+        final ManifestRow first = r.getRows().get(0);
+        final ManifestRow third = r.getRows().get(2);
+        assertEquals(1, first.getValueErrors().size());
+        assertTrue(first.getValueErrors().get(0).startsWith("duplicate_destination_label"));
+        assertTrue("names the other row", first.getValueErrors().get(0).contains("row 3"));
+        assertTrue(third.getValueErrors().get(0).contains("row 1"));
+        assertTrue(r.getRows().get(1).getValueErrors().isEmpty());
+        assertNull("a destination-label clash is a value error, not a status", first.getStatus());
     }
 }

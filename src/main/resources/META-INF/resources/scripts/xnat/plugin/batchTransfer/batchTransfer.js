@@ -961,6 +961,8 @@ var XNAT = getObject(XNAT || {});
             var matched = manifestResult.summary ? manifestResult.summary.matched : 0;
             if (matched === 0) { return ['no matched rows']; }
             var reasons = [];
+            var duplicates = manifestResult.summary ? (manifestResult.summary.duplicate_session || 0) : 0;
+            if (duplicates) { reasons.push(duplicates + ' row(s) are duplicate_session'); }
             if (selectedOp === 'Reimport') {
                 var errCount = (manifestResult.rows || []).filter(function(row) {
                     return row.status === 'matched' && (row.value_errors || []).length > 0;
