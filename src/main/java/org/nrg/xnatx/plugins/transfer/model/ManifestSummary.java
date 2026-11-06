@@ -7,7 +7,11 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/** Per-manifest resolution tally. Wire names: {@code matched}, {@code not_found}. */
+/**
+ * Per-manifest resolution tally. {@code matched} counts transferable entries: sessions for Reimport (a subject
+ * row counts once per session) and items for Share/Clone. The other counts are manifest rows: {@code not_found}
+ * (subject or session not found), {@code no_sessions} and {@code duplicate_session}.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -16,4 +20,10 @@ import lombok.NoArgsConstructor;
 public class ManifestSummary {
     private int matched;
     private int notFound;
+    private int noSessions;
+    private int duplicateSession;
+
+    public ManifestSummary(final int matched, final int notFound) {
+        this(matched, notFound, 0, 0);
+    }
 }

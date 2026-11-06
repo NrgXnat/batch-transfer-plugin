@@ -8,6 +8,7 @@ import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSummary;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.ScriptBinding;
+import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,13 +22,15 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Parses a session-level manifest CSV and classifies its columns, with per-cell value checks and (optionally)
+ * Parses a manifest CSV and classifies its columns, with per-cell value checks and (optionally)
  * {@code ${csv.*}} binding. Pure text work — no XNAT involvement, so it is unit-testable without XDAT/Spring;
- * per-row session resolution is the {@link PreflightResolver}'s job, run by the API after this.
+ * per-row resolution is the {@link PreflightResolver}'s job, run by the API after this.
  *
  * <p>Column roles:
  * <ul>
- *   <li><b>Required</b> columns {@value #COL_SUBJECT} + {@value #COL_SESSION} identify the session.</li>
+ *   <li><b>Required</b> columns {@value #COL_SUBJECT} + {@value #COL_SESSION} identify the session. A blank
+ *   {@value #COL_SESSION} cell makes the row a subject row, which covers every session of the subject; the
+ *   column itself stays required.</li>
  *   <li><b>Reserved</b> columns are {@code _}-prefixed (notes; never exposed to a script).</li>
  *   <li><b>Value</b> columns are the rest — the {@code ${csv.*}}-eligible set.</li>
  * </ul>
@@ -60,9 +63,10 @@ public class ManifestService {
     /**
      * Parse and classify {@code rawCsv}, filling every field of the result except each row's resolution
      * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
-     * completes after running the {@link PreflightResolver}.
+     * completes after running the {@link PreflightResolver}. {@code mode} (null = Reimport) decides what a subject
+     * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject.
      */
-    public ManifestValidationResult parse(final String rawCsv, final String anonScript)
+    public ManifestValidationResult parse(final String rawCsv, final String anonScript, final TransferMode mode)
             throws ManifestValidationException {
         final String csv = stripBom(rawCsv);
         if (StringUtils.isBlank(csv)) {
@@ -200,11 +204,80 @@ public class ManifestService {
                             + "' is empty but the script binds ${csv." + column + "}.");
                 }
             }
+            row.setSubjectRow(StringUtils.isBlank(row.getSourceSessionLabel()));
+            if (row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+                row.getValueErrors().add("'" + COL_DEST_SESSION + "' can't be set on a subject row: it would apply "
+                        + "to every session of the subject. List the subject's sessions individually instead.");
+            }
             rows.add(row);
         }
+        flagDuplicateSessions(rows, mode == null || mode == TransferMode.REIMPORT);
+        flagDuplicateDestinationLabels(rows);
         result.setRows(rows);
-        result.setSummary(new ManifestSummary(0, 0));   // matched/not_found filled after resolution
+        result.setSummary(new ManifestSummary(0, 0));   // filled after resolution
         return result;
+    }
+
+    /**
+     * Marks {@code duplicate_session} on every row that covers what another row also covers: the same subject and
+     * session listed twice, the same subject row twice, and, for Reimport (where a subject row means all of the
+     * subject's sessions), a subject row together with any other row for that subject. For Share/Clone a subject
+     * row is the subject record alone, so it can sit beside rows for that subject's sessions. Labels only, so it
+     * needs no XNAT lookup. Rows with a blank subject label are left to the resolver.
+     */
+    private static void flagDuplicateSessions(final List<ManifestRow> rows, final boolean reimport) {
+        final Map<String, List<ManifestRow>> bySubject = new LinkedHashMap<>();
+        for (final ManifestRow row : rows) {
+            if (StringUtils.isNotBlank(row.getSourceSubjectLabel())) {
+                bySubject.computeIfAbsent(row.getSourceSubjectLabel(), k -> new ArrayList<>()).add(row);
+            }
+        }
+        for (final List<ManifestRow> subjectRows : bySubject.values()) {
+            final boolean coversAllSessions = reimport && subjectRows.stream().anyMatch(ManifestRow::isSubjectRow);
+            if (coversAllSessions && subjectRows.size() > 1) {
+                subjectRows.forEach(row -> row.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION));
+                continue;
+            }
+            final Map<String, List<ManifestRow>> bySession = new LinkedHashMap<>();
+            for (final ManifestRow row : subjectRows) {
+                bySession.computeIfAbsent(row.getSourceSessionLabel(), k -> new ArrayList<>()).add(row);
+            }
+            for (final List<ManifestRow> sessionRows : bySession.values()) {
+                if (sessionRows.size() > 1) {
+                    sessionRows.forEach(row -> row.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION));
+                }
+            }
+        }
+    }
+
+    /**
+     * Adds a {@code duplicate_destination_label} value error to each row whose {@value #COL_DEST_SESSION} is also
+     * another row's: two sessions can't land under one session label in the destination project. Labels only;
+     * a label that already exists in the destination still fails per session at import.
+     */
+    private static void flagDuplicateDestinationLabels(final List<ManifestRow> rows) {
+        final Map<String, List<ManifestRow>> byLabel = new LinkedHashMap<>();
+        for (final ManifestRow row : rows) {
+            if (!row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+                byLabel.computeIfAbsent(row.getDestinationSessionLabel(), k -> new ArrayList<>()).add(row);
+            }
+        }
+        for (final Map.Entry<String, List<ManifestRow>> entry : byLabel.entrySet()) {
+            final List<ManifestRow> sameLabel = entry.getValue();
+            if (sameLabel.size() < 2) {
+                continue;
+            }
+            for (final ManifestRow row : sameLabel) {
+                final List<String> others = new ArrayList<>();
+                for (final ManifestRow other : sameLabel) {
+                    if (other != row) {
+                        others.add(String.valueOf(other.getIndex()));
+                    }
+                }
+                row.getValueErrors().add("duplicate_destination_label: '" + entry.getKey() + "' is also the "
+                        + COL_DEST_SESSION + " of row " + String.join(", ", others) + ".");
+            }
+        }
     }
 
     /** A mapped, present cell value; {@code ""} when the row is short a column (commons-csv would throw). */

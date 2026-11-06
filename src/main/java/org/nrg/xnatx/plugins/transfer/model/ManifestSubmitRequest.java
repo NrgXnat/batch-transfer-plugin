@@ -25,4 +25,7 @@ public class ManifestSubmitRequest {
     private String anonScript;
     private boolean anonReplacePipeline;
     private String trackingId;
+    /** Reimport only: keep the source subject/session label where the manifest gives no destination label. */
+    private Boolean preserveSubjectLabel;
+    private Boolean preserveSessionLabel;
 }

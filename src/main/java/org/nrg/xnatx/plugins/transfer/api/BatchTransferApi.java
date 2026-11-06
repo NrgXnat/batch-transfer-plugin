@@ -47,8 +47,12 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
 import static org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE;
@@ -237,29 +241,41 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         final ManifestValidationResult result;
         try {
-            result = manifestService.parse(csv, anonScript);
+            result = manifestService.parse(csv, anonScript, mode);
         } catch (ManifestValidationException e) {
             return new ResponseEntity<>(e.getMessage(), e.getStatus());
         }
 
         if (result.isRequiredPresent() && !result.getRows().isEmpty()) {
-            preflightResolver.resolveAll(sourceProject, result.getRows(), user, includeFileCount);
-            int matched = 0;
-            for (final ManifestRow row : result.getRows()) {
-                if (ManifestRow.STATUS_MATCHED.equals(row.getStatus())) {
-                    matched++;
-                }
-            }
-            result.setSummary(new ManifestSummary(matched, result.getRows().size() - matched));
+            result.setRows(preflightResolver.resolveAll(sourceProject, result.getRows(), user, mode, includeFileCount));
+            result.setSummary(summarize(result.getRows()));
         }
         return new ResponseEntity<>(result, HttpStatus.OK);
+    }
+
+    /** Tally resolved entries: matched entries (sessions or items), and rows by each non-matched status. */
+    private static ManifestSummary summarize(final List<ManifestRow> rows) {
+        final ManifestSummary summary = new ManifestSummary();
+        for (final ManifestRow row : rows) {
+            final String status = row.getStatus();
+            if (ManifestRow.STATUS_MATCHED.equals(status)) {
+                summary.setMatched(summary.getMatched() + 1);
+            } else if (ManifestRow.STATUS_NO_SESSIONS.equals(status)) {
+                summary.setNoSessions(summary.getNoSessions() + 1);
+            } else if (ManifestRow.STATUS_DUPLICATE_SESSION.equals(status)) {
+                summary.setDuplicateSession(summary.getDuplicateSession() + 1);
+            } else {
+                summary.setNotFound(summary.getNotFound() + 1);
+            }
+        }
+        return summary;
     }
 
     // ---- Manifest: one-shot resolve-and-submit --------------------------------------------------------
 
     @ApiOperation(value = "Resolves a manifest and submits the matched rows as a batch transfer")
-    @ApiResponses({ @ApiResponse(code = 200, message = "Submitted (with skipped-not-found count)"),
-                    @ApiResponse(code = 400, message = "Invalid request / no matched rows / anon-script check failed"),
+    @ApiResponses({ @ApiResponse(code = 200, message = "Submitted (with skipped rows by reason)"),
+                    @ApiResponse(code = 400, message = "Invalid request / no matched rows / duplicate_session or value errors / anon-script check failed"),
                     @ApiResponse(code = 403, message = "No read access to source, or no edit access for a custom anon_script"),
                     @ApiResponse(code = 409, message = "This XNAT build does not support per-import anonymization"),
                     @ApiResponse(code = 413, message = "Manifest exceeds the row cap")})
@@ -270,6 +286,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
         final TransferMode mode = request.getMode() == null ? TransferMode.REIMPORT : request.getMode();
         return doSubmitManifest(request.getSourceProject(), request.getDestinationProject(), mode,
                 request.getManifestCsv(), request.getAnonScript(), request.isAnonReplacePipeline(),
+                request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(),
                 request.getTrackingId(), getSessionUser());
     }
 
@@ -285,6 +302,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
             @RequestParam(value = "anon_script", required = false) final String anonScript,
             @RequestParam(value = "anon_replace_pipeline", required = false, defaultValue = "false")
                     final boolean anonReplacePipeline,
+            @RequestParam(value = "preserve_subject_label", required = false) final Boolean preserveSubjectLabel,
+            @RequestParam(value = "preserve_session_label", required = false) final Boolean preserveSessionLabel,
             @RequestParam(value = "tracking_id", required = false) final String trackingId) {
         final TransferMode resolvedMode = resolveMode(mode);
         if (resolvedMode == null) {
@@ -298,13 +317,14 @@ public class BatchTransferApi extends AbstractXapiRestController {
                     HttpStatus.BAD_REQUEST);
         }
         return doSubmitManifest(sourceProject, destinationProject, resolvedMode, csv, anonScript,
-                anonReplacePipeline, trackingId, getSessionUser());
+                anonReplacePipeline, preserveSubjectLabel, preserveSessionLabel, trackingId, getSessionUser());
     }
 
     private ResponseEntity<?> doSubmitManifest(final String sourceProject, final String destinationProject,
                                                final TransferMode mode, final String csv, final String anonScript,
-                                               final boolean anonReplacePipeline, final String trackingId,
-                                               final UserI user) {
+                                               final boolean anonReplacePipeline,
+                                               final Boolean preserveSubjectLabel, final Boolean preserveSessionLabel,
+                                               final String trackingId, final UserI user) {
         if (StringUtils.isBlank(sourceProject)) {
             return new ResponseEntity<>("source_project is required.", HttpStatus.BAD_REQUEST);
         }
@@ -318,7 +338,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         final ManifestValidationResult result;
         try {
-            result = manifestService.parse(csv, anonScript);
+            result = manifestService.parse(csv, anonScript, mode);
         } catch (ManifestValidationException e) {
             return new ResponseEntity<>(e.getMessage(), e.getStatus());
         }
@@ -327,37 +347,63 @@ public class BatchTransferApi extends AbstractXapiRestController {
                     + String.join(", ", result.getMissingColumns()) + ".", HttpStatus.BAD_REQUEST);
         }
 
-        preflightResolver.resolveAll(sourceProject, result.getRows(), user);
+        final List<ManifestRow> rows = preflightResolver.resolveAll(sourceProject, result.getRows(), user, mode, false);
+
+        // Rows that cover the same session block the submit: there is no rule for which row's values would win.
+        final Set<Integer> duplicateRows = new TreeSet<>();
+        for (final ManifestRow row : rows) {
+            if (ManifestRow.STATUS_DUPLICATE_SESSION.equals(row.getStatus())) {
+                duplicateRows.add(row.getIndex());
+            }
+        }
+        if (!duplicateRows.isEmpty()) {
+            return new ResponseEntity<>("Manifest rows cover the same session more than once ("
+                    + ManifestRow.STATUS_DUPLICATE_SESSION + ") - rows " + StringUtils.join(duplicateRows, ", ")
+                    + ". List each session once, either through its subject row or on its own row.",
+                    HttpStatus.BAD_REQUEST);
+        }
 
         // A matched row with value errors (bad charset value or invalid routing label) is not transferable —
         // reject up front rather than submitting known-bad data.
-        final List<String> rowErrors = new ArrayList<>();
-        for (final ManifestRow row : result.getRows()) {
+        final Map<Integer, String> rowErrors = new TreeMap<>();
+        for (final ManifestRow row : rows) {
             if (ManifestRow.STATUS_MATCHED.equals(row.getStatus()) && !row.getValueErrors().isEmpty()) {
-                rowErrors.add("row " + row.getIndex() + ": " + String.join("; ", row.getValueErrors()));
+                rowErrors.putIfAbsent(row.getIndex(),
+                        "row " + row.getIndex() + ": " + String.join("; ", row.getValueErrors()));
             }
         }
         if (!rowErrors.isEmpty()) {
             return new ResponseEntity<>("Manifest has value errors that block submit — "
-                    + String.join(" | ", rowErrors), HttpStatus.BAD_REQUEST);
+                    + String.join(" | ", rowErrors.values()), HttpStatus.BAD_REQUEST);
         }
 
+        // One request per matched entry: a Reimport subject row has already been expanded into its sessions,
+        // each carrying the row's values and destination subject label.
         final List<TransferRequest> requests = new ArrayList<>();
-        int skipped = 0;
-        for (final ManifestRow row : result.getRows()) {
+        final Map<String, Integer> skipped = new LinkedHashMap<>();
+        skipped.put(ManifestRow.STATUS_SUBJECT_NOT_FOUND, 0);
+        skipped.put(ManifestRow.STATUS_SESSION_NOT_FOUND, 0);
+        skipped.put(ManifestRow.STATUS_NO_SESSIONS, 0);
+        int skippedTotal = 0;
+        for (final ManifestRow row : rows) {
             if (ManifestRow.STATUS_MATCHED.equals(row.getStatus())) {
                 final TransferRequest request = new TransferRequest(destinationProject, row.getResolvedId(), mode);
                 request.setCsvValues(row.getCsvValues());
                 request.setDestinationSubjectLabel(row.getDestinationSubjectLabel());
                 request.setDestinationSessionLabel(row.getDestinationSessionLabel());
+                if (mode == TransferMode.REIMPORT) {
+                    request.setPreserveSubjectLabel(preserveSubjectLabel);
+                    request.setPreserveSessionLabel(preserveSessionLabel);
+                }
                 requests.add(request);
             } else {
-                skipped++;
+                skipped.merge(row.getStatus(), 1, Integer::sum);
+                skippedTotal++;
             }
         }
         if (requests.isEmpty()) {
-            return new ResponseEntity<>("No matched sessions to submit (" + skipped + " row(s) not found).",
-                    HttpStatus.BAD_REQUEST);
+            return new ResponseEntity<>("Nothing to submit: every row was skipped (" + describeSkipped(skipped)
+                    + ").", HttpStatus.BAD_REQUEST);
         }
 
         final BatchTransfer batch = new BatchTransfer(requests, trackingId);
@@ -370,11 +416,22 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         batchTransferService.submitTransferRequest(batch, user);
-        return new ResponseEntity<>(new ManifestSubmitResult(batch.getTrackingId(), requests.size(), skipped),
-                HttpStatus.OK);
+        return new ResponseEntity<>(new ManifestSubmitResult(batch.getTrackingId(), requests.size(), skippedTotal,
+                skipped), HttpStatus.OK);
     }
 
     // ---- helpers --------------------------------------------------------------------------------------
+
+    /** "2 subject_not_found, 1 no_sessions": the non-zero skip reasons, in order. */
+    private static String describeSkipped(final Map<String, Integer> skipped) {
+        final List<String> parts = new ArrayList<>();
+        for (final Map.Entry<String, Integer> entry : skipped.entrySet()) {
+            if (entry.getValue() > 0) {
+                parts.add(entry.getValue() + " " + entry.getKey());
+            }
+        }
+        return String.join(", ", parts);
+    }
 
     /**
      * True when the user can read (or the project is otherwise resolvable to) {@code project}. Protected seam
