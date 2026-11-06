@@ -149,11 +149,11 @@ var XNAT = getObject(XNAT || {});
     };
 
     // -- Operation Banners --
-    // Renders 0-2 alert banners into the "About this transfer" panel:
-    //   1) Anon-status banner - only "warn" or "good" severities; never shown when there's
-    //      nothing actionable to say (e.g. Share into a non-anonymized project).
-    //   2) Storage caution banner - shown for Reimport (its storage/time cost is a property
-    //      of the operation). Clone's storage note lives in its operation description instead.
+    // The "About this transfer" panel only carries alerts the action bar does not show. Reimport's
+    // anonymization status and storage cost are action-bar chips (anonChipsHtml), each with its full
+    // explanation as a tooltip, so they are not repeated here. What remains is Share or Clone into a
+    // destination with anonymization enabled: the data is transferred as-is, and neither operation has
+    // an anonymization chip.
 
     function updateAnonBanner() {
         var area = document.getElementById('bt-op-detail-warning-area');
@@ -161,36 +161,13 @@ var XNAT = getObject(XNAT || {});
 
         var html = '';
         var dest = selectedProject;
-
-        // Anonymization-status banner. Severity: good = anonymization will run cleanly; warn (red) =
-        // expectation bypassed OR double anonymization; caution (amber) = duplication cost.
-        if (dest) {
-            var anonEnabled = projectAnonCache[dest];
-            var script = hasCustomScript();
-            if (selectedOp === 'Share' && anonEnabled === true) {
+        if (dest && projectAnonCache[dest] === true) {
+            if (selectedOp === 'Share') {
                 html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Share does not anonymize - the data is made visible as-is.');
-            } else if (selectedOp === 'Clone' && anonEnabled === true) {
+            } else if (selectedOp === 'Clone') {
                 html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Clone copies the data as-is - the cloned copy is not anonymized.');
-            } else if (selectedOp === 'Reimport') {
-                if (anonEnabled === true && !script) {
-                    html += banner('good', 'Image sessions will be anonymized by <strong>' + dest + '</strong>\'s anonymization on reimport.');
-                } else if (anonEnabled === true && script) {
-                    html += banner('warn', 'Both <strong>' + dest + '</strong>\'s anonymization and your custom script will be applied (double anonymization).');
-                } else if (anonEnabled === false && script) {
-                    html += banner('good', '<strong>' + dest + '</strong> has no anonymization configured; your custom script will anonymize the reimported sessions.');
-                } else if (anonEnabled === false && !script) {
-                    html += banner('warn', '<strong>' + dest + '</strong> has no anonymization configured and no custom script is set - reimported sessions will not be anonymized.');
-                }
-                // anonEnabled unknown (null): no anon banner yet.
             }
-            // Share/Clone into a non-anon destination: nothing to flag.
         }
-
-        // Storage caution - Reimport only (Clone's storage note lives in its description).
-        if (selectedOp === 'Reimport') {
-            html += banner('caution', 'Reimported data can take up significant storage in the destination project, and reimporting may take some time.');
-        }
-
         area.innerHTML = html;
     }
 
@@ -918,7 +895,10 @@ var XNAT = getObject(XNAT || {});
         return { count: lastTreeCount.selectedCount, noun: 'items' };
     }
 
-    function chip(kind, html) { return '<span class="bt-mini-' + kind + '">' + html + '</span>'; }
+    // A status chip. The optional title is the full sentence behind the short chip text.
+    function chip(kind, html, title) {
+        return '<span class="bt-mini-' + kind + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + html + '</span>';
+    }
 
     // Which source labels the user chose to preserve (Reimport only): 'subject' and/or 'session'.
     function preservedLabels() {
@@ -930,17 +910,29 @@ var XNAT = getObject(XNAT || {});
     }
 
     // Anonymization-status chips for the action bar. Reimport reflects destination-anon x custom-script;
-    // Clone advertises hard-linking; Share shows none.
+    // Clone advertises hard-linking; Share shows none. These are the only place Reimport's anonymization
+    // status and storage cost appear, so each chip's title carries the full explanation.
     function anonChipsHtml() {
         if (selectedOp === 'Reimport') {
             var script = hasCustomScript();
-            var anon = projectAnonCache[selectedProject];   // true / false / undefined (not yet known)
+            var dest = selectedProject;
+            var anon = projectAnonCache[dest];   // true / false / undefined (not yet known)
             var out;
-            if (anon === true && script) { out = chip('warn', '&#9888; double anonymization'); }
-            else if (anon === true) { out = chip('good', '&#10003; destination anonymization'); }
-            else if (anon === false && script) { out = chip('good', '&#10003; custom script'); }
-            else if (anon === false) { out = chip('warn', '&#9888; not anonymized'); }
-            else { out = script ? chip('good', '&#10003; custom script') : chip('good', '&#10003; destination anonymization'); }
+            if (anon === true && script) {
+                out = chip('warn', '&#9888; double anonymization',
+                    'Both ' + dest + '\'s anonymization and your custom script will be applied.');
+            } else if (anon === true) {
+                out = chip('good', '&#10003; destination anonymization',
+                    'Image sessions will be anonymized by ' + dest + '\'s anonymization on reimport.');
+            } else if (anon === false && script) {
+                out = chip('good', '&#10003; custom script',
+                    dest + ' has no anonymization configured; your custom script will anonymize the reimported sessions.');
+            } else if (anon === false) {
+                out = chip('warn', '&#9888; not anonymized',
+                    dest + ' has no anonymization configured and no custom script is set - reimported sessions will not be anonymized.');
+            } else {
+                out = script ? chip('good', '&#10003; custom script') : chip('good', '&#10003; destination anonymization');
+            }
             // Anonymization (destination pipeline or custom script) is in effect, but preserving the source
             // XNAT labels re-introduces the original subject/session labels - which may carry identifiers and
             // are not touched by anonymization. Warn when both are set.
@@ -948,11 +940,13 @@ var XNAT = getObject(XNAT || {});
             var preserved = preservedLabels();
             if (anonInEffect && preserved.length) {
                 // Kept short: this is the longest chip, and the action bar is a single row. The
-                // reason behind it is spelled out in the rail's label help.
+                // reason behind it is in its title and in the rail's label help.
                 out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
-                    + (preserved.length > 1 ? 's' : '') + ' not anonymized');
+                    + (preserved.length > 1 ? 's' : '') + ' not anonymized',
+                    'Preserved source labels are kept as they are; anonymization does not change XNAT labels.');
             }
-            return out + chip('caution', '&#9888; duplicates storage');
+            return out + chip('caution', '&#9888; duplicates storage',
+                'Reimported data can take up significant storage in the destination project, and reimporting may take some time.');
         }
         if (selectedOp === 'Clone') { return chip('good', '&#10003; hard-linked, no extra storage'); }
         return '';
