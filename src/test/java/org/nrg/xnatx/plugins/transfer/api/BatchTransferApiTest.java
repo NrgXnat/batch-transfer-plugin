@@ -331,12 +331,25 @@ public class BatchTransferApiTest {
     @Test
     public void submitManifest_matchedRowWithValueError_returns400() throws Exception {
         final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
+        row.setRowNumber(5);
         row.getValueErrors().add("destination_subject_label is not a valid XNAT label");
         when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue("names the row as a spreadsheet numbers it", ((String) resp.getBody()).contains("row 5: "));
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submitManifest_noDataRows_returns400() throws Exception {
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true));
+
+        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("The manifest has no data rows.", resp.getBody());
         verify(service, never()).submitTransferRequest(any(), any());
     }
 
@@ -344,15 +357,17 @@ public class BatchTransferApiTest {
     public void submitManifest_duplicateSession_returns400() throws Exception {
         final ManifestRow subject = notFoundRow("S1", "", ManifestRow.STATUS_DUPLICATE_SESSION);
         subject.setIndex(1);
+        subject.setRowNumber(2);
         final ManifestRow session = notFoundRow("S1", "SESS1", ManifestRow.STATUS_DUPLICATE_SESSION);
         session.setIndex(2);
+        session.setRowNumber(3);
         when(manifestService.parse(any(), any(), any())).thenReturn(result(true, subject, session,
                 matchedRow("S2", "SESS2", "E2", csv("pid", "ANON-2"))));
 
         final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        assertTrue(((String) resp.getBody()).contains("rows 1, 2"));
+        assertTrue(((String) resp.getBody()).contains("rows 2, 3"));
         verify(service, never()).submitTransferRequest(any(), any());
     }
 

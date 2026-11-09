@@ -275,7 +275,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
     @ApiOperation(value = "Resolves a manifest and submits the matched rows as a batch transfer")
     @ApiResponses({ @ApiResponse(code = 200, message = "Submitted (with skipped rows by reason)"),
-                    @ApiResponse(code = 400, message = "Invalid request / no matched rows / duplicate_session or value errors / anon-script check failed"),
+                    @ApiResponse(code = 400, message = "Invalid request / no data or matched rows / duplicate_session or value errors / anon-script check failed"),
                     @ApiResponse(code = 403, message = "No read access to source, or no edit access for a custom anon_script"),
                     @ApiResponse(code = 409, message = "This XNAT build does not support per-import anonymization"),
                     @ApiResponse(code = 413, message = "Manifest exceeds the row cap")})
@@ -346,6 +346,9 @@ public class BatchTransferApi extends AbstractXapiRestController {
             return new ResponseEntity<>("The manifest is missing required column(s): "
                     + String.join(", ", result.getMissingColumns()) + ".", HttpStatus.BAD_REQUEST);
         }
+        if (result.getRows().isEmpty()) {
+            return new ResponseEntity<>("The manifest has no data rows.", HttpStatus.BAD_REQUEST);
+        }
 
         final List<ManifestRow> rows = preflightResolver.resolveAll(sourceProject, result.getRows(), user, mode, false);
 
@@ -353,7 +356,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
         final Set<Integer> duplicateRows = new TreeSet<>();
         for (final ManifestRow row : rows) {
             if (ManifestRow.STATUS_DUPLICATE_SESSION.equals(row.getStatus())) {
-                duplicateRows.add(row.getIndex());
+                duplicateRows.add(row.getRowNumber());
             }
         }
         if (!duplicateRows.isEmpty()) {
@@ -368,12 +371,12 @@ public class BatchTransferApi extends AbstractXapiRestController {
         final Map<Integer, String> rowErrors = new TreeMap<>();
         for (final ManifestRow row : rows) {
             if (ManifestRow.STATUS_MATCHED.equals(row.getStatus()) && !row.getValueErrors().isEmpty()) {
-                rowErrors.putIfAbsent(row.getIndex(),
-                        "row " + row.getIndex() + ": " + String.join("; ", row.getValueErrors()));
+                rowErrors.putIfAbsent(row.getRowNumber(),
+                        "row " + row.getRowNumber() + ": " + String.join("; ", row.getValueErrors()));
             }
         }
         if (!rowErrors.isEmpty()) {
-            return new ResponseEntity<>("Manifest has value errors that block submit — "
+            return new ResponseEntity<>("Manifest has value errors that block submit: "
                     + String.join(" | ", rowErrors.values()), HttpStatus.BAD_REQUEST);
         }
 

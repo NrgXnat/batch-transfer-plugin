@@ -60,6 +60,7 @@ public class ManifestServiceTest {
 
         final ManifestRow row = r.getRows().get(0);
         assertEquals(1, row.getIndex());
+        assertEquals("the header is row 1", 2, row.getRowNumber());
         assertEquals("S1", row.getSourceSubjectLabel());
         assertEquals("SESS1", row.getSourceSessionLabel());
         // value columns only — required + reserved columns are not exposed as ${csv.*}
@@ -88,6 +89,38 @@ public class ManifestServiceTest {
         assertEquals(2, r.getTotalRows());
         assertEquals("LAST, FIRST", r.getRows().get(0).getCsvValues().get("destination_patient_id"));
         assertEquals("S2", r.getRows().get(1).getSourceSubjectLabel());
+        assertEquals(2, r.getRows().get(0).getRowNumber());
+        assertEquals("the blank line still takes a row", 4, r.getRows().get(1).getRowNumber());
+    }
+
+    @Test
+    public void rowNumbersMatchASpreadsheet() throws Exception {
+        final ManifestValidationResult r = parse("\n\r\n"                          // rows 1-2: blank, above the header
+                + "source_subject_label,source_session_label,_notes\n"             // row 3: the header
+                + "S1,SESS1,\"two\nlines\"\n"                                     // row 4: a quoted line break stays in the row
+                + "   \n"                                                          // row 5: only spaces, skipped
+                + "S2,SESS2,x\n");                                                 // row 6
+
+        assertTrue("blank lines above the header are not read as the header", r.isRequiredPresent());
+        assertEquals(2, r.getTotalRows());
+        assertEquals(1, r.getRows().get(0).getIndex());
+        assertEquals(4, r.getRows().get(0).getRowNumber());
+        assertEquals(2, r.getRows().get(1).getIndex());
+        assertEquals(6, r.getRows().get(1).getRowNumber());
+    }
+
+    @Test
+    public void blankLinesDoNotCountTowardTheRowCap() throws Exception {
+        final BatchTransferPolicy tinyCap = mock(BatchTransferPolicy.class);
+        when(tinyCap.getAnonValueCharset()).thenReturn("A-Za-z0-9 ^_.-");
+        when(tinyCap.getManifestMaxRows()).thenReturn(2);
+        final ManifestService capped = new ManifestService(tinyCap,
+                new ScriptCompiler(mock(MizerService.class), tinyCap));
+
+        final ManifestValidationResult r = capped.parse(
+                "source_subject_label,source_session_label\nA,1\n\n\nB,2\n\n", null, TransferMode.REIMPORT);
+
+        assertEquals(2, r.getTotalRows());
     }
 
     @Test
@@ -310,8 +343,8 @@ public class ManifestServiceTest {
         final ManifestRow third = r.getRows().get(2);
         assertEquals(1, first.getValueErrors().size());
         assertTrue(first.getValueErrors().get(0).startsWith("duplicate_destination_label"));
-        assertTrue("names the other row", first.getValueErrors().get(0).contains("row 3"));
-        assertTrue(third.getValueErrors().get(0).contains("row 1"));
+        assertTrue("names the other row as a spreadsheet numbers it", first.getValueErrors().get(0).contains("row 4"));
+        assertTrue(third.getValueErrors().get(0).contains("row 2"));
         assertTrue(r.getRows().get(1).getValueErrors().isEmpty());
         assertNull("a destination-label clash is a value error, not a status", first.getStatus());
     }

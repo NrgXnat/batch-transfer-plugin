@@ -65,18 +65,31 @@ public class ManifestService {
      * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
      * completes after running the {@link PreflightResolver}. {@code mode} (null = Reimport) decides what a subject
      * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject.
+     *
+     * <p>Blank lines (empty, or only spaces) are skipped, but each row's {@code rowNumber} still counts them, as a
+     * spreadsheet does, so a message about row 7 points at row 7 when the file is opened.
      */
     public ManifestValidationResult parse(final String rawCsv, final String anonScript, final TransferMode mode)
             throws ManifestValidationException {
-        final String csv = stripBom(rawCsv);
-        if (StringUtils.isBlank(csv)) {
+        final String bomless = stripBom(rawCsv);
+        if (StringUtils.isBlank(bomless)) {
             throw new ManifestValidationException(HttpStatus.BAD_REQUEST, "The manifest is empty.");
         }
 
+        // Blank lines above the header would otherwise be read as the header; drop them but keep their count.
+        int start = 0;
+        int linesAboveHeader = 0;
+        while (start < bomless.length() && (bomless.charAt(start) == '\r' || bomless.charAt(start) == '\n')) {
+            start += bomless.startsWith("\r\n", start) ? 2 : 1;
+            linesAboveHeader++;
+        }
+        final String csv = bomless.substring(start);
+
+        // Empty lines are kept as records so the parser's record numbers line up with the file's rows.
         final CSVFormat format = CSVFormat.DEFAULT.builder()
                 .setHeader()
                 .setSkipHeaderRecord(true)
-                .setIgnoreEmptyLines(true)
+                .setIgnoreEmptyLines(false)
                 .setTrim(true)
                 .build();
 
@@ -86,6 +99,9 @@ public class ManifestService {
         try (CSVParser parser = CSVParser.parse(csv, format)) {
             headers = parser.getHeaderNames();
             for (final CSVRecord record : parser) {
+                if (isBlankLine(record)) {
+                    continue;
+                }
                 if (records.size() >= maxRows) {
                     throw new ManifestValidationException(HttpStatus.PAYLOAD_TOO_LARGE,
                             "The manifest exceeds the maximum of " + maxRows + " rows.");
@@ -164,6 +180,8 @@ public class ManifestService {
             index++;
             final ManifestRow row = new ManifestRow();
             row.setIndex(index);
+            // Record numbers start at 1 for the first line after the header and count blank lines.
+            row.setRowNumber(linesAboveHeader + 1 + (int) record.getRecordNumber());
             row.setSourceSubjectLabel(cell(record, COL_SUBJECT));
             row.setSourceSessionLabel(cell(record, COL_SESSION));
             if (hasDestSubject) {
@@ -194,7 +212,7 @@ public class ManifestService {
                 final String label = csvValues.get(column);
                 if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
                     row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
-                            + "digits, _ and - ; must start alphanumeric — other characters are rewritten to "
+                            + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
                             + "'_' at ingest, so the label would not route as written).");
                 }
             }
@@ -271,13 +289,18 @@ public class ManifestService {
                 final List<String> others = new ArrayList<>();
                 for (final ManifestRow other : sameLabel) {
                     if (other != row) {
-                        others.add(String.valueOf(other.getIndex()));
+                        others.add(String.valueOf(other.getRowNumber()));
                     }
                 }
                 row.getValueErrors().add("duplicate_destination_label: '" + entry.getKey() + "' is also the "
                         + COL_DEST_SESSION + " of row " + String.join(", ", others) + ".");
             }
         }
+    }
+
+    /** An empty line, or one of only spaces: a single value that trims to nothing. */
+    private static boolean isBlankLine(final CSVRecord record) {
+        return record.size() == 1 && record.get(0).isEmpty();
     }
 
     /** A mapped, present cell value; {@code ""} when the row is short a column (commons-csv would throw). */

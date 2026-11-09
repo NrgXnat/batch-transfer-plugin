@@ -199,6 +199,7 @@ public class PreflightResolverTest {
         final StubResolver resolver = new StubResolver(Collections.singletonMap("S1",
                 Arrays.asList(session("E2", "SESS_B"), nonImage("E3", "QC_FORM"), session("E1", "SESS_A"))));
         final ManifestRow row = subjectRow(3, "S1");
+        row.setRowNumber(4);
         row.setCsvValues(Collections.singletonMap("pid", "ANON-1"));
         row.setDestinationSubjectLabel("ANON_S1");
         row.getValueWarnings().add("a warning");
@@ -213,6 +214,7 @@ public class PreflightResolverTest {
         for (final ManifestRow entry : resolved) {
             assertEquals(ManifestRow.STATUS_MATCHED, entry.getStatus());
             assertEquals("keeps the manifest row it came from", 3, entry.getIndex());
+            assertEquals(4, entry.getRowNumber());
             assertTrue(entry.isSubjectRow());
             assertEquals("S1", entry.getSourceSubjectLabel());
             assertEquals("ANON-1", entry.getCsvValues().get("pid"));

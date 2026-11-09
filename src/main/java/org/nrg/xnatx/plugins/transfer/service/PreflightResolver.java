@@ -151,6 +151,7 @@ public class PreflightResolver {
     private static ManifestRow copyOf(final ManifestRow row) {
         final ManifestRow copy = new ManifestRow();
         copy.setIndex(row.getIndex());
+        copy.setRowNumber(row.getRowNumber());
         copy.setSourceSubjectLabel(row.getSourceSubjectLabel());
         copy.setSourceSessionLabel(row.getSourceSessionLabel());
         copy.setSubjectRow(row.isSubjectRow());
