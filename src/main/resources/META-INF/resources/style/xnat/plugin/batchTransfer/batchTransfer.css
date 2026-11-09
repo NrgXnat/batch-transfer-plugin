@@ -1242,7 +1242,7 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 
 .bt-csv-loading { padding: 14px; font-size: 13px; color: #5f6368; }
 .bt-csv-error { padding: 14px; font-size: 13px; color: #c5221f; }
-.bt-csv-head { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; }
+.bt-csv-head { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 10px; font-size: 12.5px; }
 .bt-csv-ok { color: #137333; }
 .bt-csv-miss { color: #c5221f; }
 .bt-csv-file {
@@ -1334,6 +1334,23 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-cohort-table tr.bt-csv-warnrow td { color: #b06000; font-size: 11.5px; }
 .bt-cohort-table tr.bt-csv-detailrow td { background: #fafbfc; }
 .bt-csv-detail-line { font-size: 11.5px; color: #3c4043; margin: 2px 0; }
+/* The manifest table is grouped by subject: a header line per subject, its sessions indented under it,
+   and each line's row number in the file. */
+.bt-cohort-table .bt-csv-rown { width: 36px; color: #5f6368; text-align: right; }
+.bt-cohort-table tr.bt-csv-subj td { background: #f8f9fa; }
+.bt-cohort-table tr.bt-csv-subj.bt-csv-missrow td,
+.bt-cohort-table tr.bt-csv-subj.bt-csv-rowerr td { background: #fef6f5; }
+.bt-cohort-table .bt-csv-subjlabel { font-weight: 600; color: #202124; }
+.bt-cohort-table .bt-csv-scope {
+    margin-left: 8px;
+    padding: 1px 8px;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    background: #fff;
+    color: #5f6368;
+    font-size: 11px;
+}
+.bt-cohort-table td.bt-csv-src { padding-left: 32px; }
 /* Same failure as the two above: this renders as real text in manifest cells and verdicts. */
 .bt-muted { color: #5f6368; }
 .bt-script-preview {
