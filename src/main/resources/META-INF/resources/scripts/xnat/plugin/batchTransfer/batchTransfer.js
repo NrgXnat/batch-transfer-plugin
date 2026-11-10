@@ -866,6 +866,7 @@ var XNAT = getObject(XNAT || {});
 
     function csvBuilderState() {
         if (manifestPending) { return 'resolving the manifest'; }
+        if (manifestError) { return 'manifest could not be resolved'; }
         if (!manifestResult) { return 'no file uploaded'; }
         if (!manifestResult.required_present) { return 'missing required columns'; }
         return countText(manifestMatchedCount(), selectedOp === 'Reimport' ? 'session' : 'item') + ' from ' +
@@ -958,6 +959,7 @@ var XNAT = getObject(XNAT || {});
         if (!selectedProject) { return ['select a destination']; }
         if (cohortMode === 'csv') {
             if (manifestPending) { return ['resolving the manifest']; }
+            if (manifestError) { return ['the manifest could not be resolved']; }
             if (!manifestResult) { return ['upload a manifest']; }
             if (!manifestCurrent()) { return ['resolving the manifest']; }
             if (!manifestResult.required_present) { return ['manifest missing required columns']; }
@@ -1012,6 +1014,7 @@ var XNAT = getObject(XNAT || {});
     var manifestResultOp = null;    // the operation manifestResult was resolved for
     var manifestRequestOp = null;   // the operation of the newest /validate/manifest request
     var manifestPending = false;    // a /validate/manifest request is in flight
+    var manifestError = null;       // why the last request failed, while the file is kept for a retry
     var manifestSeq = 0;            // request counter, so only the newest response is used
     var manifestGroupsCache = null; // { result, groups } built from manifestResult
     var manifestExpanded = {};      // resolved_id -> session detail open?
@@ -1067,6 +1070,7 @@ var XNAT = getObject(XNAT || {});
             if (dt && dt.files && dt.files[0]) { uploadManifest(dt.files[0]); }
         });
         $(document).on('click', '#bt-csv-replace', function() { resetManifest(); });
+        $(document).on('click', '#bt-csv-retry', function() { resolveManifest(); });
         $(document).on('click', '.bt-csv-caret, .bt-files-lazy', function() {
             toggleManifestEntry($(this).attr('data-id'));
         });
@@ -1105,7 +1109,7 @@ var XNAT = getObject(XNAT || {});
         manifestSeq++;                 // a response still in flight no longer applies
         manifestText = null; manifestFileName = '';
         manifestResult = null; manifestResultOp = null; manifestRequestOp = null;
-        manifestPending = false; manifestGroupsCache = null;
+        manifestPending = false; manifestError = null; manifestGroupsCache = null;
         manifestExpanded = {}; manifestFileCounts = {}; manifestFileCountErr = {};
         manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
         $('#bt-csv-file').val('');
@@ -1146,7 +1150,7 @@ var XNAT = getObject(XNAT || {});
         var op = selectedOp;
         var seq = ++manifestSeq;
         manifestRequestOp = op;
-        manifestPending = true;
+        manifestPending = true; manifestError = null;
         $('#bt-dropzone').hide();
         renderCsvResults();
         updateSummary();
@@ -1170,9 +1174,19 @@ var XNAT = getObject(XNAT || {});
             },
             error: function(xhr) {
                 if (seq !== manifestSeq) { return; }
-                var message = responseMessage(xhr);
-                resetManifest();
-                $('#bt-csv-results').html('<div class="bt-csv-error">Could not resolve the manifest: ' + escapeHtml(message) + '</div>');
+                var message = xhr.status ? responseMessage(xhr) : 'no response from the server';
+                // A 4xx rejects the file or the request, so start over. Anything else (no response, a timeout,
+                // a 5xx) may pass on a retry, so the file is kept.
+                if (xhr.status >= 400 && xhr.status < 500) {
+                    resetManifest();
+                    $('#bt-csv-results').html('<div class="bt-csv-error">Could not resolve the manifest: ' + escapeHtml(message) + '</div>');
+                    return;
+                }
+                manifestPending = false;
+                manifestResult = null; manifestResultOp = null; manifestGroupsCache = null;
+                manifestError = message;
+                renderCsvResults();
+                updateSummary();
             }
         });
     }
@@ -1264,6 +1278,11 @@ var XNAT = getObject(XNAT || {});
         // The manifest bar (file name + Replace file) shows whenever a manifest is loaded, so it is always clearable.
         var bar = manifestBarHtml();
         var r = manifestResult;
+        if (manifestError) {
+            $('#bt-csv-results').html(bar + '<div class="bt-csv-error">Could not resolve the manifest: ' +
+                escapeHtml(manifestError) + ' <a id="bt-csv-retry" class="bt-csv-retry-link">Retry</a></div>');
+            return;
+        }
         if (manifestPending || !r) {
             $('#bt-csv-results').html(bar + '<div class="bt-csv-loading">Resolving manifest...</div>');
             return;
