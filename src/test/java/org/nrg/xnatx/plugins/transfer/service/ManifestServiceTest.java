@@ -385,4 +385,30 @@ public class ManifestServiceTest {
         assertTrue(r.getRows().get(1).getValueErrors().isEmpty());
         assertNull("a destination-label clash is a value error, not a status", first.getStatus());
     }
+
+    @Test
+    public void forShareAndCloneTheValueAndRoutingColumnsAreNotChecked() throws Exception {
+        final String script = "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"";
+        for (final TransferMode mode : Arrays.asList(TransferMode.SHARE, TransferMode.CLONE)) {
+            final ManifestValidationResult r = parse(HEADER
+                    + "S1,,STUDY2_S1\n"                  // on a subject row
+                    + "S2,SESS2,STUDY2_A\n"              // the same label twice
+                    + "S3,SESS3,STUDY2_A\n"
+                    + "S4,SESS4,STUDY2.042\n", mode);    // not a valid XNAT label
+            for (final ManifestRow row : r.getRows()) {
+                assertTrue(mode + ", row " + row.getRowNumber() + ": " + row.getValueErrors(),
+                        row.getValueErrors().isEmpty());
+            }
+
+            final ManifestValidationResult values = service.parse("source_subject_label,source_session_label,pid\n"
+                    + "S1,SESS1,\"bad\"\"value\"\n"      // outside the value charset
+                    + "S2,SESS2,\n", script, mode);      // empty, though the script binds it
+            for (final ManifestRow row : values.getRows()) {
+                assertTrue(mode + ": " + row.getValueErrors(), row.getValueErrors().isEmpty());
+                assertTrue(mode + ": " + row.getValueWarnings(), row.getValueWarnings().isEmpty());
+            }
+        }
+        assertFalse("a null mode is Reimport",
+                parse(HEADER + "S1,,STUDY2_S1\n", null).getRows().get(0).getValueErrors().isEmpty());
+    }
 }

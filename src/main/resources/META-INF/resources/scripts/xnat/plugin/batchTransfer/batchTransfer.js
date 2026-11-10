@@ -967,7 +967,7 @@ var XNAT = getObject(XNAT || {});
             var reasons = [];
             var duplicates = statusRows('duplicate_session');
             if (duplicates.length) { reasons.push('duplicate_session in ' + rowList(duplicates)); }
-            // /manifest rejects a matched row with a value error whatever the operation, so it blocks here too.
+            // /manifest rejects a matched row with a value error, so it blocks here too.
             var errors = valueErrorRows();
             if (errors.length) { reasons.push('value errors in ' + rowList(errors)); }
             if (anonBlocks()) { reasons.push('fix the anonymization script'); }
@@ -1295,11 +1295,11 @@ var XNAT = getObject(XNAT || {});
         var reimport = selectedOp === 'Reimport';
 
         var html = bar;
-        // Share/Clone don't use the routing and value columns, but their values are still checked at submit.
+        // Share/Clone use neither the routing nor the value columns, so the server doesn't check them.
         if (!reimport && ((r.routing_columns || []).length || (r.value_columns || []).length)) {
             html += '<div class="bt-anon-banner bt-anon-ok" style="margin:0 0 12px;"><span class="bt-anon-icon">&#8505;</span>' +
                 '<div>Routing and ${csv.*} value columns in this manifest are not used for ' + selectedOp +
-                ', but their values are still checked, so a value error blocks submit.</div></div>';
+                ', so their values are not checked.</div></div>';
         }
         html += manifestSummaryHtml(reimport);
 

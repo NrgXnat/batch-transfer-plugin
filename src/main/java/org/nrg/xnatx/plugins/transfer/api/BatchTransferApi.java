@@ -391,10 +391,11 @@ public class BatchTransferApi extends AbstractXapiRestController {
         for (final ManifestRow row : rows) {
             if (ManifestRow.STATUS_MATCHED.equals(row.getStatus())) {
                 final TransferRequest request = new TransferRequest(destinationProject, row.getResolvedId(), mode);
-                request.setCsvValues(row.getCsvValues());
-                request.setDestinationSubjectLabel(row.getDestinationSubjectLabel());
-                request.setDestinationSessionLabel(row.getDestinationSessionLabel());
+                // The manifest's values, routing labels and Preserve settings apply only to Reimport.
                 if (mode == TransferMode.REIMPORT) {
+                    request.setCsvValues(row.getCsvValues());
+                    request.setDestinationSubjectLabel(row.getDestinationSubjectLabel());
+                    request.setDestinationSessionLabel(row.getDestinationSessionLabel());
                     request.setPreserveSubjectLabel(preserveSubjectLabel);
                     request.setPreserveSessionLabel(preserveSessionLabel);
                 }

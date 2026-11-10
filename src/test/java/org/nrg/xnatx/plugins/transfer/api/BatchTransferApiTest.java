@@ -407,6 +407,25 @@ public class BatchTransferApiTest {
     }
 
     @Test
+    public void submitManifest_valuesAndRoutingLabels_notAppliedToShare() throws Exception {
+        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
+        row.setDestinationSubjectLabel("ANON-042");
+        row.setDestinationSessionLabel("STUDY2_042");
+        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
+        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
+        req.setMode(TransferMode.SHARE);
+
+        api.submitManifest(req);
+
+        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
+        verify(service).submitTransferRequest(batch.capture(), eq(user));
+        final TransferRequest request = batch.getValue().getRequests().get(0);
+        assertNull(request.getCsvValues());
+        assertNull(request.getDestinationSubjectLabel());
+        assertNull(request.getDestinationSessionLabel());
+    }
+
+    @Test
     public void submitManifest_expandedSubjectRow_submitsEachSessionWithTheRowsValues() throws Exception {
         final ManifestRow sessionA = matchedRow("S1", "SESS_A", "E1", csv("pid", "ANON-1"));
         sessionA.setDestinationSubjectLabel("ANON_S1");

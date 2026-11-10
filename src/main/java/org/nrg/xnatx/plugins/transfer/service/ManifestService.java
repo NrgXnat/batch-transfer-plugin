@@ -64,7 +64,8 @@ public class ManifestService {
      * Parse and classify {@code rawCsv}, filling every field of the result except each row's resolution
      * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
      * completes after running the {@link PreflightResolver}. {@code mode} (null = Reimport) decides what a subject
-     * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject.
+     * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject. It
+     * also decides whether the value and routing columns are checked: only Reimport uses them.
      *
      * <p>Blank lines (empty, only spaces, or only commas, as a spreadsheet exports an emptied row) are skipped, but
      * each row's {@code rowNumber} still counts them, as a spreadsheet does, so a message about row 7 points at
@@ -184,6 +185,8 @@ public class ManifestService {
 
         final boolean hasDestSubject = headers.contains(COL_DEST_SUBJECT);
         final boolean hasDestSession = headers.contains(COL_DEST_SESSION);
+        // Only Reimport uses the value and routing columns, so only Reimport checks them.
+        final boolean reimport = mode == null || mode == TransferMode.REIMPORT;
 
         final List<ManifestRow> rows = new ArrayList<>(records.size());
         int index = 0;
@@ -213,35 +216,39 @@ public class ManifestService {
             row.setCsvValues(csvValues);
 
             // Value columns: DICOM-safe charset. Routing columns: XNAT-label charset (blank = derive, no error).
-            for (final String column : value) {
-                if (!scriptCompiler.isValueSafe(csvValues.get(column))) {
-                    row.getValueErrors().add("Value for '" + column
-                            + "' contains characters outside the allowed set.");
+            if (reimport) {
+                for (final String column : value) {
+                    if (!scriptCompiler.isValueSafe(csvValues.get(column))) {
+                        row.getValueErrors().add("Value for '" + column
+                                + "' contains characters outside the allowed set.");
+                    }
                 }
-            }
-            for (final String column : routing) {
-                final String label = csvValues.get(column);
-                if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
-                    row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
-                            + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
-                            + "'_' at ingest, so the label would not route as written).");
+                for (final String column : routing) {
+                    final String label = csvValues.get(column);
+                    if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
+                        row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
+                                + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
+                                + "'_' at ingest, so the label would not route as written).");
+                    }
                 }
-            }
-            for (final String column : boundPlaceholders) {
-                if (StringUtils.isBlank(csvValues.get(column))) {
-                    row.getValueWarnings().add("Value for '" + column
-                            + "' is empty but the script binds ${csv." + column + "}.");
+                for (final String column : boundPlaceholders) {
+                    if (StringUtils.isBlank(csvValues.get(column))) {
+                        row.getValueWarnings().add("Value for '" + column
+                                + "' is empty but the script binds ${csv." + column + "}.");
+                    }
                 }
             }
             row.setSubjectRow(StringUtils.isBlank(row.getSourceSessionLabel()));
-            if (row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+            if (reimport && row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
                 row.getValueErrors().add("'" + COL_DEST_SESSION + "' can't be set on a subject row: it would apply "
                         + "to every session of the subject. List the subject's sessions individually instead.");
             }
             rows.add(row);
         }
-        flagDuplicateSessions(rows, mode == null || mode == TransferMode.REIMPORT);
-        flagDuplicateDestinationLabels(rows);
+        flagDuplicateSessions(rows, reimport);
+        if (reimport) {
+            flagDuplicateDestinationLabels(rows);
+        }
         result.setRows(rows);
         result.setSummary(new ManifestSummary(0, 0));   // filled after resolution
         return result;
