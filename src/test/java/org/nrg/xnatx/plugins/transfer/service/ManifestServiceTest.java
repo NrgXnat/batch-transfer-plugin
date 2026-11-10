@@ -110,6 +110,32 @@ public class ManifestServiceTest {
     }
 
     @Test
+    public void linesOfSpacesOrCommasAboveTheHeaderAreSkipped() throws Exception {
+        final ManifestValidationResult r = parse("  \n"                            // row 1: only spaces
+                + ",,\r\n"                                                       // row 2: an emptied spreadsheet row
+                + "source_subject_label,source_session_label\n"                  // row 3: the header
+                + "S1,SESS1\n");                                                 // row 4
+
+        assertTrue("a blank line is not read as the header", r.isRequiredPresent());
+        assertEquals(1, r.getTotalRows());
+        assertEquals(4, r.getRows().get(0).getRowNumber());
+    }
+
+    @Test
+    public void aRowOfOnlyCommasIsSkippedButARowWithAValueIsNot() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label,pid\n"
+                + "S1,SESS1,A\n"                                                 // row 2
+                + ", ,\n"                                                        // row 3: an emptied spreadsheet row
+                + ",,B\n"                                                        // row 4: it has a value, so it's kept
+                + "S2,SESS2,C\n");                                               // row 5
+
+        assertEquals(3, r.getTotalRows());
+        assertEquals(4, r.getRows().get(1).getRowNumber());
+        assertEquals("B", r.getRows().get(1).getCsvValues().get("pid"));
+        assertEquals(5, r.getRows().get(2).getRowNumber());
+    }
+
+    @Test
     public void blankLinesDoNotCountTowardTheRowCap() throws Exception {
         final BatchTransferPolicy tinyCap = mock(BatchTransferPolicy.class);
         when(tinyCap.getAnonValueCharset()).thenReturn("A-Za-z0-9 ^_.-");
@@ -246,6 +272,17 @@ public class ManifestServiceTest {
             fail("expected ManifestValidationException for an empty manifest");
         } catch (ManifestValidationException e) {
             assertEquals(HttpStatus.BAD_REQUEST, e.getStatus());
+        }
+    }
+
+    @Test
+    public void rejectsAManifestOfOnlyBlankRows() {
+        try {
+            parse(",,\n , \n");
+            fail("expected ManifestValidationException for a manifest with no header");
+        } catch (ManifestValidationException e) {
+            assertEquals(HttpStatus.BAD_REQUEST, e.getStatus());
+            assertEquals("The manifest is empty.", e.getMessage());
         }
     }
 

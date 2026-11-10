@@ -66,8 +66,9 @@ public class ManifestService {
      * completes after running the {@link PreflightResolver}. {@code mode} (null = Reimport) decides what a subject
      * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject.
      *
-     * <p>Blank lines (empty, or only spaces) are skipped, but each row's {@code rowNumber} still counts them, as a
-     * spreadsheet does, so a message about row 7 points at row 7 when the file is opened.
+     * <p>Blank lines (empty, only spaces, or only commas, as a spreadsheet exports an emptied row) are skipped, but
+     * each row's {@code rowNumber} still counts them, as a spreadsheet does, so a message about row 7 points at
+     * row 7 when the file is opened.
      */
     public ManifestValidationResult parse(final String rawCsv, final String anonScript, final TransferMode mode)
             throws ManifestValidationException {
@@ -79,9 +80,19 @@ public class ManifestService {
         // Blank lines above the header would otherwise be read as the header; drop them but keep their count.
         int start = 0;
         int linesAboveHeader = 0;
-        while (start < bomless.length() && (bomless.charAt(start) == '\r' || bomless.charAt(start) == '\n')) {
-            start += bomless.startsWith("\r\n", start) ? 2 : 1;
+        while (start < bomless.length()) {
+            int end = start;
+            while (end < bomless.length() && bomless.charAt(end) != '\r' && bomless.charAt(end) != '\n') {
+                end++;
+            }
+            if (!isBlankLine(bomless.substring(start, end))) {
+                break;
+            }
+            start = bomless.startsWith("\r\n", end) ? end + 2 : end + 1;
             linesAboveHeader++;
+        }
+        if (start >= bomless.length()) {
+            throw new ManifestValidationException(HttpStatus.BAD_REQUEST, "The manifest is empty.");
         }
         final String csv = bomless.substring(start);
 
@@ -99,7 +110,7 @@ public class ManifestService {
         try (CSVParser parser = CSVParser.parse(csv, format)) {
             headers = parser.getHeaderNames();
             for (final CSVRecord record : parser) {
-                if (isBlankLine(record)) {
+                if (isBlankRecord(record)) {
                     continue;
                 }
                 if (records.size() >= maxRows) {
@@ -298,9 +309,14 @@ public class ManifestService {
         }
     }
 
-    /** An empty line, or one of only spaces: a single value that trims to nothing. */
-    private static boolean isBlankLine(final CSVRecord record) {
-        return record.size() == 1 && record.get(0).isEmpty();
+    /** A line of only spaces and commas: an empty spreadsheet row, however many columns it was exported with. */
+    private static boolean isBlankLine(final String line) {
+        return StringUtils.isBlank(StringUtils.remove(line, ','));
+    }
+
+    /** A record whose cells all trim to nothing: an empty line, or one of only spaces and commas. */
+    private static boolean isBlankRecord(final CSVRecord record) {
+        return record.stream().allMatch(String::isEmpty);
     }
 
     /** A mapped, present cell value; {@code ""} when the row is short a column (commons-csv would throw). */
