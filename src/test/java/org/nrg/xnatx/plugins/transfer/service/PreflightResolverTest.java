@@ -4,7 +4,6 @@ import org.junit.Test;
 import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
-import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -88,9 +87,9 @@ public class PreflightResolverTest {
         return new PreflightResolver.SessionRef(id, label, false);
     }
 
-    private static List<ManifestRow> resolve(final StubResolver resolver, final TransferMode mode,
-                                             final boolean fileCount, final ManifestRow... rows) {
-        return resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(rows)), mock(UserI.class), mode, fileCount);
+    private static List<ManifestRow> resolve(final StubResolver resolver, final boolean fileCount,
+                                             final ManifestRow... rows) {
+        return resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(rows)), mock(UserI.class), fileCount);
     }
 
     @Test
@@ -99,7 +98,7 @@ public class PreflightResolverTest {
                 Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
         final ManifestRow row = row("S1", "SESS1");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
         assertEquals("E1", row.getResolvedId());
@@ -111,7 +110,7 @@ public class PreflightResolverTest {
                 "S1", Arrays.asList(session("E1", "SESS1"), session("E2", "SESS2"))));
         final ManifestRow row = row("S1", "NOPE");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_SESSION_NOT_FOUND, row.getStatus());
         assertNull(row.getResolvedId());
@@ -122,7 +121,7 @@ public class PreflightResolverTest {
         final StubResolver resolver = new StubResolver(Collections.<String, List<PreflightResolver.SessionRef>>emptyMap());
         final ManifestRow row = row("MISSING", "SESS1");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_SUBJECT_NOT_FOUND, row.getStatus());
     }
@@ -132,7 +131,7 @@ public class PreflightResolverTest {
         final StubResolver resolver = new StubResolver(Collections.<String, List<PreflightResolver.SessionRef>>emptyMap());
         final ManifestRow row = row("", "SESS1");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_SUBJECT_NOT_FOUND, row.getStatus());
         assertEquals("no subject lookup for a blank label", 0, resolver.findSubjectCalls);
@@ -145,7 +144,7 @@ public class PreflightResolverTest {
         final ManifestRow r1 = row("S1", "SESS1");
         final ManifestRow r2 = row("S1", "SESS2");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(r1, r2)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(r1, r2)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_MATCHED, r1.getStatus());
         assertEquals(ManifestRow.STATUS_MATCHED, r2.getStatus());
@@ -158,7 +157,7 @@ public class PreflightResolverTest {
                 Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
         final ManifestRow row = row("S1", "SESS1");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, true);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), true);
 
         assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
         assertEquals(Integer.valueOf(42), row.getFileCount());
@@ -172,7 +171,7 @@ public class PreflightResolverTest {
                 Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
         final ManifestRow row = row("S1", "SESS1");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, false);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), false);
 
         assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
         assertNull("no file count without the flag", row.getFileCount());
@@ -185,7 +184,7 @@ public class PreflightResolverTest {
                 Collections.singletonMap("S1", Arrays.asList(session("E1", "SESS1"))));
         final ManifestRow row = row("S1", "NOPE");
 
-        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), TransferMode.REIMPORT, true);
+        resolver.resolveAll("PROJ", new ArrayList<>(Arrays.asList(row)), mock(UserI.class), true);
 
         assertEquals(ManifestRow.STATUS_SESSION_NOT_FOUND, row.getStatus());
         assertNull(row.getFileCount());
@@ -195,7 +194,7 @@ public class PreflightResolverTest {
     // ---- subject rows ----------------------------------------------------------------------------------
 
     @Test
-    public void reimportSubjectRowExpandsToItsImageSessionsByLabel() {
+    public void subjectRowExpandsToItsImageSessionsByLabel() {
         final StubResolver resolver = new StubResolver(Collections.singletonMap("S1",
                 Arrays.asList(session("E2", "SESS_B"), nonImage("E3", "QC_FORM"), session("E1", "SESS_A"))));
         final ManifestRow row = subjectRow(3, "S1");
@@ -204,7 +203,7 @@ public class PreflightResolverTest {
         row.setDestinationSubjectLabel("ANON_S1");
         row.getValueWarnings().add("a warning");
 
-        final List<ManifestRow> resolved = resolve(resolver, TransferMode.REIMPORT, false, row);
+        final List<ManifestRow> resolved = resolve(resolver, false, row);
 
         assertEquals("one entry per image session; the non-image experiment is left out", 2, resolved.size());
         assertEquals("SESS_A", resolved.get(0).getSourceSessionLabel());
@@ -226,12 +225,12 @@ public class PreflightResolverTest {
     }
 
     @Test
-    public void reimportSubjectRowWithNoImageSessionsIsNoSessions() {
+    public void subjectRowWithNoImageSessionsIsNoSessions() {
         final StubResolver resolver = new StubResolver(
                 Collections.singletonMap("S1", Arrays.asList(nonImage("E3", "QC_FORM"))));
         final ManifestRow row = subjectRow(1, "S1");
 
-        final List<ManifestRow> resolved = resolve(resolver, TransferMode.REIMPORT, false, row);
+        final List<ManifestRow> resolved = resolve(resolver, false, row);
 
         assertEquals(1, resolved.size());
         assertSame(row, resolved.get(0));
@@ -240,26 +239,11 @@ public class PreflightResolverTest {
     }
 
     @Test
-    public void shareAndCloneSubjectRowResolvesToTheSubjectItself() {
-        for (final TransferMode mode : Arrays.asList(TransferMode.SHARE, TransferMode.CLONE)) {
-            final StubResolver resolver = new StubResolver(Collections.singletonMap("S1",
-                    Arrays.asList(session("E1", "SESS_A"), session("E2", "SESS_B"))));
-            final ManifestRow row = subjectRow(1, "S1");
-
-            final List<ManifestRow> resolved = resolve(resolver, mode, false, row);
-
-            assertEquals(mode + ": one item, not one per session", 1, resolved.size());
-            assertEquals(ManifestRow.STATUS_MATCHED, row.getStatus());
-            assertEquals("SUBJ_S1", row.getResolvedId());
-        }
-    }
-
-    @Test
     public void subjectRowForAMissingSubjectIsSubjectNotFound() {
         final StubResolver resolver = new StubResolver(Collections.<String, List<PreflightResolver.SessionRef>>emptyMap());
         final ManifestRow row = subjectRow(1, "MISSING");
 
-        final List<ManifestRow> resolved = resolve(resolver, TransferMode.REIMPORT, false, row);
+        final List<ManifestRow> resolved = resolve(resolver, false, row);
 
         assertEquals(1, resolved.size());
         assertEquals(ManifestRow.STATUS_SUBJECT_NOT_FOUND, row.getStatus());
@@ -274,7 +258,7 @@ public class PreflightResolverTest {
         final ManifestRow session = row("S1", "SESS1");
         session.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION);
 
-        final List<ManifestRow> resolved = resolve(resolver, TransferMode.REIMPORT, false, subject, session);
+        final List<ManifestRow> resolved = resolve(resolver, false, subject, session);
 
         assertEquals(2, resolved.size());
         assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, resolved.get(0).getStatus());
@@ -288,7 +272,7 @@ public class PreflightResolverTest {
         final StubResolver resolver = new StubResolver(Collections.singletonMap("S1",
                 Arrays.asList(session("E1", "SESS_A"), session("E2", "SESS_B"))));
 
-        final List<ManifestRow> resolved = resolve(resolver, TransferMode.REIMPORT, true, subjectRow(1, "S1"));
+        final List<ManifestRow> resolved = resolve(resolver, true, subjectRow(1, "S1"));
 
         assertEquals(Integer.valueOf(42), resolved.get(0).getFileCount());
         assertEquals(Integer.valueOf(42), resolved.get(1).getFileCount());
@@ -299,7 +283,7 @@ public class PreflightResolverTest {
     public void aMissingSubjectIsLookedUpOnlyOnce() {
         final StubResolver resolver = new StubResolver(Collections.<String, List<PreflightResolver.SessionRef>>emptyMap());
 
-        resolve(resolver, TransferMode.REIMPORT, false, row("MISSING", "SESS1"), row("MISSING", "SESS2"));
+        resolve(resolver, false, row("MISSING", "SESS1"), row("MISSING", "SESS2"));
 
         assertEquals(1, resolver.findSubjectCalls);
     }

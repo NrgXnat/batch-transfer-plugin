@@ -90,7 +90,7 @@ public class BatchTransferApiTest {
         // Default: the source project is readable. Individual tests override to false for the 403 case.
         doReturn(true).when(api).canReadProject(anyString(), any(UserI.class));
         // The resolver is mocked: fixture rows already carry their statuses, so it hands them back unchanged.
-        when(preflightResolver.resolveAll(any(), any(), any(), any(), anyBoolean()))
+        when(preflightResolver.resolveAll(any(), any(), any(), anyBoolean()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
     }
 
@@ -116,7 +116,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void validateManifest_parseOverCap_returns413() throws Exception {
-        when(manifestService.parse(any(), any(), any()))
+        when(manifestService.parse(any(), any()))
                 .thenThrow(new ManifestValidationException(HttpStatus.PAYLOAD_TOO_LARGE, "too big"));
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, resp.getStatusCode());
@@ -127,12 +127,12 @@ public class BatchTransferApiTest {
         final ManifestValidationResult result = result(true,
                 matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
                 notFoundRow("S9", "SESS9", ManifestRow.STATUS_SUBJECT_NOT_FOUND));
-        when(manifestService.parse(any(), any(), any())).thenReturn(result);
+        when(manifestService.parse(any(), any())).thenReturn(result);
 
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.REIMPORT), eq(false));
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
         final ManifestValidationResult body = (ManifestValidationResult) resp.getBody();
         assertEquals(1, body.getSummary().getMatched());
         assertEquals(1, body.getSummary().getNotFound());
@@ -140,7 +140,7 @@ public class BatchTransferApiTest {
 
     @Test
     public void validateManifest_fileCountFlag_threadedToResolver() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
 
         final ManifestValidationRequest req = validationRequest(SRC, null);
@@ -148,7 +148,7 @@ public class BatchTransferApiTest {
         final ResponseEntity<?> resp = api.validateManifest(req);
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.REIMPORT), eq(true));
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(true));
     }
 
     @Test
@@ -156,7 +156,7 @@ public class BatchTransferApiTest {
         final ResponseEntity<?> resp = api.validateManifestUpload(
                 mock(MultipartFile.class), SRC, "NotAMode", null, null);
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        verify(manifestService, never()).parse(any(), any(), any());   // rejected before reading the file
+        verify(manifestService, never()).parse(any(), any());   // rejected before reading the file
     }
 
     @Test
@@ -164,7 +164,7 @@ public class BatchTransferApiTest {
         final MultipartFile file = mock(MultipartFile.class);
         when(file.getInputStream()).thenReturn(new ByteArrayInputStream(
                 "source_subject_label,source_session_label\nS1,SESS1\n".getBytes(StandardCharsets.UTF_8)));
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
+        when(manifestService.parse(any(), any())).thenReturn(result(true,
                 matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
 
         final ResponseEntity<?> resp = api.validateManifestUpload(file, SRC, null, null, null);
@@ -176,7 +176,7 @@ public class BatchTransferApiTest {
     public void validateManifest_summaryCountsEntriesAndRowsByStatus() throws Exception {
         final ManifestRow sessionA = matchedRow("S1", "SESS_A", "E1", csv("pid", "ANON-1"));
         final ManifestRow sessionB = matchedRow("S1", "SESS_B", "E2", csv("pid", "ANON-1"));
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, sessionA, sessionB,
+        when(manifestService.parse(any(), any())).thenReturn(result(true, sessionA, sessionB,
                 notFoundRow("S2", "", ManifestRow.STATUS_NO_SESSIONS),
                 notFoundRow("S3", "", ManifestRow.STATUS_DUPLICATE_SESSION),
                 notFoundRow("S3", "SESS3", ManifestRow.STATUS_DUPLICATE_SESSION),
@@ -192,15 +192,17 @@ public class BatchTransferApiTest {
     }
 
     @Test
-    public void validateManifest_modeThreadedToResolver() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "", "SUBJ1", Collections.<String, String>emptyMap())));
+    public void validateManifest_modeIsAcceptedAndIgnored() throws Exception {
+        when(manifestService.parse(any(), any())).thenReturn(result(true,
+                matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
         final ManifestValidationRequest req = validationRequest(SRC, null);
         req.setMode(TransferMode.CLONE);
 
-        api.validateManifest(req);
+        final ResponseEntity<?> resp = api.validateManifest(req);
 
-        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(TransferMode.CLONE), eq(false));
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(manifestService).parse(req.getManifestCsv(), null);
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
     }
 
     // ---- validate/script -----------------------------------------------------------------------------

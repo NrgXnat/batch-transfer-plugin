@@ -8,7 +8,6 @@ import org.nrg.xdat.om.XnatExperimentdata;
 import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
-import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.util.XnatUtils;
 import org.springframework.stereotype.Service;
 
@@ -37,10 +36,8 @@ import java.util.Map;
  *   {@code session_not_found}. Existence only: the row is matched when the subject has an experiment with that
  *   label; reimportability (image-session-only, assessor rejection) is re-checked at submit
  *   ({@code BatchTransferServiceImpl}), which is the authoritative gate.</li>
- *   <li><b>Subject row</b> (blank session label), Reimport → one {@code matched} entry per image session of the
- *   subject, each a copy of the row with that session's label and id; {@code no_sessions} when the subject has
- *   none.</li>
- *   <li><b>Subject row</b>, Share/Clone → {@code matched} with the subject's id: the subject itself transfers.</li>
+ *   <li><b>Subject row</b> (blank session label) → one {@code matched} entry per image session of the subject,
+ *   each a copy of the row with that session's label and id; {@code no_sessions} when the subject has none.</li>
  * </ul>
  * A row that already carries a status from parsing ({@code duplicate_session}) is passed through unresolved.
  * Subjects are cached by label within a batch so repeated rows don't re-load.
@@ -55,14 +52,13 @@ import java.util.Map;
 public class PreflightResolver {
 
     /**
-     * Resolve {@code rows} and return the resolved entries, in manifest order. For Reimport, a matched subject
+     * Resolve {@code rows} for a Reimport and return the resolved entries, in manifest order. A matched subject
      * row is replaced by its sessions, so the result can be longer than {@code rows}. When
      * {@code includeFileCount} is true, each matched session also gets its reimportable-DICOM {@code fileCount}
      * (a filesystem walk per session — request it only for the rows that need it).
      */
     public List<ManifestRow> resolveAll(final String sourceProject, final List<ManifestRow> rows, final UserI user,
-                                        final TransferMode mode, final boolean includeFileCount) {
-        final boolean reimport = mode == null || mode == TransferMode.REIMPORT;
+                                        final boolean includeFileCount) {
         final Map<String, SubjectRef> cache = new HashMap<>();
         final List<ManifestRow> resolved = new ArrayList<>(rows.size());
         for (final ManifestRow row : rows) {
@@ -87,12 +83,8 @@ public class PreflightResolver {
             } else if (!row.isSubjectRow()) {
                 resolveSession(row, subject, user, includeFileCount);
                 resolved.add(row);
-            } else if (reimport) {
-                resolved.addAll(expandSubject(row, subject, user, includeFileCount));
             } else {
-                row.setStatus(ManifestRow.STATUS_MATCHED);
-                row.setResolvedId(subject.id);
-                resolved.add(row);
+                resolved.addAll(expandSubject(row, subject, user, includeFileCount));
             }
         }
         return resolved;
@@ -101,7 +93,7 @@ public class PreflightResolver {
     /** The subject with its sessions, or null when it isn't found or isn't readable. */
     private SubjectRef lookUpSubject(final String sourceProject, final String label, final UserI user) {
         final XnatSubjectdata subject = findSubject(sourceProject, label, user);
-        return (subject == null) ? null : new SubjectRef(subject.getId(), listSessions(subject));
+        return (subject == null) ? null : new SubjectRef(listSessions(subject));
     }
 
     private void resolveSession(final ManifestRow row, final SubjectRef subject, final UserI user,
@@ -119,7 +111,7 @@ public class PreflightResolver {
         row.setStatus(ManifestRow.STATUS_SESSION_NOT_FOUND);
     }
 
-    /** A Reimport subject row → one matched entry per image session (by label), or the row as {@code no_sessions}. */
+    /** A subject row → one matched entry per image session (by label), or the row as {@code no_sessions}. */
     private List<ManifestRow> expandSubject(final ManifestRow row, final SubjectRef subject, final UserI user,
                                             final boolean includeFileCount) {
         final List<SessionRef> imageSessions = new ArrayList<>();
@@ -258,13 +250,11 @@ public class PreflightResolver {
         }
     }
 
-    /** A found subject: its id and its experiments. */
+    /** A found subject's experiments. */
     private static final class SubjectRef {
-        final String           id;
         final List<SessionRef> sessions;
 
-        SubjectRef(final String id, final List<SessionRef> sessions) {
-            this.id = id;
+        SubjectRef(final List<SessionRef> sessions) {
             this.sessions = sessions;
         }
     }

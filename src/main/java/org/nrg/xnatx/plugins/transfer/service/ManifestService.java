@@ -8,7 +8,6 @@ import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSummary;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.ScriptBinding;
-import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -63,15 +62,14 @@ public class ManifestService {
     /**
      * Parse and classify {@code rawCsv}, filling every field of the result except each row's resolution
      * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
-     * completes after running the {@link PreflightResolver}. {@code mode} (null = Reimport) decides what a subject
-     * row overlaps with: for Reimport it covers all of the subject's sessions; for Share/Clone only the subject. It
-     * also decides whether the value and routing columns are checked: only Reimport uses them.
+     * completes after running the {@link PreflightResolver}. A manifest always describes a Reimport: a subject
+     * row covers all of the subject's image sessions, and the value and routing columns are checked.
      *
      * <p>Blank lines (empty, only spaces, or only commas, as a spreadsheet exports an emptied row) are skipped, but
      * each row's {@code rowNumber} still counts them, as a spreadsheet does, so a message about row 7 points at
      * row 7 when the file is opened.
      */
-    public ManifestValidationResult parse(final String rawCsv, final String anonScript, final TransferMode mode)
+    public ManifestValidationResult parse(final String rawCsv, final String anonScript)
             throws ManifestValidationException {
         final String bomless = stripBom(rawCsv);
         if (StringUtils.isBlank(bomless)) {
@@ -185,8 +183,6 @@ public class ManifestService {
 
         final boolean hasDestSubject = headers.contains(COL_DEST_SUBJECT);
         final boolean hasDestSession = headers.contains(COL_DEST_SESSION);
-        // Only Reimport uses the value and routing columns, so only Reimport checks them.
-        final boolean reimport = mode == null || mode == TransferMode.REIMPORT;
 
         final List<ManifestRow> rows = new ArrayList<>(records.size());
         int index = 0;
@@ -216,39 +212,35 @@ public class ManifestService {
             row.setCsvValues(csvValues);
 
             // Value columns: DICOM-safe charset. Routing columns: XNAT-label charset (blank = derive, no error).
-            if (reimport) {
-                for (final String column : value) {
-                    if (!scriptCompiler.isValueSafe(csvValues.get(column))) {
-                        row.getValueErrors().add("Value for '" + column
-                                + "' contains characters outside the allowed set.");
-                    }
+            for (final String column : value) {
+                if (!scriptCompiler.isValueSafe(csvValues.get(column))) {
+                    row.getValueErrors().add("Value for '" + column
+                            + "' contains characters outside the allowed set.");
                 }
-                for (final String column : routing) {
-                    final String label = csvValues.get(column);
-                    if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
-                        row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
-                                + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
-                                + "'_' at ingest, so the label would not route as written).");
-                    }
+            }
+            for (final String column : routing) {
+                final String label = csvValues.get(column);
+                if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
+                    row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
+                            + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
+                            + "'_' at ingest, so the label would not route as written).");
                 }
-                for (final String column : boundPlaceholders) {
-                    if (StringUtils.isBlank(csvValues.get(column))) {
-                        row.getValueWarnings().add("Value for '" + column
-                                + "' is empty but the script binds ${csv." + column + "}.");
-                    }
+            }
+            for (final String column : boundPlaceholders) {
+                if (StringUtils.isBlank(csvValues.get(column))) {
+                    row.getValueWarnings().add("Value for '" + column
+                            + "' is empty but the script binds ${csv." + column + "}.");
                 }
             }
             row.setSubjectRow(StringUtils.isBlank(row.getSourceSessionLabel()));
-            if (reimport && row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+            if (row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
                 row.getValueErrors().add("'" + COL_DEST_SESSION + "' can't be set on a subject row: it would apply "
                         + "to every session of the subject. List the subject's sessions individually instead.");
             }
             rows.add(row);
         }
-        flagDuplicateSessions(rows, reimport);
-        if (reimport) {
-            flagDuplicateDestinationLabels(rows);
-        }
+        flagDuplicateSessions(rows);
+        flagDuplicateDestinationLabels(rows);
         result.setRows(rows);
         result.setSummary(new ManifestSummary(0, 0));   // filled after resolution
         return result;
@@ -256,12 +248,11 @@ public class ManifestService {
 
     /**
      * Marks {@code duplicate_session} on every row that covers what another row also covers: the same subject and
-     * session listed twice, the same subject row twice, and, for Reimport (where a subject row means all of the
-     * subject's sessions), a subject row together with any other row for that subject. For Share/Clone a subject
-     * row is the subject record alone, so it can sit beside rows for that subject's sessions. Labels only, so it
-     * needs no XNAT lookup. Rows with a blank subject label are left to the resolver.
+     * session listed twice, the same subject row twice, and a subject row (which means all of the subject's
+     * sessions) together with any other row for that subject. Labels only, so it needs no XNAT lookup. Rows with a
+     * blank subject label are left to the resolver.
      */
-    private static void flagDuplicateSessions(final List<ManifestRow> rows, final boolean reimport) {
+    private static void flagDuplicateSessions(final List<ManifestRow> rows) {
         final Map<String, List<ManifestRow>> bySubject = new LinkedHashMap<>();
         for (final ManifestRow row : rows) {
             if (StringUtils.isNotBlank(row.getSourceSubjectLabel())) {
@@ -269,7 +260,7 @@ public class ManifestService {
             }
         }
         for (final List<ManifestRow> subjectRows : bySubject.values()) {
-            final boolean coversAllSessions = reimport && subjectRows.stream().anyMatch(ManifestRow::isSubjectRow);
+            final boolean coversAllSessions = subjectRows.stream().anyMatch(ManifestRow::isSubjectRow);
             if (coversAllSessions && subjectRows.size() > 1) {
                 subjectRows.forEach(row -> row.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION));
                 continue;

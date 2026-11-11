@@ -8,9 +8,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Per-manifest resolution tally. {@code matched} counts transferable entries: sessions for Reimport (a subject
- * row counts once per session) and items for Share/Clone. The other counts are manifest rows: {@code not_found}
- * (subject or session not found), {@code no_sessions} and {@code duplicate_session}.
+ * Per-manifest resolution tally. {@code matched} counts sessions (a subject row counts once per session it
+ * expanded to). The other counts are manifest rows: {@code not_found} (subject or session not found),
+ * {@code no_sessions} and {@code duplicate_session}.
  */
 @Data
 @NoArgsConstructor

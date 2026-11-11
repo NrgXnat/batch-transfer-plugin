@@ -182,7 +182,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
     // ---- Manifest: parse + light preflight (validate) --------------------------------------------------
 
-    @ApiOperation(value = "Parses a manifest CSV and resolves each row to a source session (no data touched)")
+    @ApiOperation(value = "Parses a manifest CSV and resolves each row to source sessions for Reimport (no data "
+            + "touched); mode is accepted and ignored")
     @ApiResponses({ @ApiResponse(code = 200, message = "Parsed result (including required-column/not-found detail)"),
                     @ApiResponse(code = 400, message = "Unparseable CSV or missing source_project"),
                     @ApiResponse(code = 403, message = "No read access to the source project"),
@@ -191,12 +192,12 @@ public class BatchTransferApi extends AbstractXapiRestController {
             produces = APPLICATION_JSON_VALUE, method = POST)
     @ResponseBody
     public ResponseEntity<?> validateManifest(@RequestBody final ManifestValidationRequest request) {
-        final TransferMode mode = request.getMode() == null ? TransferMode.REIMPORT : request.getMode();
-        return doValidateManifest(request.getSourceProject(), mode, request.getManifestCsv(),
-                request.getAnonScript(), request.isFileCount(), getSessionUser());
+        return doValidateManifest(request.getSourceProject(), request.getManifestCsv(), request.getAnonScript(),
+                request.isFileCount(), getSessionUser());
     }
 
-    @ApiOperation(value = "Parses an uploaded manifest CSV and resolves each row to a source session")
+    @ApiOperation(value = "Parses an uploaded manifest CSV and resolves each row to source sessions for Reimport; "
+            + "mode is accepted and ignored")
     @XapiRequestMapping(value = {"validate/manifest"}, consumes = MULTIPART_FORM_DATA_VALUE,
             produces = APPLICATION_JSON_VALUE, method = POST)
     @ResponseBody
@@ -206,8 +207,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
             @RequestParam(value = "mode", required = false) final String mode,
             @RequestParam(value = "anon_script", required = false) final String anonScript,
             @RequestParam(value = "file_count", required = false) final Boolean fileCount) {
-        final TransferMode resolvedMode = resolveMode(mode);
-        if (resolvedMode == null) {
+        if (resolveMode(mode) == null) {
             return new ResponseEntity<>("Invalid mode: " + mode, HttpStatus.BAD_REQUEST);
         }
         final String csv;
@@ -217,13 +217,12 @@ public class BatchTransferApi extends AbstractXapiRestController {
             return new ResponseEntity<>("Could not read the uploaded manifest: " + e.getMessage(),
                     HttpStatus.BAD_REQUEST);
         }
-        return doValidateManifest(sourceProject, resolvedMode, csv, anonScript,
-                Boolean.TRUE.equals(fileCount), getSessionUser());
+        return doValidateManifest(sourceProject, csv, anonScript, Boolean.TRUE.equals(fileCount), getSessionUser());
     }
 
-    private ResponseEntity<?> doValidateManifest(final String sourceProject, final TransferMode mode,
-                                                 final String csv, final String anonScript,
-                                                 final boolean includeFileCount, final UserI user) {
+    private ResponseEntity<?> doValidateManifest(final String sourceProject, final String csv,
+                                                 final String anonScript, final boolean includeFileCount,
+                                                 final UserI user) {
         if (StringUtils.isBlank(sourceProject)) {
             return new ResponseEntity<>("source_project is required.", HttpStatus.BAD_REQUEST);
         }
@@ -234,19 +233,19 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         final ManifestValidationResult result;
         try {
-            result = manifestService.parse(csv, anonScript, mode);
+            result = manifestService.parse(csv, anonScript);
         } catch (ManifestValidationException e) {
             return new ResponseEntity<>(e.getMessage(), e.getStatus());
         }
 
         if (result.isRequiredPresent() && !result.getRows().isEmpty()) {
-            result.setRows(preflightResolver.resolveAll(sourceProject, result.getRows(), user, mode, includeFileCount));
+            result.setRows(preflightResolver.resolveAll(sourceProject, result.getRows(), user, includeFileCount));
             result.setSummary(summarize(result.getRows()));
         }
         return new ResponseEntity<>(result, HttpStatus.OK);
     }
 
-    /** Tally resolved entries: matched entries (sessions or items), and rows by each non-matched status. */
+    /** Tally resolved entries: matched sessions, and rows by each non-matched status. */
     private static ManifestSummary summarize(final List<ManifestRow> rows) {
         final ManifestSummary summary = new ManifestSummary();
         for (final ManifestRow row : rows) {
