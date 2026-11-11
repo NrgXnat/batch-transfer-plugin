@@ -12,7 +12,8 @@ import java.util.List;
 /**
  * JSON body for {@code POST /xapi/transfer/validate/script}. {@code anonScript} is the raw DicomEdit (DE6)
  * template; {@code manifestColumns} is optional — when supplied the verdict reports which {@code ${csv.*}}
- * placeholders are unbound against those column names (omit it for interactive/no-manifest validation).
+ * placeholders are unbound against those column names. An empty list (a selection with no manifest) leaves every
+ * placeholder unbound; omit it to skip the binding check.
  */
 @Data
 @NoArgsConstructor

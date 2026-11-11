@@ -12,6 +12,7 @@ var XNAT = getObject(XNAT || {});
     XNAT.plugin.batchtransfer = getObject(XNAT.plugin.batchtransfer || {});
 
     var projectAnonCache = {};
+    var siteAnon;                  // site-wide script: true / false / null (check failed) / undefined (not checked)
     var selectedOp = 'Share';
     var lastOp = 'Share';          // previous operation, to detect leaving Reimport
     var selectedProject = null;
@@ -27,18 +28,6 @@ var XNAT = getObject(XNAT || {});
     // Replaces per-row `$('#bt-data-body tr[data-id=...]')` scans that made tree walks O(n2).
     var rowById = {};              // data-id  -> DOM <tr>
     var childrenByParent = {};     // data-parent -> [DOM <tr>, ...]
-
-    var operationDetails = {
-        Share: 'This operation shares the selected data into the destination project. ' +
-               'The data is not copied - it remains the same data element, owned by the source project, ' +
-               'and changes made there are reflected in the destination.',
-        Clone: 'This operation creates an independent copy of the selected data in the destination project. ' +
-               'The cloned data is editable separately from the source and is not anonymized. ' +
-               'Cloned session files are hard-linked to the source, requiring no additional disk space at the time of cloning.',
-        Reimport: 'This operation reimports the selected image sessions through the destination project\'s ' +
-                  'anonymization or a user provided DicomEdit script. Only DICOM files are transferred; target session metadata ' +
-                  'is derived from DICOM tags and/or anonymization parameters.'
-    };
 
     // -- Initialization --
 
@@ -66,12 +55,14 @@ var XNAT = getObject(XNAT || {});
         configureCohortModes();
         bindCsvUpload();
         bindAnonBand();
-        bindViewportSync();
+        bindScriptFile();
         fetchCapabilities();
+        checkSiteAnon();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
         applyOperationEligibility('Share');
         updateOperationDetail();
+        renderSummary();
         updateSummary();
     };
 
@@ -134,6 +125,9 @@ var XNAT = getObject(XNAT || {});
             callback(projectAnonCache[projectId], null);
             return;
         }
+        // The cache holds true or false once checked, and null when the check failed. No entry means not
+        // checked yet, which is also the state while this request is in flight.
+        delete projectAnonCache[projectId];
         $.ajax({
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/anonymize/projects/' + projectId + '/enabled'),
@@ -143,29 +137,73 @@ var XNAT = getObject(XNAT || {});
                 callback(data, null);
             },
             error: function(xhr) {
+                projectAnonCache[projectId] = null;
                 callback(null, 'Could not retrieve anonymization setting: ' + xhr.status);
             }
         });
     };
 
+    // The site-wide anonymization script runs on every Reimport when it is enabled. Any logged-in user may read
+    // whether it is.
+    function checkSiteAnon() {
+        $.ajax({
+            type: 'GET',
+            url: XNAT.url.rootUrl('/xapi/anonymize/site/enabled'),
+            contentType: 'application/json',
+            success: function(data) { siteAnon = data === true || data === 'true'; siteAnonChecked(); },
+            error: function() { siteAnon = null; siteAnonChecked(); }
+        });
+    }
+
+    function siteAnonChecked() {
+        var help = siteAnon === true
+            ? 'The site-wide anonymization script is enabled on this site, so it runs on every reimported session.'
+            : siteAnon === false
+                ? 'The site-wide anonymization script is not enabled on this site.'
+                : 'Could not check whether the site-wide anonymization script is enabled on this site.';
+        $('#bt-help-site').text(help).prop('hidden', false);
+        if (XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.layout(); }
+        updateSummary();
+    }
+
+    // The anonymization scripts a Reimport applies to each session, in the order they run: the site-wide script as
+    // each file is received, the custom script right after it, and the destination project's script when the
+    // session is archived. Each is 'on', 'off', or 'unknown' while its check hasn't answered or after it failed.
+    function anonScripts() {
+        function state(v) { return v === true ? 'on' : v === false ? 'off' : 'unknown'; }
+        return [
+            { key: 'site-wide', name: 'the site-wide script', state: state(siteAnon) },
+            { key: 'custom', name: 'your custom script', state: hasCustomScript() ? 'on' : 'off' },
+            { key: 'destination', name: selectedProject + '\'s script',
+              state: state(projectAnonCache[selectedProject]) }
+        ];
+    }
+
+    function scriptsIn(scripts, state) {
+        return scripts.filter(function(s) { return s.state === state; });
+    }
+
+    function scriptNames(scripts, separator) {
+        return scripts.map(function(s) { return s.name; }).join(separator);
+    }
+
     // -- Operation Banners --
-    // The "About this transfer" panel only carries alerts the action bar does not show. Reimport's
+    // Share or Clone into a destination with anonymization enabled: the Anonymization row warns that the
+    // destination's script won't run, since neither operation has an anonymization chip. Reimport's
     // anonymization status and storage cost are action-bar chips (anonChipsHtml), each with its full
-    // explanation as a tooltip, so they are not repeated here. What remains is Share or Clone into a
-    // destination with anonymization enabled: the data is transferred as-is, and neither operation has
-    // an anonymization chip.
+    // explanation as a tooltip, so they get no banner.
 
     function updateAnonBanner() {
         var area = document.getElementById('bt-op-detail-warning-area');
         if (!area) return;
 
         var html = '';
-        var dest = selectedProject;
-        if (dest && projectAnonCache[dest] === true) {
+        var dest = escapeHtml(selectedProject);
+        if (selectedProject && projectAnonCache[selectedProject] === true) {
             if (selectedOp === 'Share') {
-                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Share does not anonymize - the data is made visible as-is.');
+                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but its anonymization script will not be applied by Share - the data is made visible as-is.');
             } else if (selectedOp === 'Clone') {
-                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Clone copies the data as-is - the cloned copy is not anonymized.');
+                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but its anonymization script will not be applied by Clone - the cloned copy is not anonymized.');
             }
         }
         area.innerHTML = html;
@@ -199,62 +237,59 @@ var XNAT = getObject(XNAT || {});
     // -- Operation Detail --
 
     function updateOperationDetail() {
-        $('#bt-op-detail-desc').text(operationDetails[selectedOp] || '');
-        // Reimport-only affordances: the Anonymization mode toggle and the preserve-source-label checkboxes.
-        $('#bt-anon-band').toggle(selectedOp === 'Reimport');
-        $('#bt-reimport-label-option').toggle(selectedOp === 'Reimport');
-        // The script editor lives in the workspace (not inside the anon band), so hide it explicitly
-        // when leaving Reimport or when the build lacks per-import anon.
-        $('#bt-anon-editor').toggle(selectedOp === 'Reimport' && anonMode === 'script' && perImportAnonSupported());
+        var reimport = selectedOp === 'Reimport';
+        // The Anonymization row: Reimport's anonymization and label controls, or for Share and Clone the note that
+        // only Reimport anonymizes.
+        $('#bt-anon-band').toggle(reimport);
+        $('#bt-anon-na').toggle(!reimport);
+        $('#bt-anon-na-op').text(selectedOp);
+        // The script editor is a panel of its own, so hide it explicitly when leaving Reimport or when the build
+        // lacks per-import anon.
+        $('#bt-anon-editor').toggle(reimport && anonMode === 'script' && perImportAnonSupported());
         // Eligibility warnings are per operation - each explains why rows are hidden for that
         // operation only, so a stale one must not linger after the operation changes.
         $('#bt-share-warning').toggle(selectedOp === 'Share');
         $('#bt-copy-warning').toggle(selectedOp === 'Clone');
+        syncHelp();
     }
 
-    // Re-pin the rail whenever the viewport, the rail or the action bar changes height: rail sections
-    // show and hide per operation, and the bar's summary chips wrap. Resize re-pins only; it never
-    // re-renders the cohort table.
-    function bindViewportSync() {
-        var timer;
-        $(window).on('resize.bttransfer', function() {
-            clearTimeout(timer);
-            timer = setTimeout(syncRailSticky, 150);
-        });
-        if (window.ResizeObserver) {
-            var ro = new ResizeObserver(syncRailSticky);
-            ['.bt-rail', '.bt-action-bar'].forEach(function(sel) {
-                var el = document.querySelector(sel);
-                if (el) { ro.observe(el); }
-            });
-        }
-        syncRailSticky();
+    // The summary above the setup card: what the chosen operation does, that the source isn't changed, and that
+    // the transfer runs in the background. From search results the source is the projects in the results.
+    // What the tool does, the same for every operation. Only the source and destination names change.
+    function renderSummary() {
+        var project = config.projectContext ? escapeHtml(config.projectContext) : null;
+        var src = project ? '<b>' + project + '</b>' : 'the projects in your search results';
+        var to = selectedProject ? '<b>' + escapeHtml(selectedProject) + '</b>' : 'a destination project';
+        $('#bt-summary').html('Transfer subjects and image sessions from ' + src + ' into ' + to + ' in one batch: ' +
+            'share them, clone them, or reimport them with anonymization. ' +
+            (project ? project + ' itself is' : 'The source projects are') +
+            ' not changed, and once submitted the transfer runs in the background.');
     }
 
-    // The rail sticks at top: 0 while it fits above the pinned action bar. Taller than that, a negative
-    // top makes it stick by its bottom edge instead: it scrolls only until its lowest controls clear the
-    // bar, so they stay reachable without the whole rail scrolling away.
-    function syncRailSticky() {
-        var rail = document.querySelector('.bt-rail');
-        if (!rail) { return; }
-        var bar = document.querySelector('.bt-action-bar');
-        var room = window.innerHeight - (bar ? bar.offsetHeight : 56);
-        rail.style.top = Math.min(0, room - rail.offsetHeight) + 'px';
+    // The help column shows the topics for the chosen operation, and the script topic while the editor shows.
+    function syncHelp() {
+        var help = XNAT.plugin.batchtransfer.help;
+        if (help) { help.sync(selectedOp, selectedOp === 'Reimport' && anonMode === 'script' && perImportAnonSupported()); }
     }
+
+    // Called by the tabs when New transfer is shown again: anything measured while it was hidden is redone.
+    XNAT.plugin.batchtransfer.viewShown = function() {
+        if (XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.layout(); }
+    };
 
     // -- Cohort mode (interactive tree | CSV manifest) --
     // Swaps the workspace between the interactive selection tree and the manifest dropzone; the
     // loaded-manifest state itself is rendered by renderCsvResults.
-    // A manifest is for Reimport only, and resolving one needs a source project, which the search-results
-    // entry point does not have. The CSV mode is disabled up front in either case, rather than letting the
-    // user pick a file and only then be told. Leaving Reimport while a manifest is shown switches to the tree
-    // and keeps the manifest loaded; coming back to Reimport shows it again without resolving it again.
+    // A manifest is for Reimport only, and resolving one needs a single source project, which search results
+    // spanning several projects don't have. The CSV mode is disabled up front in either case, rather than
+    // letting the user pick a file and only then be told. Leaving Reimport while a manifest is shown switches to
+    // the tree and keeps the manifest loaded; coming back to Reimport shows it again without resolving it again.
     var csvParked = false;          // the CSV mode was showing when the operation left Reimport
 
     function configureCohortModes() {
         var $csv = $('.bt-cohort-mode[data-cohort="csv"]');
         if (!csvSourceProject()) {
-            $csv.prop('disabled', true).attr('title', 'Open Batch Transfer from a project to upload a manifest.');
+            $csv.prop('disabled', true).attr('title', 'Manifest CSV upload is not supported for multiple source projects.');
             return;
         }
         var reimport = selectedOp === 'Reimport';
@@ -281,6 +316,8 @@ var XNAT = getObject(XNAT || {});
         $('#bt-cohort-tree').toggle(tree);
         $('#bt-cohort-csv').toggle(!tree);
         if (!tree) { refreshCsvRequiredHint(); }
+        // The columns placeholders can bind to depend on the mode, so the verdict has to be redone.
+        revalidateScript();
         updateSummary();
     }
 
@@ -302,7 +339,7 @@ var XNAT = getObject(XNAT || {});
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/transfer/capabilities'),
             contentType: 'application/json',
-            success: function(data) { caps = data; configureAnonSupport(); updateAnonBanner(); updateSummary(); },
+            success: function(data) { caps = data; configureAnonSupport(); renderScriptLimit(); updateAnonBanner(); updateSummary(); },
             error: function() { caps = null; }
         });
     }
@@ -317,6 +354,7 @@ var XNAT = getObject(XNAT || {});
             anonMode = 'none';
             anonVerdictValid = null;
             $('#bt-anon-editor').hide();
+            syncHelp();
         }
     }
 
@@ -328,14 +366,26 @@ var XNAT = getObject(XNAT || {});
             $('#bt-anon-editor').toggle(anonMode === 'script');
             if (anonMode !== 'script') { anonVerdictValid = null; $('#bt-anon-verdict').empty(); }
             else { validateAnonScript(false); }
+            syncHelp();
+            if (anonMode === 'script' && XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.highlight('script'); }
             updateAnonBanner();
             updateSummary();
         });
         $(document).on('click', '#bt-anon-validate', function() { validateAnonScript(true); });
         var t = null;
         $(document).on('input', '#bt-anon-script', function() {
+            showScriptFileError(null);
+            if (scriptFile && !scriptFile.edited) {
+                scriptFile.edited = true;
+                renderScriptSource();
+            }
             clearTimeout(t);
-            t = setTimeout(function() { validateAnonScript(false); updateAnonBanner(); updateSummary(); }, 400);
+            t = setTimeout(function() {
+                validateAnonScript(false);
+                if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }   // the per-row compiled scripts
+                updateAnonBanner();
+                updateSummary();
+            }, 400);
         });
         // Preserve-source-labels toggles drive the "preserved labels not anonymized" action-bar chip and
         // the final destination labels in the manifest table, so re-render both whenever they change.
@@ -345,18 +395,190 @@ var XNAT = getObject(XNAT || {});
         });
     }
 
+    // -- Loading a script from a file --
+    // Upload file, or a file dropped anywhere on the script panel, replaces the editor's text, and Undo puts the
+    // previous text back, one load at a time. Any name or extension is accepted. The size is checked against the
+    // admin's limit (max_anon_script_bytes) before the file is read, so an oversized file is never loaded; until the
+    // capabilities say what that limit is, a fixed ceiling keeps a huge file from being read, and the server checks
+    // again at validate and submit. A refused file leaves the editor unchanged. Typed or pasted text isn't checked
+    // against the limit here.
+
+    var SCRIPT_FILE_CEILING = 16 * 1024 * 1024;   // while the admin's limit is unknown
+    var scriptFile = null;          // { name, size, edited } of the file whose text is in the editor
+    var scriptUndo = [];            // { text, file } as they were before each load, newest last
+    var scriptLoadSeq = 0;          // counts load attempts, so a slow read can't land after a newer attempt
+
+    function maxScriptBytes() {
+        return caps && caps.max_anon_script_bytes ? caps.max_anon_script_bytes : null;
+    }
+
+    function bindScriptFile() {
+        $(document).on('click', '#bt-script-pick', function() { $('#bt-script-file').val('').click(); });
+        $(document).on('change', '#bt-script-file', function() {
+            if (this.files && this.files.length) { loadScriptFile(this.files[0]); }
+        });
+        $(document).on('click', '#bt-script-undo', function() { undoScriptFile(); });
+        // A file dropped on the script panel loads; dropped anywhere else (but the manifest dropzone, which takes its
+        // own) it is ignored, rather than opened by the browser in place of the screen.
+        document.addEventListener('dragover', function(e) {
+            if (!hasFiles(e) || inManifestDropzone(e)) { return; }
+            e.preventDefault();
+            var zone = scriptDropZone(e);
+            e.dataTransfer.dropEffect = zone ? 'copy' : 'none';
+            $('#bt-anon-editor').toggleClass('bt-drag', !!zone);
+        });
+        document.addEventListener('dragleave', function(e) {
+            var zone = scriptDropZone(e);
+            if (zone && !zone.contains(e.relatedTarget)) { zone.classList.remove('bt-drag'); }
+        });
+        document.addEventListener('drop', function(e) {
+            if (!hasFiles(e) || inManifestDropzone(e)) { return; }
+            e.preventDefault();
+            $('#bt-anon-editor').removeClass('bt-drag');
+            if (!scriptDropZone(e)) { return; }
+            var files = e.dataTransfer.files;
+            if (files.length > 1) {
+                scriptLoadSeq++;
+                showScriptFileError('Drop one file at a time. The editor was not changed.');
+            } else if (files.length) {
+                loadScriptFile(files[0]);
+            }
+        });
+    }
+
+    function hasFiles(e) {
+        return !!e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0;
+    }
+
+    function scriptDropZone(e) {
+        var zone = e.target && e.target.closest ? e.target.closest('#bt-anon-editor') : null;
+        return zone && zone.offsetParent ? zone : null;
+    }
+
+    function inManifestDropzone(e) {
+        return !!(e.target && e.target.closest && e.target.closest('#bt-dropzone'));
+    }
+
+    function loadScriptFile(file) {
+        var seq = ++scriptLoadSeq;
+        var name = '<b>' + escapeHtml(file.name) + '</b>';
+        var unchanged = ' The editor was not changed.';
+        var limit = maxScriptBytes();
+        if (limit && file.size > limit) {
+            // Sizes that round to the same figure are given in bytes, so the message doesn't contradict itself.
+            var size = formatBytes(file.size), max = formatBytes(limit);
+            if (size === max) { size = file.size + ' bytes'; max = limit + '-byte'; }
+            showScriptFileError(name + ' is ' + size + ', over the ' + max +
+                ' limit for anonymization scripts set by your site administrator.' + unchanged);
+            return;
+        }
+        if (!limit && file.size > SCRIPT_FILE_CEILING) {
+            showScriptFileError(name + ' is ' + formatBytes(file.size) + ', too large for an anonymization script.' +
+                unchanged);
+            return;
+        }
+        if (file.size === 0) {
+            showScriptFileError(name + ' is empty.' + unchanged);
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function() {
+            if (seq !== scriptLoadSeq) { return; }
+            var text = String(reader.result || '');
+            // A NUL byte means binary content, such as a DICOM file.
+            if (text.indexOf('\u0000') >= 0) {
+                showScriptFileError(name + ' is not a text file; a DicomEdit script is plain text.' + unchanged);
+                return;
+            }
+            var $editor = $('#bt-anon-script');
+            scriptUndo.push({ text: $editor.val() || '', file: scriptFile });
+            scriptFile = { name: file.name, size: file.size, edited: false };
+            $editor.val(text);
+            scriptTextChanged();
+        };
+        reader.onerror = function() {
+            if (seq === scriptLoadSeq) { showScriptFileError(name + ' could not be read.' + unchanged); }
+        };
+        reader.readAsText(file);
+    }
+
+    // Puts back the text, and the loaded file it came from, as they were before the latest load.
+    function undoScriptFile() {
+        if (!scriptUndo.length) { return; }
+        scriptLoadSeq++;
+        var before = scriptUndo.pop();
+        $('#bt-anon-script').val(before.text);
+        scriptFile = before.file;
+        scriptTextChanged();
+    }
+
+    // The editor's text was replaced: validate it like a paste, and redraw what depends on it.
+    function scriptTextChanged() {
+        showScriptFileError(null);
+        renderScriptSource();
+        validateAnonScript(true);
+        if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }
+        updateAnonBanner();
+        updateSummary();
+    }
+
+    // Beside Upload file: the loaded file with Undo, or what can be dropped.
+    function renderScriptSource() {
+        var limit = maxScriptBytes();
+        $('#bt-script-source').html(scriptFile
+            ? '<span class="bt-file-chip">Loaded from <b>' + escapeHtml(scriptFile.name) + '</b> (' + formatBytes(scriptFile.size) + ')' +
+              (scriptFile.edited ? ', edited' : '') + ' <button type="button" class="bt-linkbtn" id="bt-script-undo">Undo</button></span>'
+            : 'or drop a file on this panel. Any file type' + (limit ? ', up to ' + formatBytes(limit) : '') + '.');
+    }
+
+    // The admin's limit, once the capabilities say what it is: beside Upload file and in the help topic.
+    function renderScriptLimit() {
+        var limit = maxScriptBytes();
+        $('.bt-script-limit').text(limit ? formatBytes(limit) : '');
+        $('.bt-script-limit-wrap').prop('hidden', !limit);
+        renderScriptSource();
+    }
+
+    function showScriptFileError(html) {
+        $('#bt-script-err').html(html ? '<span>&#9888;</span><div>' + html + '</div>' : '').prop('hidden', !html);
+    }
+
+    // One decimal below 10, whole numbers above; a value that rounds to 1024 moves up a unit.
+    function formatBytes(n) {
+        if (n < 1024) { return n + ' bytes'; }
+        var units = ['KB', 'MB', 'GB'], v = n / 1024, i = 0;
+        while (i < units.length - 1 && roundSize(v) >= 1024) { v /= 1024; i++; }
+        return roundSize(v) + ' ' + units[i];
+    }
+
+    function roundSize(v) {
+        return v < 10 ? parseFloat(v.toFixed(1)) : Math.round(v);
+    }
+
     // The ${csv.*}-bindable columns for /validate/script: value + routing columns from the manifest
-    // (CSV mode). Interactive mode has no manifest, so binding is not checked (null).
+    // (CSV mode). The selection tree supplies no values, so in interactive mode no placeholder can bind ([]).
+    // null while a manifest has yet to load: binding is not checked.
     function anonManifestColumns() {
-        if (cohortMode === 'csv' && manifestResult) {
+        if (cohortMode !== 'csv') { return []; }
+        if (manifestResult) {
             return (manifestResult.value_columns || []).concat(manifestResult.routing_columns || []);
         }
         return null;
     }
 
+    // Re-checks the script when what its placeholders can bind to has changed. Only Reimport runs a script.
+    function revalidateScript() {
+        if (anonMode === 'script' && selectedOp === 'Reimport') { validateAnonScript(false); }
+    }
+
     function validateAnonScript(showLoading) {
         var script = $('#bt-anon-script').val() || '';
-        if (script.trim().length === 0) { $('#bt-anon-verdict').empty(); anonVerdictValid = null; return; }
+        if (script.trim().length === 0) {
+            anonValidateSeq++;   // a request still in flight no longer applies
+            $('#bt-anon-verdict').empty();
+            anonVerdictValid = null;
+            return;
+        }
         var body = { anon_script: script };
         var cols = anonManifestColumns();
         if (cols) { body.manifest_columns = cols; }
@@ -387,12 +609,17 @@ var XNAT = getObject(XNAT || {});
     function renderAnonVerdict(v) {
         var h = '<div class="bt-verdict-line ' + (v.valid ? 'bt-verdict-ok' : 'bt-verdict-bad') + '">' +
                 '<span>' + (v.valid ? '&#10003;' : '&#9888;') + '</span><div>' +
-                (v.valid ? ('Script is valid' + (v.binding ? ' and every placeholder is bound.' : '.'))
+                (v.valid ? ('Script is valid' + (v.binding && (v.placeholders || []).length ? ' and every placeholder is bound.' : '.'))
                          : 'Script has issues - submit is blocked.') + '</div></div>';
         (v.errors || []).forEach(function(e) { h += verdictBad('Parse: ' + escapeHtml(e)); });
         (v.restriction_violations || []).forEach(function(r) { h += verdictBad('Restriction: ' + escapeHtml(r)); });
         if (v.binding && !v.binding.bound) {
-            h += verdictBad('Unbound: ' + (v.binding.unbound || []).map(function(u) { return '${csv.' + escapeHtml(u) + '}'; }).join(', '));
+            var unbound = v.binding.unbound || [];
+            var names = unbound.map(function(u) { return '${csv.' + escapeHtml(u) + '}'; }).join(', ');
+            h += verdictBad(cohortMode === 'csv' ? 'Unbound: ' + names
+                : names + (unbound.length === 1 ? ' needs' : ' need') + ' a manifest: placeholders are filled from' +
+                  ' manifest CSV columns. Upload a manifest CSV, or remove the placeholder' +
+                  (unbound.length === 1 ? '.' : 's.'));
         }
         var meta = [];
         if (v.dialect) { meta.push(escapeHtml(v.dialect)); }
@@ -548,6 +775,7 @@ var XNAT = getObject(XNAT || {});
             } else {
                 updateAnonBanner();
             }
+            renderSummary();
             updateSummary();
         });
     }
@@ -868,14 +1096,12 @@ var XNAT = getObject(XNAT || {});
     }
 
     // -- Cohort builder panel header --
-    // Reports which cohort mode is active and one line of state for it. The mode is switched from the
-    // rail, so the pill is the panel's own statement of what it is currently building from.
+    // One line of state for the active cohort mode; the toggle beside it shows which mode that is.
 
     function renderBuilderState() {
         var el = document.getElementById('bt-builder-mode');
         if (!el) return;
-        var pill = '<span class="bt-mode-pill">' + (cohortMode === 'csv' ? 'Manifest CSV' : 'Interactive') + '</span>';
-        el.innerHTML = pill + '<span>' + (cohortMode === 'csv' ? csvBuilderState() : treeBuilderState()) + '</span>';
+        el.innerHTML = '<span>' + (cohortMode === 'csv' ? csvBuilderState() : treeBuilderState()) + '</span>';
     }
 
     // Eligibility is per operation, so the noun follows it: Reimport counts only image sessions
@@ -932,38 +1158,43 @@ var XNAT = getObject(XNAT || {});
         return out;
     }
 
-    // Anonymization-status chips for the action bar. Reimport reflects destination-anon x custom-script;
+    // Anonymization-status chips for the action bar. Reimport lists the anonymization scripts that will run;
     // Clone advertises hard-linking; Share shows none. These are the only place Reimport's anonymization
     // status and storage cost appear, so each chip's title carries the full explanation.
     function anonChipsHtml() {
         if (selectedOp === 'Reimport') {
-            var script = hasCustomScript();
-            var dest = selectedProject;
-            var anon = projectAnonCache[dest];   // true / false / undefined (not yet known)
-            var out;
-            if (anon === true && script) {
-                out = chip('warn', '&#9888; double anonymization',
-                    'Both ' + dest + '\'s anonymization and your custom script will be applied.');
-            } else if (anon === true) {
-                out = chip('good', '&#10003; destination anonymization',
-                    'Image sessions will be anonymized by ' + dest + '\'s anonymization on reimport.');
-            } else if (anon === false && script) {
-                out = chip('good', '&#10003; custom script',
-                    dest + ' has no anonymization configured; your custom script will anonymize the reimported sessions.');
-            } else if (anon === false) {
-                out = chip('warn', '&#9888; not anonymized',
-                    dest + ' has no anonymization configured and no custom script is set - reimported sessions will not be anonymized.');
+            var scripts = anonScripts();
+            var on = scriptsIn(scripts, 'on'), unknown = scriptsIn(scripts, 'unknown');
+            var out = '';
+            if (!selectedProject || siteAnon === undefined || !projectAnonCache.hasOwnProperty(selectedProject)) {
+                // No destination yet, or a check is still running: nothing to report.
+            } else if (!on.length && !unknown.length) {
+                out = chip('warn', '&#9888; not anonymized', 'Neither the site-wide script nor ' + selectedProject +
+                    '\'s script is enabled, and no custom script is set - reimported sessions will not be anonymized.');
+            } else if (!on.length) {
+                // Unknown, so neither good nor bad: anonymization may or may not run.
+                out = chip('muted', '? anonymization not checked',
+                    'Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.');
             } else {
-                out = script ? chip('good', '&#10003; custom script') : chip('good', '&#10003; destination anonymization');
+                // The scripts that run, in order; one whose check failed is marked "?". A custom script that isn't
+                // the only one is double anonymization.
+                var double = hasCustomScript() && on.length > 1;
+                var listed = scripts.filter(function(s) { return s.state !== 'off'; });
+                out = chip(double ? 'warn' : 'good', (double ? '&#9888; ' : '&#10003; ') +
+                    listed.map(function(s) { return s.key + (s.state === 'unknown' ? '?' : ''); }).join(' + ') +
+                    ' script' + (listed.length > 1 ? 's' : ''),
+                    'Each session is anonymized by ' + scriptNames(on, ', then ') + '.' +
+                    (double ? ' Your custom script is not the only one, and a later script can change what an' +
+                              ' earlier one set.' : '') +
+                    (unknown.length ? ' Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.' : ''));
             }
-            // Anonymization (destination pipeline or custom script) is in effect, but preserving the source
-            // XNAT labels re-introduces the original subject/session labels - which may carry identifiers and
-            // are not touched by anonymization. Warn when both are set.
-            var anonInEffect = anon === true || script;
+            // Anonymization is in effect, but preserving the source XNAT labels re-introduces the original
+            // subject/session labels - which may carry identifiers and are not touched by anonymization. Warn
+            // when both are set.
             var preserved = preservedLabels();
-            if (anonInEffect && preserved.length) {
+            if (on.length && preserved.length) {
                 // Kept short: this is the longest chip, and the action bar is a single row. The
-                // reason behind it is in its title and in the rail's label help.
+                // reason behind it is in its title and in the Anonymization help topic.
                 out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
                     + (preserved.length > 1 ? 's' : '') + ' not anonymized',
                     'Preserved source labels are kept as they are; anonymization does not change XNAT labels.');
@@ -1088,7 +1319,7 @@ var XNAT = getObject(XNAT || {});
             var dt = e.originalEvent.dataTransfer;
             if (dt && dt.files && dt.files[0]) { uploadManifest(dt.files[0]); }
         });
-        $(document).on('click', '#bt-csv-replace', function() { resetManifest(); });
+        $(document).on('click', '#bt-csv-replace', function() { resetManifest(); revalidateScript(); });
         $(document).on('click', '#bt-csv-retry', function() { resolveManifest(); });
         $(document).on('click', '.bt-csv-caret, .bt-files-lazy', function() {
             toggleManifestEntry($(this).attr('data-id'));
@@ -1134,7 +1365,7 @@ var XNAT = getObject(XNAT || {});
 
     function uploadManifest(file) {
         if (!csvSourceProject()) {
-            xmodal.message('Batch Transfer', 'A source project is required to resolve a manifest. Open Batch Transfer from a project.');
+            xmodal.message('Batch Transfer', 'Manifest CSV upload is not supported for multiple source projects.');
             return;
         }
         var reader = new FileReader();
@@ -1179,8 +1410,7 @@ var XNAT = getObject(XNAT || {});
                 manifestGroupsCache = null;
                 manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
                 renderCsvResults();
-                // Re-check binding against the manifest's columns if a custom script is in play.
-                if (anonMode === 'script') { validateAnonScript(false); }
+                revalidateScript();   // binding, against the manifest's columns
                 updateSummary();
             },
             error: function(xhr) {
@@ -1191,12 +1421,14 @@ var XNAT = getObject(XNAT || {});
                 if (xhr.status >= 400 && xhr.status < 500) {
                     resetManifest();
                     $('#bt-csv-results').html('<div class="bt-csv-error">Could not resolve the manifest: ' + escapeHtml(message) + '</div>');
+                    revalidateScript();
                     return;
                 }
                 manifestPending = false;
                 manifestResult = null; manifestGroupsCache = null;
                 manifestError = message;
                 renderCsvResults();
+                revalidateScript();
                 updateSummary();
             }
         });
@@ -1630,7 +1862,6 @@ var XNAT = getObject(XNAT || {});
         var noun = (selectedOp === 'Reimport' ? 'session' : 'item') + (count === 1 ? '' : 's');
         var src = config.projectContext ? escapeHtml(config.projectContext) : 'the source project';
         var dest = escapeHtml(selectedProject);
-        var destAnon = projectAnonCache[selectedProject];
         var script = hasCustomScript();
 
         var rows = dlgRow('Cohort', isCsv
@@ -1648,12 +1879,22 @@ var XNAT = getObject(XNAT || {});
         rows += dlgRow('Operation', selectedOp + ' &middot; ' + src + ' to ' + dest);
 
         if (selectedOp === 'Reimport') {
+            // The scripts that run, in order. A check that failed or hasn't answered yet is named.
+            var scripts = anonScripts();
+            var on = scriptsIn(scripts, 'on'), unknown = scriptsIn(scripts, 'unknown');
             var anonText;
-            if (destAnon === true && script) { anonText = 'Destination anonymization <strong>+ custom script (double anonymization)</strong>'; }
-            else if (destAnon === true) { anonText = 'Destination anonymization'; }
-            else if (destAnon === false && script) { anonText = 'Custom script only'; }
-            else if (destAnon === false) { anonText = '<span style="color:#c5221f;">None - sessions will not be anonymized</span>'; }
-            else { anonText = script ? 'Destination anonymization <strong>+ custom script</strong>' : 'Destination anonymization'; }
+            if (on.length) {
+                var order = scriptNames(on, ', then ');
+                anonText = escapeHtml(order.charAt(0).toUpperCase() + order.slice(1)) +
+                    (script && on.length > 1 ? ' <strong>(double anonymization)</strong>' : '') +
+                    (unknown.length ? '; couldn\'t check whether ' + escapeHtml(scriptNames(unknown, ' or ')) +
+                                      ' is enabled' : '');
+            } else if (unknown.length) {
+                anonText = 'Not checked - couldn\'t check whether ' + escapeHtml(scriptNames(unknown, ' or ')) +
+                           ' is enabled';
+            } else {
+                anonText = '<span style="color:#c5221f;">None - sessions will not be anonymized</span>';
+            }
             rows += dlgRow('Anonymization', anonText);
             if (script) { rows += dlgRow('Custom script', 'applied per session' + (isCsv ? ' (values from manifest)' : '')); }
             var preserve = [];
@@ -1738,6 +1979,11 @@ var XNAT = getObject(XNAT || {});
                     batchTransfer.tracking_id,
                     'XNAT.plugin.batchtransfer.updateBatchTransferProgress'
                 );
+                // Opens History with the new run highlighted, so Stop is one click away. New transfer is
+                // only hidden, so its selections are still there on the way back.
+                if (XNAT.plugin.batchtransfer.history) {
+                    XNAT.plugin.batchtransfer.history.showSubmitted(batchTransfer.tracking_id);
+                }
             },
             error: function(xhr) {
                 xmodal.message('Error', 'The transfer was not submitted: ' + escapeHtml(responseMessage(xhr)));

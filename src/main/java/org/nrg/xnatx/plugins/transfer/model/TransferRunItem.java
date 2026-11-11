@@ -10,7 +10,9 @@ import java.util.Map;
 
 /**
  * One item of a run: its request, the labels it had when the run was submitted, and its outcome. {@code csvValues}
- * is present only for users allowed to see a run's values.
+ * is present only for users allowed to see a run's values. For a user who can't read the item's destination project,
+ * the destination ID and labels are left out and {@code destinationHidden} is true, so a client can tell them from
+ * values that don't exist.
  */
 @Data
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -31,6 +33,7 @@ public class TransferRunItem {
     private String              message;
     private String              destinationId;
     private String              destinationLabel;
+    private Boolean             destinationHidden;
     private Date                started;
     private Date                finished;
 }

@@ -111,6 +111,7 @@ public class BatchTransferHistoryApiTest {
         assertEquals("XNAT_E9", detail.getItems().get(0).getDestinationId());
         assertEquals("THE_LABEL", detail.getItems().get(0).getDestinationLabel());
         assertEquals("ROUTED_S", detail.getItems().get(0).getDestinationSubjectLabel());
+        assertNull(detail.getItems().get(0).getDestinationHidden());
         assertFalse(detail.isCanStop());
     }
 
@@ -126,6 +127,7 @@ public class BatchTransferHistoryApiTest {
         assertNull(item.getDestinationId());
         assertNull(item.getDestinationLabel());
         assertNull(item.getDestinationSubjectLabel());
+        assertTrue("the client can tell hidden from missing", item.getDestinationHidden());
         verify(historyService).itemLabels(Collections.emptySet());
     }
 

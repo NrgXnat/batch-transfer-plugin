@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -113,6 +114,7 @@ public class ManifestService {
         final List<String> headers;
         try (CSVParser parser = CSVParser.parse(csv, format)) {
             headers = parser.getHeaderNames();
+            rejectRepeatedColumns(headers);
             for (final CSVRecord record : parser) {
                 if (isBlankRecord(record)) {
                     continue;
@@ -315,6 +317,30 @@ public class ManifestService {
     /** A line of only spaces and commas: an empty spreadsheet row, however many columns it was exported with. */
     private static boolean isBlankLine(final String line) {
         return StringUtils.isBlank(StringUtils.remove(line, ','));
+    }
+
+    /**
+     * Rejects a header that names a column more than once. The parser reads a repeated column from its last copy
+     * only, so an edit to an earlier copy would be silently ignored. Notes columns ({@code _} prefix) are ignored
+     * anyway, so they may repeat.
+     */
+    private static void rejectRepeatedColumns(final List<String> headers) throws ManifestValidationException {
+        final Set<String> seen = new HashSet<>();
+        final Set<String> repeated = new LinkedHashSet<>();
+        for (final String header : headers) {
+            if (StringUtils.isNotBlank(header) && !header.startsWith("_") && !seen.add(header)) {
+                repeated.add(header);
+            }
+        }
+        if (repeated.isEmpty()) {
+            return;
+        }
+        final List<String> quoted = new ArrayList<>();
+        repeated.forEach(column -> quoted.add("'" + column + "'"));
+        final String names = quoted.size() == 1 ? quoted.get(0)
+                : String.join(", ", quoted.subList(0, quoted.size() - 1)) + " and " + quoted.get(quoted.size() - 1);
+        throw new ManifestValidationException(HttpStatus.BAD_REQUEST, "The manifest repeats the column"
+                + (quoted.size() == 1 ? " " : "s ") + names + ". Each column can appear only once.");
     }
 
     /** A record whose cells all trim to nothing: an empty line, or one of only spaces and commas. */

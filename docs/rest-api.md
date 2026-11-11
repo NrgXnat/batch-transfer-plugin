@@ -71,7 +71,8 @@ Checks a DicomEdit 6 script without applying it.
 }
 ```
 
-`manifest_columns` is optional. When present, the response includes `binding`.
+`manifest_columns` is optional. When present, the response includes `binding`. An empty list means there is
+no manifest to fill placeholders from, so every placeholder is reported unbound and the script is not valid.
 
 **Response 200**
 
@@ -212,7 +213,7 @@ nothing is stored.
   `missing_columns`; `summary` is null and rows are not resolved.
 - `script_binding` is null unless `anon_script` was sent.
 
-**Status codes:** 400 for an empty or unparseable CSV, a missing `source_project`, or an invalid `mode`;
+**Status codes:** 400 for an empty or unparseable CSV, a repeated column, a missing `source_project`, or an invalid `mode`;
 403 without read access to `source_project`; 413 when the manifest exceeds `manifest_max_rows`.
 
 ---

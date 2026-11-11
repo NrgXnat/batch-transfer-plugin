@@ -83,9 +83,19 @@ Follows the 1.2.0 cohort-building and custom-anonymization work. Deliberately do
 - **Possible REST additions** — `GET /xapi/transfer/history`, `GET /xapi/transfer/history/{tracking_id}`, and `POST /xapi/transfer/history/{tracking_id}/retry-failed` (seed a new run from a run's failed items).
 
 
+### Manifest profile view (2.1.0)
+- A data profile of an uploaded manifest above the CSV list: count tiles (sessions, rows that need fixing, skipped, warnings, worth a look), a sessions-per-subject histogram, and a per-column summary (filled, distinct, and flags such as values outside the allowed characters or a numeric outlier). Every number filters the list. Client-side; builds on 2.0.0's summary + pickers pane.
+
 ### Operations & Workflow
 - Expand Reimport type support to include scans-based operations
+  - Appending scans to an existing session is what XNAT's *Upload Scans* action does. [NrgXnat/xnat#156](https://github.com/NrgXnat/xnat/pull/156) (open, targets `develop`) moves that action onto the Compressed Uploader, which archives into the prefilled session with `prearchive_code=1` and `overwrite=append`. It also fixes `/data/services/import` rejecting the valid `overwrite` values `append` and `delete` for archive imports, which fail on 1.10.2.1.
+  - The plugin calls `DicomZipImporter` in-process, so that REST validation bug doesn't block a scan-level Reimport. The import should still use the same append semantics.
+  - XNAT only offers *Upload Scans* when the site's *Upload Additional Scans* setting is on (off by default); decide whether scan-level transfer should honor it.
 - Implement UX cohort building filters for large (>10k+) datasets where the select/deselect item workflow would be tedious 
+- Offer the manifest CSV cohort only when Batch Transfer is opened from a project's Actions menu; from search results, the selection tree is the only way to pick a cohort. Today CSV mode turns on for search results that all come from one project, and the manifest is then matched against the whole project, not the search results.
+- Support multiple source projects in both cohort builders:
+  - Manifest CSV: a manifest's labels are matched within one source project today, so CSV upload is disabled when the search results span several projects.
+  - Selection tree: when the source spans several projects, group sessions by project or show each row's project label. Today subjects from every project are listed together with nothing to tell them apart; each row carries `data-project`, but the tree doesn't show it.
 - Launch Advanced Search from destination project Action Menu 
   - Include all XNAT experiment data types
 - Computed size estimate in the operation-detail panel — replace the static duplication warning with a real byte count for the current selection (e.g. "≈ 4.2 GB will be duplicated to *DestProject*"). Requires either a new XAPI endpoint that walks the archive, or per-row `data-size` attributes emitted by `XDATScreen_batch_transfer.java`, plus rollup logic in `batchTransfer.js`.

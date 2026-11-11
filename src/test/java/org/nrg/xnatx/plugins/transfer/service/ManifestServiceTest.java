@@ -261,6 +261,40 @@ public class ManifestServiceTest {
     }
 
     @Test
+    public void rejectsARepeatedRoutingColumn() {
+        // The rerun export once wrote the routing columns twice; the parser read only the last copy.
+        final String csv = "source_subject_label,source_session_label,destination_session_label,pid,destination_session_label\n"
+                + "S1,SESS1,EDITED,P1,ORIGINAL\n";
+        try {
+            parse(csv);
+            fail("expected ManifestValidationException for a repeated column");
+        } catch (ManifestValidationException e) {
+            assertEquals(HttpStatus.BAD_REQUEST, e.getStatus());
+            assertEquals("The manifest repeats the column 'destination_session_label'. Each column can appear only once.",
+                    e.getMessage());
+        }
+    }
+
+    @Test
+    public void namesEveryRepeatedColumnOnce() {
+        final String csv = "source_subject_label,source_session_label,pid,site,pid,site,pid\nS1,SESS1,P1,A,P2,B,P3\n";
+        try {
+            parse(csv);
+            fail("expected ManifestValidationException for repeated columns");
+        } catch (ManifestValidationException e) {
+            assertEquals("The manifest repeats the columns 'pid' and 'site'. Each column can appear only once.",
+                    e.getMessage());
+        }
+    }
+
+    @Test
+    public void allowsRepeatedNotesColumns() throws Exception {
+        final ManifestValidationResult r = parse("source_subject_label,source_session_label,_note,_note\nS1,SESS1,a,b\n");
+        assertEquals(Arrays.asList("_note", "_note"), r.getReservedColumns());
+        assertEquals(1, r.getTotalRows());
+    }
+
+    @Test
     public void rejectsAnEmptyManifest() {
         try {
             parse("   ");

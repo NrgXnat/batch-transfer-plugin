@@ -288,6 +288,8 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
             view.setDestinationId(item.getDestinationId());
             view.setDestinationLabel(item.getDestinationId() == null ? null
                     : destinationLabels.get(item.getDestinationId()));
+        } else {
+            view.setDestinationHidden(true);
         }
         view.setStarted(item.getStarted());
         view.setFinished(item.getFinished());

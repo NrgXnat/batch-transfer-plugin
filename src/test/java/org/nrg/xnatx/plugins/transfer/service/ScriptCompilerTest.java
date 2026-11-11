@@ -11,6 +11,7 @@ import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -259,6 +260,25 @@ public class ScriptCompilerTest {
         assertNotNull(r.getBinding());
         assertFalse(r.getBinding().isBound());
         assertEquals(singletonList("pid"), r.getBinding().getUnbound());
+    }
+
+    @Test
+    public void validateWithNoColumnsReportsEveryPlaceholderUnbound() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"\n(0010,4000) := \"${csv.note}\"",
+                Collections.<String>emptyList());
+        assertFalse(r.isValid());
+        assertFalse(r.getBinding().isBound());
+        assertEquals(Arrays.asList("pid", "note"), r.getBinding().getUnbound());
+        assertNull("no advisory note once columns are given", r.getMessage());
+    }
+
+    @Test
+    public void validateWithNoColumnsAcceptsScriptWithoutPlaceholders() {
+        final ScriptValidationResult r = compiler.validate(
+                "version \"6.1\"\n(0010,0010) := \"X\"", Collections.<String>emptyList());
+        assertTrue(r.isValid());
+        assertTrue(r.getBinding().isBound());
     }
 
     @Test
