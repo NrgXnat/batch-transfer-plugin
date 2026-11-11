@@ -52,6 +52,7 @@ import java.util.concurrent.ExecutorService;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -850,6 +851,19 @@ public class BatchTransferServiceImplTest {
         final InOrder order = Mockito.inOrder(historyService, executorService);
         order.verify(historyService).recordSubmit(batch, user);
         order.verify(executorService).submit(any(Runnable.class));
+    }
+
+    @Test
+    public void submitTransferRequest_withoutATrackingId_getsADistinctOne() {
+        doReturn(null).when(executorService).submit(any(Runnable.class));
+        final BatchTransfer first = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), null);
+        final BatchTransfer second = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), null);
+
+        service.submitTransferRequest(first, user);
+        service.submitTransferRequest(second, user);
+
+        assertTrue(first.getTrackingId(), first.getTrackingId().matches("batch_transfer_\\d+_[0-9a-f]{8}"));
+        assertNotEquals(first.getTrackingId(), second.getTrackingId());
     }
 
     @Test

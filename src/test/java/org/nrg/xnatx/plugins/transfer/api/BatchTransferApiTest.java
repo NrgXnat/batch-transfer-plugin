@@ -289,6 +289,15 @@ public class BatchTransferApiTest {
     }
 
     @Test
+    public void submit_itemsWithoutAnId_are400() {
+        final ResponseEntity<String> resp = api.submit(batch(reimport("E1"), reimport(null), reimport(" ")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("Every item needs an id; 2 items have none.", resp.getBody());
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
     public void submit_aTrackingIdThatAlreadyHasARun_is409() {
         doThrow(new BatchTransferRunExistsException("trk")).when(service).submitTransferRequest(any(), any());
         final ResponseEntity<String> resp = api.submit(batch(reimport("E1")));

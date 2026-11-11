@@ -51,8 +51,10 @@ import static org.springframework.web.bind.annotation.RequestMethod.POST;
 /**
  * Transfer history and Stop. A run is visible to the user who started it, to users who can read its source project's
  * data, and to site admins. Data access is what counts: on a protected project, a non-member can see that the project
- * exists but not its sessions, so they can't see its runs. Its CSV values and custom script go only to users who could have submitted it: its creator,
- * site admins, and users who can edit its source project. Only the creator or a site admin can stop it.
+ * exists but not its sessions, so they can't see its runs. Its CSV values and custom script go only to users who could
+ * have submitted it: its creator, site admins, and users who can edit its source project. An item's destination ID and
+ * labels go only to its creator, site admins, and users who can read the item's destination project, since they link a
+ * source session to its copy. Only the creator or a site admin can stop it.
  */
 @Slf4j
 @Api("Batch Transfer History Api")
@@ -107,9 +109,12 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         final Collection<String> readable = admin ? null : readableProjects(user);
 
         final List<TransferRun> runs = new ArrayList<>();
-        for (final BatchTransferHistory run : historyService.list(project, createdBy, statusFilter, visibleTo, readable,
-                pageNumber * pageSize, pageSize)) {
-            runs.add(toView(run));
+        final long offset = (long) pageNumber * pageSize;
+        if (offset <= Integer.MAX_VALUE) {
+            for (final BatchTransferHistory run : historyService.list(project, createdBy, statusFilter, visibleTo,
+                    readable, (int) offset, pageSize)) {
+                runs.add(toView(run));
+            }
         }
         final long total = historyService.count(project, createdBy, statusFilter, visibleTo, readable);
         return new ResponseEntity<>(new TransferRunPage(runs, total, pageNumber, pageSize), HttpStatus.OK);
@@ -128,18 +133,20 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
         final UserI user = getSessionUser();
-        if (!canSee(user, run)) {
+        // Null means every project: the creator and site admins see the whole run.
+        final Collection<String> readable = isCreator(user, run) || isSiteAdmin(user) ? null : readableProjects(user);
+        if (readable != null && !canRead(readable, run.getSourceProject())) {
             return new ResponseEntity<>(HttpStatus.FORBIDDEN);
         }
         final boolean showValues = canSeeValues(user, run);
         final List<BatchTransferItem> items = historyService.items(run.getId());
         final Set<String> destinationIds = new LinkedHashSet<>();
         for (final BatchTransferItem item : items) {
-            if (item.getDestinationId() != null) {
+            if (item.getDestinationId() != null && canRead(readable, item.getDestinationProject())) {
                 destinationIds.add(item.getDestinationId());
             }
         }
-        final Map<String, String> destinationLabels = historyService.experimentLabels(destinationIds);
+        final Map<String, String> destinationLabels = historyService.itemLabels(destinationIds);
 
         final TransferRunDetail detail = new TransferRunDetail();
         detail.setRun(toView(run));
@@ -150,7 +157,7 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         }
         final List<TransferRunItem> views = new ArrayList<>(items.size());
         for (final BatchTransferItem item : items) {
-            views.add(toView(item, showValues, destinationLabels));
+            views.add(toView(item, showValues, canRead(readable, item.getDestinationProject()), destinationLabels));
         }
         detail.setItems(views);
         return new ResponseEntity<>(detail, HttpStatus.OK);
@@ -190,9 +197,9 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         return new ResponseEntity<>(toView(historyService.findByTrackingId(trackingId)), HttpStatus.OK);
     }
 
-    private boolean canSee(final UserI user, final BatchTransferHistory run) {
-        return isCreator(user, run) || isSiteAdmin(user)
-                || (run.getSourceProject() != null && readableProjects(user).contains(run.getSourceProject()));
+    /** Whether a project is among the readable ones, where null means every project. */
+    private static boolean canRead(final Collection<String> readable, final String project) {
+        return readable == null || (project != null && readable.contains(project));
     }
 
     private boolean canSeeValues(final UserI user, final BatchTransferHistory run) {
@@ -260,7 +267,7 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
     }
 
     private static TransferRunItem toView(final BatchTransferItem item, final boolean showValues,
-                                          final Map<String, String> destinationLabels) {
+                                          final boolean showDestination, final Map<String, String> destinationLabels) {
         final TransferRunItem view = new TransferRunItem();
         view.setItemId(item.getItemId());
         view.setMode(item.getMode());
@@ -268,8 +275,6 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         view.setSourceSubjectLabel(item.getSourceSubjectLabel());
         view.setSourceLabel(item.getSourceLabel());
         view.setDestinationProject(item.getDestinationProject());
-        view.setDestinationSubjectLabel(item.getDestinationSubjectLabel());
-        view.setDestinationSessionLabel(item.getDestinationSessionLabel());
         view.setPreserveSubjectLabel(item.getPreserveSubjectLabel());
         view.setPreserveSessionLabel(item.getPreserveSessionLabel());
         if (showValues) {
@@ -277,8 +282,13 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         }
         view.setStatus(item.getStatus().name());
         view.setMessage(item.getMessage());
-        view.setDestinationId(item.getDestinationId());
-        view.setDestinationLabel(item.getDestinationId() == null ? null : destinationLabels.get(item.getDestinationId()));
+        if (showDestination) {
+            view.setDestinationSubjectLabel(item.getDestinationSubjectLabel());
+            view.setDestinationSessionLabel(item.getDestinationSessionLabel());
+            view.setDestinationId(item.getDestinationId());
+            view.setDestinationLabel(item.getDestinationId() == null ? null
+                    : destinationLabels.get(item.getDestinationId()));
+        }
         view.setStarted(item.getStarted());
         view.setFinished(item.getFinished());
         return view;

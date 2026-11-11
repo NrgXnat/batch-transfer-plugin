@@ -39,6 +39,6 @@ public interface BatchTransferHistoryService extends BaseHibernateService<BatchT
 
     List<BatchTransferItem> items(long historyId);
 
-    /** The current labels of the given experiments, by ID. */
-    Map<String, String> experimentLabels(Collection<String> experimentIds);
+    /** The current labels of the given subjects and experiments, by ID. */
+    Map<String, String> itemLabels(Collection<String> ids);
 }

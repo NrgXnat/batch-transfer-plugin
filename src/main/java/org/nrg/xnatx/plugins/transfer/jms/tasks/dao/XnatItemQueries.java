@@ -27,7 +27,10 @@ public class XnatItemQueries {
                     + "UNION ALL "
                     + "SELECT s.id, s.project, s.label, s.label FROM xnat_subjectdata s WHERE s.id = ANY(?)";
 
-    private static final String LABELS_SQL = "SELECT id, label FROM xnat_experimentdata WHERE id = ANY(?)";
+    private static final String LABELS_SQL =
+            "SELECT id, label FROM xnat_experimentdata WHERE id = ANY(?) "
+                    + "UNION ALL "
+                    + "SELECT id, label FROM xnat_subjectdata WHERE id = ANY(?)";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -63,15 +66,17 @@ public class XnatItemQueries {
         return found;
     }
 
-    /** The current labels of the experiments among {@code ids}, by ID. */
-    public Map<String, String> experimentLabels(final Collection<String> ids) {
+    /** The current labels of the subjects and experiments among {@code ids}, by ID. */
+    public Map<String, String> itemLabels(final Collection<String> ids) {
         final Map<String, String> labels = new HashMap<>();
         if (ids.isEmpty()) {
             return labels;
         }
         jdbcTemplate.query(connection -> {
             final PreparedStatement statement = connection.prepareStatement(LABELS_SQL);
-            statement.setArray(1, connection.createArrayOf("varchar", ids.toArray()));
+            final Array array = connection.createArrayOf("varchar", ids.toArray());
+            statement.setArray(1, array);
+            statement.setArray(2, array);
             return statement;
         }, row -> {
             labels.put(row.getString("id"), row.getString("label"));

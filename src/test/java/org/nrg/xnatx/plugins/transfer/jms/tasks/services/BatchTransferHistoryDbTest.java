@@ -127,8 +127,10 @@ public class BatchTransferHistoryDbTest {
         final List<BatchTransferItem> listed = history.items(historyId);
         assertEquals(Arrays.asList(id("E1"), id("E2")),
                 Arrays.asList(listed.get(0).getItemId(), listed.get(1).getItemId()));
-        assertEquals("SESS_2", history.experimentLabels(Arrays.asList(id("E2"), id("NOPE"))).get(id("E2")));
-        assertEquals(1, history.experimentLabels(Arrays.asList(id("E2"), id("NOPE"))).size());
+        final Map<String, String> labels = history.itemLabels(Arrays.asList(id("E2"), id("S1"), id("NOPE")));
+        assertEquals("SESS_2", labels.get(id("E2")));
+        assertEquals("a subject's label too", "SUBJ_1", labels.get(id("S1")));
+        assertEquals(2, labels.size());
     }
 
     @Test

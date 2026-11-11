@@ -42,7 +42,6 @@ import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressSe
 import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
 import org.nrg.xdat.XDAT;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Nonnull;
@@ -102,7 +101,9 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         }
 
         if (StringUtils.isBlank(batchTransferRequest.getTrackingId())) {
-            batchTransferRequest.setTrackingId(String.format("batch_transfer_%s", System.currentTimeMillis()));
+            // The suffix keeps two submits in the same millisecond from sharing a tracking id.
+            batchTransferRequest.setTrackingId(String.format("batch_transfer_%d_%s", System.currentTimeMillis(),
+                    UUID.randomUUID().toString().substring(0, 8)));
         }
 
         // The run and its item rows commit here, before the task below can queue any item, so a consumer on any
@@ -142,13 +143,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         // Register the whole batch once; every item — whether queued (Reimport/Clone) or processed
         // in-process (Share) — reports to the monitor, which emits the single terminal event after the
         // last one finishes. This keeps one completion signal even when operations are mixed.
-        try {
-            monitor.register(trackingId, user.getID(), requests.size());
-        } catch (DataIntegrityViolationException e) {
-            // Multi-node: a peer that received the same submit (client retry, same tracking id) already
-            // created the equivalent progress row. Its row is authoritative; proceed with enqueueing.
-            log.info("Batch {} was already registered by another node; continuing.", trackingId);
-        }
+        monitor.register(trackingId, user.getID(), requests.size());
         if (!reimportItems.isEmpty()) {
             enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(),
                     batchTransferRequest.isAnonReplacePipeline(), user);

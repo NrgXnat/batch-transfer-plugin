@@ -136,18 +136,24 @@ public class BatchTransferApi extends AbstractXapiRestController {
     }
 
     /**
-     * Checks on the batch as a whole that need no XNAT lookup: no item listed twice, every explicit Reimport
-     * routing label a valid XNAT label, and no two Reimport items routed to the same explicit session label.
-     * Routing labels apply only to Reimport, so Share and Clone items aren't label-checked. Returns the 400
-     * message naming the items, or {@code null} when the batch passes.
+     * Checks on the batch as a whole that need no XNAT lookup: every item has an id, no item listed twice, every
+     * explicit Reimport routing label a valid XNAT label, and no two Reimport items routed to the same explicit
+     * session label. Routing labels apply only to Reimport, so Share and Clone items aren't label-checked. Returns
+     * the 400 message naming the items, or {@code null} when the batch passes.
      */
     static String checkBatch(final List<TransferRequest> requests) {
         final Set<String> seen = new HashSet<>();
         final Set<String> repeated = new LinkedHashSet<>();
+        int missing = 0;
         for (final TransferRequest request : requests) {
-            if (request.getId() != null && !seen.add(request.getId())) {
+            if (StringUtils.isBlank(request.getId())) {
+                missing++;
+            } else if (!seen.add(request.getId())) {
                 repeated.add(request.getId());
             }
+        }
+        if (missing > 0) {
+            return "Every item needs an id; " + missing + (missing == 1 ? " item has" : " items have") + " none.";
         }
         if (!repeated.isEmpty()) {
             return "The request lists the same item more than once: " + listOf(repeated) + ".";

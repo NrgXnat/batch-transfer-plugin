@@ -16,6 +16,7 @@ import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistorySer
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService;
 import org.nrg.xnatx.plugins.transfer.model.TransferRun;
 import org.nrg.xnatx.plugins.transfer.model.TransferRunDetail;
+import org.nrg.xnatx.plugins.transfer.model.TransferRunItem;
 import org.nrg.xnatx.plugins.transfer.model.TransferRunPage;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -51,6 +52,7 @@ public class BatchTransferHistoryApiTest {
 
     private static final String TRACKING_ID = "batch_transfer_1";
     private static final String SOURCE      = "SRC";
+    private static final String DESTINATION = "DST";
 
     private BatchTransferHistoryService  historyService;
     private BatchTransferProgressService progressService;
@@ -99,15 +101,43 @@ public class BatchTransferHistoryApiTest {
     @Test
     public void detail_aSourceReaderSeesTheRunWithoutValuesOrScript() {
         stubRun("alice", BatchTransferHistory.Status.Completed);
-        doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
+        doReturn(Arrays.asList(SOURCE, DESTINATION)).when(api).readableProjects(any());
 
         final TransferRunDetail detail = body(api.detail(TRACKING_ID));
 
         assertEquals(TRACKING_ID, detail.getRun().getTrackingId());
         assertNull(detail.getAnonScript());
         assertNull(detail.getItems().get(0).getCsvValues());
+        assertEquals("XNAT_E9", detail.getItems().get(0).getDestinationId());
         assertEquals("THE_LABEL", detail.getItems().get(0).getDestinationLabel());
+        assertEquals("ROUTED_S", detail.getItems().get(0).getDestinationSubjectLabel());
         assertFalse(detail.isCanStop());
+    }
+
+    @Test
+    public void detail_aReaderWhoCantReadTheDestinationGetsNoDestinationIdOrLabels() {
+        stubRun("alice", BatchTransferHistory.Status.Completed);
+        doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
+
+        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID)).getItems().get(0);
+
+        assertEquals("XNAT_E1", item.getItemId());
+        assertEquals(DESTINATION, item.getDestinationProject());
+        assertNull(item.getDestinationId());
+        assertNull(item.getDestinationLabel());
+        assertNull(item.getDestinationSubjectLabel());
+        verify(historyService).itemLabels(Collections.emptySet());
+    }
+
+    @Test
+    public void detail_theCreatorSeesDestinationsWithoutReadingTheDestination() {
+        stubRun("carol", BatchTransferHistory.Status.Completed);
+
+        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID)).getItems().get(0);
+
+        assertEquals("XNAT_E9", item.getDestinationId());
+        assertEquals("THE_LABEL", item.getDestinationLabel());
+        verify(api, never()).readableProjects(any());
     }
 
     @Test
@@ -227,6 +257,17 @@ public class BatchTransferHistoryApiTest {
         assertTrue(page.getRuns().get(0).isCustomScript());
     }
 
+    @Test
+    public void list_aPagePastTheLargestOffset_isEmpty() {
+        when(historyService.count(any(), any(), any(), any(), any())).thenReturn(31L);
+
+        final TransferRunPage page = body(api.list(null, null, Integer.MAX_VALUE, 200));
+
+        assertTrue(page.getRuns().isEmpty());
+        assertEquals(31L, page.getTotal());
+        verify(historyService, never()).list(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
     // ---- fixtures --------------------------------------------------------------------------------------
 
     private void stubRun(final String createdBy, final BatchTransferHistory.Status status) {
@@ -236,10 +277,12 @@ public class BatchTransferHistoryApiTest {
         item.setItemId("XNAT_E1");
         item.setStatus(BatchTransferItem.Status.Done);
         item.setCsvValues("{\"pid\":\"ANON_1\"}");
+        item.setDestinationProject(DESTINATION);
+        item.setDestinationSubjectLabel("ROUTED_S");
         item.setDestinationId("XNAT_E9");
         final List<BatchTransferItem> items = Collections.singletonList(item);
         when(historyService.items(run.getId())).thenReturn(items);
-        when(historyService.experimentLabels(any())).thenReturn(Collections.singletonMap("XNAT_E9", "THE_LABEL"));
+        when(historyService.itemLabels(any())).thenReturn(Collections.singletonMap("XNAT_E9", "THE_LABEL"));
     }
 
     private static BatchTransferHistory run(final String createdBy, final BatchTransferHistory.Status status) {

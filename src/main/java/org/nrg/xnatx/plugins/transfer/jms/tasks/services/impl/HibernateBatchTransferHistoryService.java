@@ -166,8 +166,8 @@ public class HibernateBatchTransferHistoryService
     }
 
     @Override
-    public Map<String, String> experimentLabels(final Collection<String> experimentIds) {
-        return xnatItems.experimentLabels(experimentIds);
+    public Map<String, String> itemLabels(final Collection<String> ids) {
+        return xnatItems.itemLabels(ids);
     }
 
     private static String modeName(final TransferMode mode) {
