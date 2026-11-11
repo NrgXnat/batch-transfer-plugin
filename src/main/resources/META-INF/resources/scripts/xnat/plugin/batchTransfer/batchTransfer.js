@@ -236,11 +236,17 @@ var XNAT = getObject(XNAT || {});
     // bar, so they stay reachable without the whole rail scrolling away.
     function syncRailSticky() {
         var rail = document.querySelector('.bt-rail');
-        if (!rail) { return; }
+        // A hidden view (History is showing) measures 0; viewShown re-syncs when it's back.
+        if (!rail || !rail.offsetParent) { return; }
         var bar = document.querySelector('.bt-action-bar');
         var room = window.innerHeight - (bar ? bar.offsetHeight : 56);
         rail.style.top = Math.min(0, room - rail.offsetHeight) + 'px';
     }
+
+    // Called by the tabs when New transfer is shown again: anything measured while it was hidden is redone.
+    XNAT.plugin.batchtransfer.viewShown = function() {
+        syncRailSticky();
+    };
 
     // -- Cohort mode (interactive tree | CSV manifest) --
     // Swaps the workspace between the interactive selection tree and the manifest dropzone; the
@@ -1738,6 +1744,11 @@ var XNAT = getObject(XNAT || {});
                     batchTransfer.tracking_id,
                     'XNAT.plugin.batchtransfer.updateBatchTransferProgress'
                 );
+                // Opens History with the new run highlighted, so Stop is one click away. New transfer is
+                // only hidden, so its selections are still there on the way back.
+                if (XNAT.plugin.batchtransfer.history) {
+                    XNAT.plugin.batchtransfer.history.showSubmitted(batchTransfer.tracking_id);
+                }
             },
             error: function(xhr) {
                 xmodal.message('Error', 'The transfer was not submitted: ' + escapeHtml(responseMessage(xhr)));

@@ -2,6 +2,7 @@
 ## All Rights Reserved
 
 <script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransfer.js")"></script>
+<script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransferHistory.js")"></script>
 <script type="text/javascript" src="$!content.getURI("scripts/subjectAssessorData/proj_tools.js")"></script>
 
 #if($msg)
@@ -31,10 +32,29 @@
     #set($hasPresetDest = true)
 #end
 
+## Page header: the title, the source, and the New transfer / History tabs. The tabs switch two panels;
+## switching only hides a panel, so New transfer keeps its state. batchTransferHistory.js drives the tabs and
+## renders the History panel.
+<div class="bt-pagehead">
+    <div class="bt-pagehead-title">
+        <h1>Batch Transfer</h1>
+        <span class="bt-pagehead-ctx">#if($projectContext)$displayManager.getSingularDisplayNameForProject() <strong>$!projectContext</strong>#{else}Search results#end</span>
+    </div>
+    <div class="bt-viewtabs" role="tablist" aria-label="Batch Transfer views">
+        <button type="button" class="bt-viewtab" role="tab" id="bt-tab-transfer" data-view="transfer"
+                aria-selected="true" aria-controls="bt-view-transfer">New transfer</button>
+        <button type="button" class="bt-viewtab" role="tab" id="bt-tab-history" data-view="history"
+                aria-selected="false" aria-controls="bt-view-history" tabindex="-1">History
+            <span class="bt-live" id="bt-history-badge" hidden><span class="bt-live-dot"></span><span id="bt-history-badge-text"></span></span>
+        </button>
+    </div>
+</div>
+
 ## Left-column layout: config rail on the left; cohort workspace (banners, script editor, tree/CSV)
 ## on the right; a full-width action bar below both. The rail is ordered by dependency - each
 ## section constrains the next: source/dest, operation, cohort, then the Reimport-only anonymization
 ## and label sections. All element ids/classes below are the hooks batchTransfer.js drives.
+<div class="bt-view" id="bt-view-transfer" role="tabpanel" aria-labelledby="bt-tab-transfer">
 <div class="bt-screen">
 
     <div class="bt-body">
@@ -286,12 +306,20 @@
     </div>
 
 </div>
+</div>
+
+<div class="bt-view" id="bt-view-history" role="tabpanel" aria-labelledby="bt-tab-history" hidden>
+    <div class="bt-h-screen" id="bt-history"></div>
+</div>
 
 <script type="text/javascript">
     $(function() {
         XNAT.plugin.batchtransfer.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end,
             presetDestination: #if($hasPresetDest) '$!presetDestination' #else null #end
+        });
+        XNAT.plugin.batchtransfer.history.init({
+            projectContext: #if($projectContext) '$!projectContext' #else null #end
         });
     });
 </script>

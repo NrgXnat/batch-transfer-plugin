@@ -1592,3 +1592,188 @@ tr.bt-import-disabled[data-type="subject"]:hover {
         border-bottom: 1px solid #e8eaed;
     }
 }
+
+/* ===================================================================== */
+/* Page header with the New transfer / History tabs, and the History     */
+/* view. History's status pills (bt-st-*) are its own: the bt-mini-*     */
+/* chips and bt-anon-* banners keep their anonymization meanings on      */
+/* New transfer.                                                         */
+/* ===================================================================== */
+
+.bt-pagehead { display: flex; align-items: flex-end; gap: 26px; padding: 0 2px; }
+.bt-pagehead-title { display: flex; align-items: baseline; gap: 10px; padding-bottom: 11px; }
+.bt-pagehead h1 { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; color: #202124; letter-spacing: -.1px; }
+.bt-pagehead-ctx { font-size: 12.5px; line-height: 16px; color: #5f6368; }
+.bt-pagehead-ctx strong { color: #3c4043; }
+
+/* The tabs sit on the panels' top rule: the selected tab's underline covers it. */
+.bt-viewtabs { display: flex; gap: 2px; }
+.bt-viewtab {
+    -webkit-appearance: none; appearance: none; box-shadow: none; text-shadow: none;
+    background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0;
+    margin: 0 0 -1px; padding: 9px 14px 10px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: inherit; font-size: 14px; line-height: 18px; font-weight: 600; color: #5f6368;
+}
+.bt-viewtab:hover { color: #202124; background: #f1f3f4; }
+.bt-viewtab[aria-selected="true"] { color: #1a73e8; border-bottom-color: #1a73e8; background: none; }
+/* A panel's own display rules must not undo the hidden attribute. */
+.bt-view[hidden] { display: none !important; }
+
+/* Running badge on the History tab, and the "Updating" note in run detail. */
+@keyframes bt-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(26, 115, 232, .55); }
+    70% { box-shadow: 0 0 0 6px rgba(26, 115, 232, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(26, 115, 232, 0); }
+}
+.bt-live {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+    background: #e8f0fe; color: #1a57c2; font-size: 11px; line-height: 15px; font-weight: 700; white-space: nowrap;
+}
+.bt-live[hidden] { display: none; }
+.bt-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #1a73e8; animation: bt-pulse 1.8s infinite; display: inline-block; }
+
+/* History body: the same grey surface and top rule as .bt-screen, so the tab underline lands on the same line. */
+.bt-h-screen {
+    border-top: 1px solid #dadce0; background: #f8f9fa; padding: 14px 10px 28px;
+    min-height: calc(100vh - 150px); box-sizing: border-box; font-size: 13px; line-height: 18px; color: #202124;
+}
+.bt-h-panel { overflow: hidden; }
+.bt-h-panel .bt-pager { padding: 10px 14px; border-top: 1px solid #f1f3f4; }
+.bt-h-empty { text-align: center; padding: 34px 16px; color: #5f6368; font-size: 13px; }
+.bt-h-error { padding: 14px; color: #c5221f; font-size: 13px; }
+.bt-h-linkbtn, .bt-h-back, .bt-h-more button {
+    -webkit-appearance: none; appearance: none; border: 0; background: none; padding: 0; cursor: pointer;
+    font-family: inherit; color: #1a73e8; font-weight: 600;
+}
+.bt-h-linkbtn { font-size: 13px; margin-left: 4px; }
+.bt-h-linkbtn:hover, .bt-h-back:hover, .bt-h-more button:hover { text-decoration: underline; }
+/* XNAT's app.css styles every button (background, border, a drop shadow, Arial) and removes focus outlines
+   with !important. These buttons undo its look, and show keyboard focus with a ring drawn by box-shadow. */
+.bt-viewtab, .bt-h-btn, .bt-h-seg button, .bt-h-caret, .bt-h-linkbtn, .bt-h-back, .bt-h-more button {
+    box-shadow: none; font-family: inherit; letter-spacing: normal; text-decoration: none;
+}
+.bt-h-linkbtn:hover, .bt-h-back:hover, .bt-h-more button:hover, .bt-h-caret:hover { background: none; }
+.bt-viewtab:focus-visible, .bt-h-btn:focus-visible, .bt-h-linkbtn:focus-visible, .bt-h-back:focus-visible,
+.bt-h-more button:focus-visible, .bt-h-caret:focus-visible { box-shadow: 0 0 0 2px #1a73e8; }
+.bt-h-seg button:focus-visible { box-shadow: inset 0 0 0 2px #1a73e8; }
+.bt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Tables */
+.bt-h-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 18px; }
+.bt-h-table th {
+    text-align: left; padding: 9px 14px; font-size: 11.5px; font-weight: 600; letter-spacing: .5px;
+    text-transform: uppercase; color: #5f6368; background: #f8f9fa; border-bottom: 1px solid #e8eaed;
+}
+.bt-h-table td { padding: 10px 14px; border-bottom: 1px solid #f1f3f4; vertical-align: top; }
+.bt-h-table tbody tr:last-child td { border-bottom: 0; }
+.bt-h-sub { font-size: 11.5px; line-height: 15px; color: #5f6368; margin-top: 2px; }
+.bt-h-muted { color: #5f6368; }
+.bt-h-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+a.bt-h-mono { color: #1a73e8; }
+
+/* Runs list */
+.bt-h-runs { table-layout: fixed; }
+.bt-h-runs td { vertical-align: middle; }
+.bt-h-col-status { width: 108px; }
+.bt-h-col-started { width: 150px; }
+.bt-h-col-outcome { width: 200px; }
+.bt-h-col-chev { width: 24px; }
+.bt-h-row { cursor: pointer; }
+.bt-h-row:hover { background: #f8f9fa; }
+.bt-h-row:focus-visible { outline: 2px solid #1a73e8; outline-offset: -2px; }
+.bt-h-row.is-new { background: #f4f8fe; box-shadow: inset 3px 0 0 #1a73e8; }
+.bt-h-what { display: flex; align-items: center; gap: 9px; font-size: 13.5px; min-width: 0; }
+.bt-h-what .bt-opb { flex-shrink: 0; }
+.bt-h-what + .bt-h-sub { margin-top: 4px; }
+.bt-h-route { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bt-h-route .here { font-weight: 700; }
+.bt-h-route .arr { color: #9aa0a6; margin: 0 4px; }
+.bt-h-chev { color: #9aa0a6; font-size: 16px; text-align: right; }
+
+/* Run status pills: a colour and a dot, and the status written out, never colour alone. */
+.bt-st {
+    display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 9px 3px 8px;
+    font-size: 11.5px; line-height: 15px; font-weight: 700; white-space: nowrap;
+}
+.bt-st i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.bt-st-queued    { background: #f1f3f4; color: #3c4043; } .bt-st-queued i    { background: #9aa0a6; }
+.bt-st-running   { background: #e8f0fe; color: #1a57c2; } .bt-st-running i   { background: #1a73e8; animation: bt-pulse 1.8s infinite; }
+.bt-st-stopping  { background: #e8f0fe; color: #1a57c2; } .bt-st-stopping i  { background: #5f6368; border-radius: 1px; }
+.bt-st-completed { background: #e6f4ea; color: #137333; } .bt-st-completed i { background: #34a853; }
+.bt-st-warnings  { background: #fef7e0; color: #8a5300; } .bt-st-warnings i  { background: #f9ab00; }
+.bt-st-failed    { background: #fce8e6; color: #b3261e; } .bt-st-failed i    { background: #ea4335; }
+.bt-st-stopped   { background: #eceff1; color: #37474f; } .bt-st-stopped i   { background: #5f6368; border-radius: 1px; }
+/* Operation: one neutral style, so it never competes with the status colour. */
+.bt-opb { display: inline-block; background: #eceff1; color: #37474f; border-radius: 6px; padding: 2px 8px; font-size: 11.5px; line-height: 15px; font-weight: 700; }
+
+/* Outcome counts and progress */
+.bt-h-out { display: flex; align-items: center; gap: 10px; }
+.bt-h-ok { color: #137333; font-weight: 700; white-space: nowrap; }
+.bt-h-bad { color: #b3261e; font-weight: 700; white-space: nowrap; }
+.bt-h-stop { color: #37474f; font-weight: 700; white-space: nowrap; }
+.bt-h-bar { width: 96px; height: 6px; border-radius: 3px; background: #e8eaed; overflow: hidden; display: flex; flex-shrink: 0; }
+.bt-h-bar span { display: block; height: 100%; transition: width .4s ease; }
+.bt-h-bar .is-ok { background: #34a853; }
+.bt-h-bar .is-bad { background: #ea4335; }
+.bt-h-bar .is-stop { background: #80868b; }
+
+/* Run detail */
+.bt-h-backrow { margin: 0 0 6px; }
+.bt-h-back { font-size: 13px; }
+.bt-h-detailhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.bt-h-detailhead h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 700; color: #202124; }
+.bt-h-actions { margin-left: auto; display: flex; gap: 8px; }
+.bt-h-btn {
+    -webkit-appearance: none; appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid #dadce0; background: #fff; color: #3c4043; border-radius: 8px;
+    padding: 7px 13px; font-family: inherit; font-size: 12.5px; line-height: 16px; font-weight: 600;
+}
+.bt-h-btn:hover { background: #f8f9fa; }
+.bt-h-btn-stop { color: #b3261e; border-color: #f4c7c3; }
+.bt-h-btn-stop:hover { background: #fce8e6; }
+.bt-h-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 18px; padding: 14px; }
+.bt-h-facts .k { font-size: 11px; line-height: 14px; text-transform: uppercase; letter-spacing: .5px; color: #5f6368; font-weight: 700; margin-bottom: 3px; }
+.bt-h-facts .v { font-size: 13px; line-height: 18px; color: #202124; overflow-wrap: anywhere; }
+.bt-h-script { max-height: 320px; overflow: auto; margin: 0; }
+.bt-h-livenote { display: inline-flex; align-items: center; gap: 6px; }
+
+.bt-h-sumbar { display: flex; align-items: center; gap: 16px; padding: 11px 14px; border-bottom: 1px solid #e8eaed; font-size: 13px; flex-wrap: wrap; }
+.bt-h-sumbar .bt-h-bar { width: 220px; height: 8px; border-radius: 4px; }
+.bt-h-seg { margin-left: auto; display: inline-flex; border: 1px solid #dadce0; border-radius: 8px; overflow: hidden; }
+.bt-h-seg button {
+    -webkit-appearance: none; appearance: none; border: 0; background: #fff; cursor: pointer; padding: 5px 12px;
+    font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 600; color: #3c4043;
+}
+.bt-h-seg button + button { border-left: 1px solid #dadce0; }
+.bt-h-seg button[aria-pressed="true"] { background: #e8f0fe; color: #1a57c2; }
+
+/* Items, grouped by subject */
+.bt-h-items .bt-h-col-caret { width: 22px; padding-right: 0; }
+.bt-h-items .bt-h-col-row { width: 44px; color: #5f6368; }
+.bt-h-group td { background: #fbfcfe; padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid #eef0f2; }
+.bt-h-groupsum { margin-left: 10px; font-size: 11.5px; color: #5f6368; }
+.bt-h-item-bad td { background: #fffafa; }
+.bt-h-reason { color: #b3261e; font-size: 12.5px; line-height: 17px; margin-top: 2px; overflow-wrap: anywhere; }
+.bt-h-outcome { display: flex; align-items: flex-start; gap: 8px; }
+.bt-h-ic { width: 14px; flex-shrink: 0; text-align: center; font-weight: 700; }
+.bt-h-ic.is-ok { color: #188038; }
+.bt-h-ic.is-bad { color: #d93025; }
+.bt-h-ic.is-stop { color: #5f6368; }
+.bt-h-ic.is-wait { color: #9aa0a6; }
+@keyframes bt-spin { to { transform: rotate(360deg); } }
+.bt-h-spin {
+    display: inline-block; flex-shrink: 0; width: 10px; height: 10px; margin: 2px 2px 0; border: 2px solid #d2e3fc;
+    border-top-color: #1a73e8; border-radius: 50%; animation: bt-spin .8s linear infinite;
+}
+.bt-h-caret {
+    -webkit-appearance: none; appearance: none; border: 0; background: none; padding: 0 2px; cursor: pointer;
+    color: #5f6368; font-size: 12px; line-height: 18px;
+}
+.bt-h-caret:hover { color: #1a73e8; }
+.bt-h-values td { background: #fbfcfe; padding-top: 6px; }
+.bt-h-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 0 36px; font-size: 12.5px; }
+.bt-h-kv dt { color: #5f6368; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.bt-h-kv dd { margin: 0; color: #202124; overflow-wrap: anywhere; }
+.bt-h-more td { text-align: center; }
+.bt-h-more button { font-size: 12.5px; }
