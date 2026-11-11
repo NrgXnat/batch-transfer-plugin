@@ -599,10 +599,14 @@ var XNAT = getObject(XNAT || {});
         var usable = items.filter(function(it) { return it.source_subject_label && it.source_label; });
         usable.sort(function(a, b) { return compareNullable(a.row_number, b.row_number) || compareText(a.source_label, b.source_label); });
 
+        // An item's values include its routing labels, since a script can bind them. They are written once, as
+        // the routing columns: a second copy would be the one the manifest parser reads.
         var valueColumns = [];
         (d.items || []).forEach(function(it) {
             Object.keys(it.csv_values || {}).forEach(function(k) {
-                if (valueColumns.indexOf(k) < 0) { valueColumns.push(k); }
+                if (k !== 'destination_subject_label' && k !== 'destination_session_label' && valueColumns.indexOf(k) < 0) {
+                    valueColumns.push(k);
+                }
             });
         });
         var routeSubject = usable.some(function(it) { return it.destination_subject_label; });
