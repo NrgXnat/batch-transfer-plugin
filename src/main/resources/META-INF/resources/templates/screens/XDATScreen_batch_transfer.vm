@@ -3,6 +3,7 @@
 
 <script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransfer.js")"></script>
 <script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransferHistory.js")"></script>
+<script type="text/javascript" src="$!content.getURI("scripts/xnat/plugin/batchTransfer/batchTransferHelp.js")"></script>
 <script type="text/javascript" src="$!content.getURI("scripts/subjectAssessorData/proj_tools.js")"></script>
 
 #if($msg)
@@ -50,121 +51,167 @@
     </div>
 </div>
 
-## Left-column layout: config rail on the left; cohort workspace (banners, script editor, tree/CSV)
-## on the right; a full-width action bar below both. The rail is ordered by dependency - each
-## section constrains the next: source/dest, operation, cohort, then the Reimport-only anonymization
-## and label sections. All element ids/classes below are the hooks batchTransfer.js drives.
+## New transfer: a help column on the left, with a topic per section, and on the right the summary, a setup card
+## (Transfer, Operation, Anonymization), the Reimport script editor and the cohort builder; a full-width action bar
+## sits below both. batchTransferHelp.js drives the help column; the ids and classes below are the hooks
+## batchTransfer.js drives. Velocity parses the whole template, HTML comments included, so author notes use ##.
 <div class="bt-view" id="bt-view-transfer" role="tabpanel" aria-labelledby="bt-tab-transfer">
 <div class="bt-screen">
 
     <div class="bt-body">
 
-        <!-- ===================== LEFT CONFIG RAIL ===================== -->
-        <div class="bt-rail">
-
-            <!-- Source -> Destination -->
-            <div class="bt-rail-sect">
-                <div class="bt-rail-lbl">Transfer</div>
-                <div class="bt-proj-stack">
-                    <div class="bt-proj-btn frozen">
-                        <span class="bt-proj-lbl">Source</span>
-                        <span class="bt-proj-name">#if($projectContext)$!projectContext#{else}Multiple ${displayManager.getSingularDisplayNameForProject().toLowerCase()}s#end <span class="bt-proj-ic">&#128274;</span></span>
-                    </div>
-                    <div class="bt-proj-down">&#8595;</div>
-                    <div class="bt-proj-btn #if($hasPresetDest)frozen#{else}select#end">
-                        <span class="bt-proj-lbl">Destination $displayManager.getSingularDisplayNameForProject()</span>
-                        #if($hasPresetDest)
-                            <span class="bt-proj-name">$!presetDestination <span class="bt-proj-ic">&#128274;</span></span>
-                        #else
-                            <select class="bt-proj-select" id="bt-project-select" disabled="disabled">
-                                <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
-                            </select>
-                        #end
-                    </div>
+        <aside class="bt-help" aria-label="Help">
+            <div class="bt-help-in">
+                <button type="button" class="bt-help-head" id="bt-help-toggle" title="Hide help"
+                        aria-expanded="true" aria-controls="bt-help-notes">
+                    <span class="bt-help-q" aria-hidden="true">?</span>
+                    <span class="bt-help-cap">Help</span>
+                    <span class="bt-help-chev bt-help-chev-close" aria-hidden="true">&laquo;</span>
+                    <span class="bt-help-chev bt-help-chev-open" aria-hidden="true">&raquo;</span>
+                </button>
+                <div class="bt-help-notes" id="bt-help-notes">
+                    <section class="bt-help-note" data-help="route">
+                        <h4 class="bt-help-title">Transfer</h4>
+                        <p>Data is transferred from the <b>source</b>, where it lives now, into the <b>destination</b> project. The source is set by where you opened Batch Transfer: a project, or the projects in your search results. The transfer does not change it.</p>
+                        <p>Pick the destination from the list. A locked destination was chosen by the page that opened this screen.</p>
+                    </section>
+                    <section class="bt-help-note" data-help="op">
+                        <h4 class="bt-help-title">Operation</h4>
+                        <h5>Share</h5>
+                        <p>Makes the data visible in the destination. Nothing is copied: the source project still owns it, and changes there show in both.</p>
+                        <h5>Clone</h5>
+                        <p>An independent copy you can edit separately. Files are hard-linked, so no extra disk space at clone time. Not anonymized.</p>
+                        <h5>Reimport</h5>
+                        <p>Image sessions only. The DICOM is imported again into the destination and anonymized on the way in, creating new sessions.</p>
+                    </section>
+                    <section class="bt-help-note" data-help="anon">
+                        <h4 class="bt-help-title">Anonymization</h4>
+                        <div data-help-ops="Share Clone">
+                            <p>Anonymization is only supported for the Reimport operation.</p>
+                            <h5 class="bt-help-opname">Share</h5>
+                            <p>Transfers the data as-is: neither the site-wide nor the destination project's anonymization script runs. If the destination has anonymization configured, the row warns you.</p>
+                            <h5>To anonymize</h5>
+                            <p>Choose Reimport. Image sessions are imported again into the destination, and the site-wide and destination project anonymization scripts run on them, each if it is enabled. You can add a custom script as well. Reimport transfers image sessions only.</p>
+                        </div>
+                        <div data-help-ops="Reimport">
+                            <p>How sessions are anonymized and where their labels come from.</p>
+                            <h5>Anonymize with</h5>
+                            <p>Each reimported session goes through the site-wide anonymization script and the destination project's script, each if it is enabled. <b>Destination only</b> runs just those. <b>Add custom script</b> also runs a DicomEdit 6 script you write here.</p>
+                            <p>If neither script is enabled and you don't add one, the sessions are not anonymized.</p>
+                            <h5>Preserve source labels</h5>
+                            <p>Use the source's XNAT subject and session labels instead of deriving them from DICOM tags. Anonymization does not change XNAT labels, so a preserved label is kept as it is.</p>
+                            <p>A manifest's <code>destination_subject_label</code> and <code>destination_session_label</code> override this per row; sessions from a subject row always take their session label from this setting.</p>
+                        </div>
+                    </section>
+                    <section class="bt-help-note" data-help="script">
+                        <h4 class="bt-help-title">Anonymization script</h4>
+                        <p>Applied to each session as it is imported. It runs after the site-wide anonymization script and before the destination project's script, when those are enabled.</p>
+                        <p><code>${csv.column}</code> takes that session's value from the manifest column of the same name.</p>
+                        <p><b>Validate</b> checks the script and its placeholders. Submit is blocked while the script has errors.</p>
+                    </section>
+                    <section class="bt-help-note" data-help="cohort">
+                        <h4 class="bt-help-title">Cohort builder</h4>
+                        <h5>Select interactively</h5>
+                        <p>Tick subjects, sessions and assessors; ticking a subject ticks everything under it. For Reimport only image sessions are listed.</p>
+                        <h5>Upload manifest CSV</h5>
+                        <p>For Reimport only: Share and Clone use the selection tree, so the button is disabled for them. A manifest needs a source project, so it is also disabled from search results.</p>
+                        <p>One row per session, with columns <code>source_subject_label</code> and <code>source_session_label</code>. Leave the session blank to cover a whole subject: all of its image sessions.</p>
+                        <p>Rows that match nothing are listed and skipped. The same session listed twice blocks Submit. Optional <code>destination_subject_label</code> and <code>destination_session_label</code> columns set a session's labels in the destination; any other column is a value for the custom script's placeholders.</p>
+                        <p class="bt-help-muted">The chips beside Submit show anonymization and storage; hover one for the full explanation.</p>
+                    </section>
                 </div>
             </div>
+        </aside>
 
-            <!-- Operation. Ahead of Cohort because it decides what is eligible to select: the tree
-                 hides rows the operation cannot transfer, and a manifest is for Reimport only. -->
-            <div class="bt-rail-sect">
-                <div class="bt-rail-lbl">Operation</div>
-                <div class="bt-op-stack">
-                    <div class="bt-op-card-sm selected" data-op="Share">
-                        <div class="bt-op-label">Share</div>
-                        <div class="bt-op-desc">Add to destination without copying</div>
-                    </div>
-                    <div class="bt-op-card-sm" data-op="Clone">
-                        <div class="bt-op-label">Clone</div>
-                        <div class="bt-op-desc">Full data duplication</div>
-                    </div>
-                    <div class="bt-op-card-sm" data-op="Reimport">
-                        <div class="bt-op-label">Reimport</div>
-                        <div class="bt-op-desc">Re-anonymize image sessions</div>
-                    </div>
-                </div>
-            </div>
-
-## Cohort mode. Ahead of Anonymization because an uploaded manifest's columns are what the
-## script's csv placeholders bind against. Velocity parses the whole template, HTML comments
-## included, so author notes use ## and avoid dollar-brace syntax that is not a real reference.
-            <div class="bt-rail-sect">
-                <div class="bt-rail-lbl">Cohort</div>
-                <div class="bt-cohort-toggle" id="bt-cohort-toggle">
-                    <button type="button" class="bt-cohort-mode selected" data-cohort="tree">Select interactively</button>
-                    <button type="button" class="bt-cohort-mode" data-cohort="csv">Upload manifest CSV</button>
-                </div>
-            </div>
-
-            <!-- Anonymization (Reimport only): mode toggle here; the editor lives in the workspace -->
-            <div class="bt-rail-sect" id="bt-anon-band" style="display:none;">
-                <div class="bt-rail-lbl">Anonymization</div>
-                <div class="bt-anon-seg" id="bt-anon-seg">
-                    <button type="button" class="bt-anon-mode selected" data-anon="none">Destination only</button>
-                    <button type="button" class="bt-anon-mode" data-anon="script">Add custom script</button>
-                </div>
-                <div class="bt-anon-unsupported" id="bt-anon-unsupported" style="display:none;">
-                    This XNAT build does not support per-import anonymization; Reimport will use the destination's anonymization only.
-                </div>
-            </div>
-
-            <!-- Preserve source labels (Reimport only) -->
-            <div class="bt-rail-sect" id="bt-reimport-label-option" style="display:none;">
-                <div class="bt-rail-lbl">Preserve source labels</div>
-                <div class="bt-reimport-opts">
-                    <p class="bt-label-options-help">Use the source's XNAT subject/session labels instead of deriving them from DICOM tags. A manifest's <code>destination_subject_label</code> / <code>destination_session_label</code> columns override this per row; sessions from a subject row always take their session label from this setting.</p>
-                    <div class="bt-label-checks">
-                        <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
-                        <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ===================== RIGHT WORKSPACE ===================== -->
         <div class="bt-workspace">
             <div class="bt-work-scroll">
 
-                <!-- About this transfer: selected operation description + anon/storage banners (as in 1.1.1) -->
-                <div class="bt-panel">
-                    <div class="bt-panel-head">
-                        <div class="bt-panel-title">About this transfer</div>
+                ## What the chosen operation does; batchTransfer.js writes it.
+                <p class="bt-summary" id="bt-summary"></p>
+
+                <div class="bt-panel bt-setup">
+                    <div class="bt-setup-row" data-sect="route">
+                        <div class="bt-setup-lbl">Transfer <button type="button" class="bt-q" data-help-for="route" aria-label="Help: Transfer">?</button></div>
+                        <div class="bt-setup-route">
+                            <div class="bt-proj-btn frozen">
+                                <span class="bt-proj-lbl">Source</span>
+                                <span class="bt-proj-name">#if($projectContext)$!projectContext#{else}Multiple ${displayManager.getSingularDisplayNameForProject().toLowerCase()}s#end <span class="bt-proj-ic">&#128274;</span></span>
+                            </div>
+                            <div class="bt-proj-arrow" aria-hidden="true">&#10142;</div>
+                            <div class="bt-proj-btn #if($hasPresetDest)frozen#{else}select#end">
+                                <span class="bt-proj-lbl">Destination $displayManager.getSingularDisplayNameForProject()</span>
+                                #if($hasPresetDest)
+                                    <span class="bt-proj-name">$!presetDestination <span class="bt-proj-ic">&#128274;</span></span>
+                                #else
+                                    <select class="bt-proj-select" id="bt-project-select" disabled="disabled" aria-label="Destination ${displayManager.getSingularDisplayNameForProject().toLowerCase()}">
+                                        <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
+                                    </select>
+                                #end
+                            </div>
+                        </div>
                     </div>
-                    <div class="bt-panel-body">
-                        <p class="bt-op-detail-desc" id="bt-op-detail-desc"></p>
-                        <div class="bt-banner-region" id="bt-op-detail-warning-area"></div>
+
+                    ## Operation decides what is eligible: the tree hides rows the operation can't transfer, and a
+                    ## manifest is for Reimport only.
+                    <div class="bt-setup-row" data-sect="op">
+                        <div class="bt-setup-lbl">Operation <button type="button" class="bt-q" data-help-for="op" aria-label="Help: Operation">?</button></div>
+                        <div class="bt-setup-ops">
+                            <div class="bt-op-card-sm selected" data-op="Share">
+                                <div class="bt-op-label">Share</div>
+                                <div class="bt-op-desc">Add to destination without copying</div>
+                            </div>
+                            <div class="bt-op-card-sm" data-op="Clone">
+                                <div class="bt-op-label">Clone</div>
+                                <div class="bt-op-desc">Full data duplication</div>
+                            </div>
+                            <div class="bt-op-card-sm" data-op="Reimport">
+                                <div class="bt-op-label">Reimport</div>
+                                <div class="bt-op-desc">Re-anonymize image sessions</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ## Anonymization, for every operation: Reimport's controls, or for Share and Clone a note that only
+                    ## Reimport anonymizes, plus a warning when the destination's anonymization will be bypassed.
+                    <div class="bt-setup-row" data-sect="anon">
+                        <div class="bt-setup-lbl">Anonymization <button type="button" class="bt-q" data-help-for="anon" aria-label="Help: Anonymization">?</button></div>
+                        <div class="bt-setup-anon">
+                            <div class="bt-anon-opts" id="bt-anon-band" style="display:none;">
+                                <div>
+                                    <div class="bt-opt-cap">Anonymize with</div>
+                                    <div class="bt-anon-seg" id="bt-anon-seg">
+                                        <button type="button" class="bt-anon-mode selected" data-anon="none">Destination only</button>
+                                        <button type="button" class="bt-anon-mode" data-anon="script">Add custom script</button>
+                                    </div>
+                                    <div class="bt-anon-unsupported" id="bt-anon-unsupported" style="display:none;">
+                                        This XNAT build does not support per-import anonymization; Reimport will use the destination's anonymization only.
+                                    </div>
+                                </div>
+                                <div id="bt-reimport-label-option">
+                                    <div class="bt-opt-cap">Preserve source labels</div>
+                                    <div class="bt-label-checks">
+                                        <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
+                                        <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bt-anon-na" id="bt-anon-na">
+                                <p class="bt-anon-na-text">Anonymization is only supported for the Reimport operation. <span id="bt-anon-na-op">Share</span> transfers the data as-is.</p>
+                                <div class="bt-banner-region" id="bt-op-detail-warning-area"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Custom-script editor (Reimport + custom script), full workspace width -->
-                <div class="bt-panel bt-anon-editor" id="bt-anon-editor" style="display:none;">
+                <div class="bt-panel bt-anon-editor" id="bt-anon-editor" data-sect="script" style="display:none;">
                     <div class="bt-panel-head">
-                        <div class="bt-panel-title">Anonymization script</div>
+                        <div class="bt-panel-title">Anonymization script <button type="button" class="bt-q" data-help-for="script" aria-label="Help: Anonymization script">?</button></div>
                         <div class="bt-panel-meta"><span class="bt-mode-pill">DicomEdit 6</span></div>
                     </div>
                     <div class="bt-panel-body">
                         <div class="bt-anon-editor-hint">Applied per session at ingest, in addition to the destination's anonymization. <code>${csv.column}</code> placeholders bind to manifest columns.</div>
-                        <textarea id="bt-anon-script" class="bt-anon-textarea" spellcheck="false" placeholder='version "6.1"'></textarea>
+                        <textarea id="bt-anon-script" class="bt-anon-textarea" spellcheck="false" placeholder='version "6.1"' aria-label="Anonymization script"></textarea>
                         <div class="bt-anon-editor-row">
                             <button type="button" class="bt-btn bt-btn-secondary" id="bt-anon-validate">Validate</button>
                             <div class="bt-anon-verdict" id="bt-anon-verdict"></div>
@@ -172,12 +219,16 @@
                     </div>
                 </div>
 
-                <!-- Cohort builder: holds whichever cohort mode is active (interactive tree, or CSV
-                     dropzone + resolved table). Content is flush; the panel is the frame. -->
-                <div class="bt-panel bt-builder">
-                    <div class="bt-panel-head">
-                        <div class="bt-panel-title">Cohort builder</div>
+                <!-- Cohort builder: the mode toggle in its header, and whichever mode is active (interactive tree,
+                     or CSV dropzone + resolved table) in its body. Content is flush; the panel is the frame. -->
+                <div class="bt-panel bt-builder" data-sect="cohort">
+                    <div class="bt-panel-head bt-builder-head">
+                        <div class="bt-panel-title">Cohort builder <button type="button" class="bt-q" data-help-for="cohort" aria-label="Help: Cohort builder">?</button></div>
                         <div class="bt-panel-meta" id="bt-builder-mode"></div>
+                        <div class="bt-cohort-toggle" id="bt-cohort-toggle" role="group" aria-label="Cohort mode">
+                            <button type="button" class="bt-cohort-mode selected" data-cohort="tree">Select interactively</button>
+                            <button type="button" class="bt-cohort-mode" data-cohort="csv">Upload manifest CSV</button>
+                        </div>
                     </div>
 
                     <!-- interactive tree (subjects / sessions / assessors) -->
@@ -314,6 +365,7 @@
 
 <script type="text/javascript">
     $(function() {
+        XNAT.plugin.batchtransfer.help.init();
         XNAT.plugin.batchtransfer.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end,
             presetDestination: #if($hasPresetDest) '$!presetDestination' #else null #end

@@ -28,18 +28,6 @@ var XNAT = getObject(XNAT || {});
     var rowById = {};              // data-id  -> DOM <tr>
     var childrenByParent = {};     // data-parent -> [DOM <tr>, ...]
 
-    var operationDetails = {
-        Share: 'This operation shares the selected data into the destination project. ' +
-               'The data is not copied - it remains the same data element, owned by the source project, ' +
-               'and changes made there are reflected in the destination.',
-        Clone: 'This operation creates an independent copy of the selected data in the destination project. ' +
-               'The cloned data is editable separately from the source and is not anonymized. ' +
-               'Cloned session files are hard-linked to the source, requiring no additional disk space at the time of cloning.',
-        Reimport: 'This operation reimports the selected image sessions through the destination project\'s ' +
-                  'anonymization or a user provided DicomEdit script. Only DICOM files are transferred; target session metadata ' +
-                  'is derived from DICOM tags and/or anonymization parameters.'
-    };
-
     // -- Initialization --
 
     XNAT.plugin.batchtransfer.init = function(cfg) {
@@ -66,7 +54,6 @@ var XNAT = getObject(XNAT || {});
         configureCohortModes();
         bindCsvUpload();
         bindAnonBand();
-        bindViewportSync();
         fetchCapabilities();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
@@ -153,23 +140,22 @@ var XNAT = getObject(XNAT || {});
     };
 
     // -- Operation Banners --
-    // The "About this transfer" panel only carries alerts the action bar does not show. Reimport's
+    // Share or Clone into a destination with anonymization enabled: the Anonymization row warns that the
+    // destination's script won't run, since neither operation has an anonymization chip. Reimport's
     // anonymization status and storage cost are action-bar chips (anonChipsHtml), each with its full
-    // explanation as a tooltip, so they are not repeated here. What remains is Share or Clone into a
-    // destination with anonymization enabled: the data is transferred as-is, and neither operation has
-    // an anonymization chip.
+    // explanation as a tooltip, so they get no banner.
 
     function updateAnonBanner() {
         var area = document.getElementById('bt-op-detail-warning-area');
         if (!area) return;
 
         var html = '';
-        var dest = selectedProject;
-        if (dest && projectAnonCache[dest] === true) {
+        var dest = escapeHtml(selectedProject);
+        if (selectedProject && projectAnonCache[selectedProject] === true) {
             if (selectedOp === 'Share') {
-                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Share does not anonymize - the data is made visible as-is.');
+                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but its anonymization script will not be applied by Share - the data is made visible as-is.');
             } else if (selectedOp === 'Clone') {
-                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but Clone copies the data as-is - the cloned copy is not anonymized.');
+                html += banner('warn', '<strong>' + dest + ' has anonymization enabled</strong>, but its anonymization script will not be applied by Clone - the cloned copy is not anonymized.');
             }
         }
         area.innerHTML = html;
@@ -203,53 +189,50 @@ var XNAT = getObject(XNAT || {});
     // -- Operation Detail --
 
     function updateOperationDetail() {
-        $('#bt-op-detail-desc').text(operationDetails[selectedOp] || '');
-        // Reimport-only affordances: the Anonymization mode toggle and the preserve-source-label checkboxes.
-        $('#bt-anon-band').toggle(selectedOp === 'Reimport');
-        $('#bt-reimport-label-option').toggle(selectedOp === 'Reimport');
-        // The script editor lives in the workspace (not inside the anon band), so hide it explicitly
-        // when leaving Reimport or when the build lacks per-import anon.
-        $('#bt-anon-editor').toggle(selectedOp === 'Reimport' && anonMode === 'script' && perImportAnonSupported());
+        renderSummary();
+        var reimport = selectedOp === 'Reimport';
+        // The Anonymization row: Reimport's anonymization and label controls, or for Share and Clone the note that
+        // only Reimport anonymizes.
+        $('#bt-anon-band').toggle(reimport);
+        $('#bt-anon-na').toggle(!reimport);
+        $('#bt-anon-na-op').text(selectedOp);
+        // The script editor is a panel of its own, so hide it explicitly when leaving Reimport or when the build
+        // lacks per-import anon.
+        $('#bt-anon-editor').toggle(reimport && anonMode === 'script' && perImportAnonSupported());
         // Eligibility warnings are per operation - each explains why rows are hidden for that
         // operation only, so a stale one must not linger after the operation changes.
         $('#bt-share-warning').toggle(selectedOp === 'Share');
         $('#bt-copy-warning').toggle(selectedOp === 'Clone');
+        syncHelp();
     }
 
-    // Re-pin the rail whenever the viewport, the rail or the action bar changes height: rail sections
-    // show and hide per operation, and the bar's summary chips wrap. Resize re-pins only; it never
-    // re-renders the cohort table.
-    function bindViewportSync() {
-        var timer;
-        $(window).on('resize.bttransfer', function() {
-            clearTimeout(timer);
-            timer = setTimeout(syncRailSticky, 150);
-        });
-        if (window.ResizeObserver) {
-            var ro = new ResizeObserver(syncRailSticky);
-            ['.bt-rail', '.bt-action-bar'].forEach(function(sel) {
-                var el = document.querySelector(sel);
-                if (el) { ro.observe(el); }
-            });
-        }
-        syncRailSticky();
+    // The summary above the setup card: what the chosen operation does, that the source isn't changed, and that
+    // the transfer runs in the background. From search results the source is the projects in the results.
+    function renderSummary() {
+        var project = config.projectContext ? escapeHtml(config.projectContext) : null;
+        var src = project ? '<b>' + project + '</b>' : 'the projects in your search results';
+        var to = selectedProject ? '<b>' + escapeHtml(selectedProject) + '</b>' : 'another project';
+        var what = {
+            Share: 'Share data from ' + src + ' into ' + to + '. Nothing is copied: ' + (project ? project + ' keeps' : 'they keep') +
+                   ' the data, and changes made there show in the destination.',
+            Clone: 'Clone data from ' + src + ' into ' + to + ' as an independent copy that can be edited separately. ' +
+                   'Files are hard-linked, so no extra disk space is used at clone time.',
+            Reimport: 'Reimport image sessions from ' + src + ' into ' + to + '. Only DICOM files are transferred, ' +
+                      'anonymized on the way in; session metadata is derived from the DICOM tags.'
+        }[selectedOp] || '';
+        $('#bt-summary').html(what + ' ' + (project ? project + ' itself is' : 'The source projects are') +
+            ' not changed, and once submitted the transfer runs in the background.');
     }
 
-    // The rail sticks at top: 0 while it fits above the pinned action bar. Taller than that, a negative
-    // top makes it stick by its bottom edge instead: it scrolls only until its lowest controls clear the
-    // bar, so they stay reachable without the whole rail scrolling away.
-    function syncRailSticky() {
-        var rail = document.querySelector('.bt-rail');
-        // A hidden view (History is showing) measures 0; viewShown re-syncs when it's back.
-        if (!rail || !rail.offsetParent) { return; }
-        var bar = document.querySelector('.bt-action-bar');
-        var room = window.innerHeight - (bar ? bar.offsetHeight : 56);
-        rail.style.top = Math.min(0, room - rail.offsetHeight) + 'px';
+    // The help column shows the topics for the chosen operation, and the script topic while the editor shows.
+    function syncHelp() {
+        var help = XNAT.plugin.batchtransfer.help;
+        if (help) { help.sync(selectedOp, selectedOp === 'Reimport' && anonMode === 'script' && perImportAnonSupported()); }
     }
 
     // Called by the tabs when New transfer is shown again: anything measured while it was hidden is redone.
     XNAT.plugin.batchtransfer.viewShown = function() {
-        syncRailSticky();
+        if (XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.layout(); }
     };
 
     // -- Cohort mode (interactive tree | CSV manifest) --
@@ -327,6 +310,7 @@ var XNAT = getObject(XNAT || {});
             anonMode = 'none';
             anonVerdictValid = null;
             $('#bt-anon-editor').hide();
+            syncHelp();
         }
     }
 
@@ -338,6 +322,8 @@ var XNAT = getObject(XNAT || {});
             $('#bt-anon-editor').toggle(anonMode === 'script');
             if (anonMode !== 'script') { anonVerdictValid = null; $('#bt-anon-verdict').empty(); }
             else { validateAnonScript(false); }
+            syncHelp();
+            if (anonMode === 'script' && XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.highlight('script'); }
             updateAnonBanner();
             updateSummary();
         });
@@ -558,6 +544,7 @@ var XNAT = getObject(XNAT || {});
             } else {
                 updateAnonBanner();
             }
+            renderSummary();
             updateSummary();
         });
     }
@@ -878,14 +865,12 @@ var XNAT = getObject(XNAT || {});
     }
 
     // -- Cohort builder panel header --
-    // Reports which cohort mode is active and one line of state for it. The mode is switched from the
-    // rail, so the pill is the panel's own statement of what it is currently building from.
+    // One line of state for the active cohort mode; the toggle beside it shows which mode that is.
 
     function renderBuilderState() {
         var el = document.getElementById('bt-builder-mode');
         if (!el) return;
-        var pill = '<span class="bt-mode-pill">' + (cohortMode === 'csv' ? 'Manifest CSV' : 'Interactive') + '</span>';
-        el.innerHTML = pill + '<span>' + (cohortMode === 'csv' ? csvBuilderState() : treeBuilderState()) + '</span>';
+        el.innerHTML = '<span>' + (cohortMode === 'csv' ? csvBuilderState() : treeBuilderState()) + '</span>';
     }
 
     // Eligibility is per operation, so the noun follows it: Reimport counts only image sessions
@@ -980,7 +965,7 @@ var XNAT = getObject(XNAT || {});
             var preserved = preservedLabels();
             if (anonInEffect && preserved.length) {
                 // Kept short: this is the longest chip, and the action bar is a single row. The
-                // reason behind it is in its title and in the rail's label help.
+                // reason behind it is in its title and in the Anonymization help topic.
                 out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
                     + (preserved.length > 1 ? 's' : '') + ' not anonymized',
                     'Preserved source labels are kept as they are; anonymization does not change XNAT labels.');
