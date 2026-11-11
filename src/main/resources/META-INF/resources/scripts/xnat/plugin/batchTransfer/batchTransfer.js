@@ -54,6 +54,7 @@ var XNAT = getObject(XNAT || {});
         configureCohortModes();
         bindCsvUpload();
         bindAnonBand();
+        bindScriptFile();
         fetchCapabilities();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
@@ -247,7 +248,7 @@ var XNAT = getObject(XNAT || {});
     function configureCohortModes() {
         var $csv = $('.bt-cohort-mode[data-cohort="csv"]');
         if (!csvSourceProject()) {
-            $csv.prop('disabled', true).attr('title', 'Open Batch Transfer from a project to upload a manifest.');
+            $csv.prop('disabled', true).attr('title', 'Manifest CSV upload is not supported for multiple source projects.');
             return;
         }
         var reimport = selectedOp === 'Reimport';
@@ -274,6 +275,8 @@ var XNAT = getObject(XNAT || {});
         $('#bt-cohort-tree').toggle(tree);
         $('#bt-cohort-csv').toggle(!tree);
         if (!tree) { refreshCsvRequiredHint(); }
+        // The columns placeholders can bind to depend on the mode, so the verdict has to be redone.
+        if (anonMode === 'script') { validateAnonScript(false); }
         updateSummary();
     }
 
@@ -295,7 +298,7 @@ var XNAT = getObject(XNAT || {});
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/transfer/capabilities'),
             contentType: 'application/json',
-            success: function(data) { caps = data; configureAnonSupport(); updateAnonBanner(); updateSummary(); },
+            success: function(data) { caps = data; configureAnonSupport(); renderScriptLimit(); updateAnonBanner(); updateSummary(); },
             error: function() { caps = null; }
         });
     }
@@ -330,6 +333,10 @@ var XNAT = getObject(XNAT || {});
         $(document).on('click', '#bt-anon-validate', function() { validateAnonScript(true); });
         var t = null;
         $(document).on('input', '#bt-anon-script', function() {
+            if (scriptFile && !scriptFile.edited) {
+                scriptFile.edited = true;
+                renderScriptSource();
+            }
             clearTimeout(t);
             t = setTimeout(function() { validateAnonScript(false); updateAnonBanner(); updateSummary(); }, 400);
         });
@@ -341,10 +348,156 @@ var XNAT = getObject(XNAT || {});
         });
     }
 
+    // -- Loading a script from a file --
+    // Upload file, or a file dropped anywhere on the script panel, replaces the editor's text, and Undo puts the
+    // previous text back. Any name or extension is accepted. The size is checked against the admin's limit
+    // (max_anon_script_bytes) before the file is read, so an oversized file is never loaded; before the
+    // capabilities load there is no limit to check, and the server checks again at validate and submit. A refused
+    // file leaves the editor unchanged. Typed or pasted text isn't checked against the limit here.
+
+    var scriptFile = null;          // { name, size, edited } of the file whose text is in the editor
+    var scriptBeforeFile = null;    // the editor's text before that file replaced it, for Undo
+    var scriptLoadSeq = 0;          // counts load attempts, so a slow read can't land after a newer attempt
+
+    function maxScriptBytes() {
+        return caps && caps.max_anon_script_bytes ? caps.max_anon_script_bytes : null;
+    }
+
+    function bindScriptFile() {
+        $(document).on('click', '#bt-script-pick', function() { $('#bt-script-file').val('').click(); });
+        $(document).on('change', '#bt-script-file', function() {
+            if (this.files && this.files.length) { loadScriptFile(this.files[0]); }
+        });
+        $(document).on('click', '#bt-script-undo', function() { undoScriptFile(); });
+        // A file dropped on the script panel loads; dropped anywhere else (but the manifest dropzone, which takes its
+        // own) it is ignored, rather than opened by the browser in place of the screen.
+        document.addEventListener('dragover', function(e) {
+            if (!hasFiles(e) || inManifestDropzone(e)) { return; }
+            e.preventDefault();
+            var zone = scriptDropZone(e);
+            e.dataTransfer.dropEffect = zone ? 'copy' : 'none';
+            $('#bt-anon-editor').toggleClass('bt-drag', !!zone);
+        });
+        document.addEventListener('dragleave', function(e) {
+            var zone = scriptDropZone(e);
+            if (zone && !zone.contains(e.relatedTarget)) { zone.classList.remove('bt-drag'); }
+        });
+        document.addEventListener('drop', function(e) {
+            if (!hasFiles(e) || inManifestDropzone(e)) { return; }
+            e.preventDefault();
+            $('#bt-anon-editor').removeClass('bt-drag');
+            if (!scriptDropZone(e)) { return; }
+            var files = e.dataTransfer.files;
+            if (files.length > 1) {
+                scriptLoadSeq++;
+                showScriptFileError('Drop one file at a time. The editor was not changed.');
+            } else if (files.length) {
+                loadScriptFile(files[0]);
+            }
+        });
+    }
+
+    function hasFiles(e) {
+        return !!e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0;
+    }
+
+    function scriptDropZone(e) {
+        var zone = e.target && e.target.closest ? e.target.closest('#bt-anon-editor') : null;
+        return zone && zone.offsetParent ? zone : null;
+    }
+
+    function inManifestDropzone(e) {
+        return !!(e.target && e.target.closest && e.target.closest('#bt-dropzone'));
+    }
+
+    function loadScriptFile(file) {
+        var seq = ++scriptLoadSeq;
+        var name = '<b>' + escapeHtml(file.name) + '</b>';
+        var unchanged = ' The editor was not changed.';
+        var limit = maxScriptBytes();
+        if (limit && file.size > limit) {
+            showScriptFileError(name + ' is ' + formatBytes(file.size) + ', over the ' + formatBytes(limit) +
+                ' limit for anonymization scripts set by your site administrator.' + unchanged);
+            return;
+        }
+        if (file.size === 0) {
+            showScriptFileError(name + ' is empty.' + unchanged);
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function() {
+            if (seq !== scriptLoadSeq) { return; }
+            var text = String(reader.result || '');
+            // A NUL byte means binary content, such as a DICOM file.
+            if (text.indexOf('\u0000') >= 0) {
+                showScriptFileError(name + ' is not a text file; a DicomEdit script is plain text.' + unchanged);
+                return;
+            }
+            var $editor = $('#bt-anon-script');
+            scriptBeforeFile = $editor.val() || '';
+            scriptFile = { name: file.name, size: file.size, edited: false };
+            $editor.val(text);
+            scriptTextChanged();
+        };
+        reader.onerror = function() {
+            if (seq === scriptLoadSeq) { showScriptFileError(name + ' could not be read.' + unchanged); }
+        };
+        reader.readAsText(file);
+    }
+
+    function undoScriptFile() {
+        if (scriptBeforeFile === null) { return; }
+        scriptLoadSeq++;
+        $('#bt-anon-script').val(scriptBeforeFile);
+        scriptBeforeFile = null;
+        scriptFile = null;
+        scriptTextChanged();
+    }
+
+    // The editor's text was replaced: validate it like a paste, and redraw what depends on it.
+    function scriptTextChanged() {
+        showScriptFileError(null);
+        renderScriptSource();
+        validateAnonScript(true);
+        if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }
+        updateAnonBanner();
+        updateSummary();
+    }
+
+    // Beside Upload file: the loaded file with Undo, or what can be dropped.
+    function renderScriptSource() {
+        var limit = maxScriptBytes();
+        $('#bt-script-source').html(scriptFile
+            ? '<span class="bt-file-chip">Loaded from <b>' + escapeHtml(scriptFile.name) + '</b> (' + formatBytes(scriptFile.size) + ')' +
+              (scriptFile.edited ? ', edited' : '') + ' <button type="button" class="bt-linkbtn" id="bt-script-undo">Undo</button></span>'
+            : 'or drop a file on this panel. Any file type' + (limit ? ', up to ' + formatBytes(limit) : '') + '.');
+    }
+
+    // The admin's limit, once the capabilities say what it is: beside Upload file and in the help topic.
+    function renderScriptLimit() {
+        var limit = maxScriptBytes();
+        $('.bt-script-limit').text(limit ? formatBytes(limit) : '');
+        $('.bt-script-limit-wrap').prop('hidden', !limit);
+        renderScriptSource();
+    }
+
+    function showScriptFileError(html) {
+        $('#bt-script-err').html(html ? '<span>&#9888;</span><div>' + html + '</div>' : '').prop('hidden', !html);
+    }
+
+    function formatBytes(n) {
+        if (n < 1024) { return n + ' bytes'; }
+        var kb = n / 1024;
+        if (kb < 1024) { return parseFloat(kb < 10 ? kb.toFixed(1) : Math.round(kb)) + ' KB'; }
+        return parseFloat((kb / 1024).toFixed(1)) + ' MB';
+    }
+
     // The ${csv.*}-bindable columns for /validate/script: value + routing columns from the manifest
-    // (CSV mode). Interactive mode has no manifest, so binding is not checked (null).
+    // (CSV mode). The selection tree supplies no values, so in interactive mode no placeholder can bind ([]).
+    // null while a manifest has yet to load: binding is not checked.
     function anonManifestColumns() {
-        if (cohortMode === 'csv' && manifestResult) {
+        if (cohortMode !== 'csv') { return []; }
+        if (manifestResult) {
             return (manifestResult.value_columns || []).concat(manifestResult.routing_columns || []);
         }
         return null;
@@ -383,12 +536,17 @@ var XNAT = getObject(XNAT || {});
     function renderAnonVerdict(v) {
         var h = '<div class="bt-verdict-line ' + (v.valid ? 'bt-verdict-ok' : 'bt-verdict-bad') + '">' +
                 '<span>' + (v.valid ? '&#10003;' : '&#9888;') + '</span><div>' +
-                (v.valid ? ('Script is valid' + (v.binding ? ' and every placeholder is bound.' : '.'))
+                (v.valid ? ('Script is valid' + (v.binding && (v.placeholders || []).length ? ' and every placeholder is bound.' : '.'))
                          : 'Script has issues - submit is blocked.') + '</div></div>';
         (v.errors || []).forEach(function(e) { h += verdictBad('Parse: ' + escapeHtml(e)); });
         (v.restriction_violations || []).forEach(function(r) { h += verdictBad('Restriction: ' + escapeHtml(r)); });
         if (v.binding && !v.binding.bound) {
-            h += verdictBad('Unbound: ' + (v.binding.unbound || []).map(function(u) { return '${csv.' + escapeHtml(u) + '}'; }).join(', '));
+            var unbound = v.binding.unbound || [];
+            var names = unbound.map(function(u) { return '${csv.' + escapeHtml(u) + '}'; }).join(', ');
+            h += verdictBad(cohortMode === 'csv' ? 'Unbound: ' + names
+                : names + (unbound.length === 1 ? ' needs' : ' need') + ' a manifest: placeholders are filled from' +
+                  ' manifest CSV columns. Upload a manifest CSV, or remove the placeholder' +
+                  (unbound.length === 1 ? '.' : 's.'));
         }
         var meta = [];
         if (v.dialect) { meta.push(escapeHtml(v.dialect)); }
@@ -1131,6 +1289,7 @@ var XNAT = getObject(XNAT || {});
         $('#bt-csv-file').val('');
         $('#bt-csv-results').empty();
         $('#bt-dropzone').show();
+        if (anonMode === 'script') { validateAnonScript(false); }
         updateSummary();
     }
 

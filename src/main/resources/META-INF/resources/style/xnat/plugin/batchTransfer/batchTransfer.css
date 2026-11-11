@@ -1608,6 +1608,27 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 }
 .bt-panel-body { padding: 14px; }
 
+/* Script panel: load a script from a file with the button, or by dropping the file on the panel. */
+.bt-anon-editor { position: relative; }
+.bt-script-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 2px 0 8px; font-size: 12px; line-height: 16px; color: #5f6368; }
+.bt-script-tools .bt-btn { padding: 5px 12px; font-size: 12.5px; }
+.bt-file-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; background: #f1f3f4; color: #3c4043; }
+.bt-linkbtn {
+    -webkit-appearance: none; appearance: none; border: 0; background: none; box-shadow: none; padding: 0; margin-left: 4px;
+    font-family: inherit; font-size: inherit; letter-spacing: normal; color: #1a73e8; cursor: pointer;
+}
+.bt-linkbtn:hover { background: none; text-decoration: underline; }
+.bt-linkbtn:focus-visible { box-shadow: 0 0 0 2px #1a73e8; }
+.bt-script-err { margin: 0 0 8px; }
+.bt-script-err[hidden] { display: none; }
+.bt-drop-over {
+    display: none; position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 3;
+    align-items: center; justify-content: center;
+    border: 2px dashed #1a73e8; border-radius: 8px; background: rgba(232, 240, 254, .92);
+    color: #1a57c2; font-size: 14px; font-weight: 600; pointer-events: none;
+}
+.bt-anon-editor.bt-drag .bt-drop-over { display: flex; }
+
 /* Summary: what the chosen operation does, above the setup card. */
 .bt-summary { margin: 0 4px 12px; max-width: 780px; font-size: 13px; line-height: 1.5; color: #3c4043; }
 

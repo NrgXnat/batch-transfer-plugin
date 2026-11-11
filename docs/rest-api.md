@@ -71,7 +71,8 @@ Checks a DicomEdit 6 script without applying it.
 }
 ```
 
-`manifest_columns` is optional. When present, the response includes `binding`.
+`manifest_columns` is optional. When present, the response includes `binding`. An empty list means there is
+no manifest to fill placeholders from, so every placeholder is reported unbound and the script is not valid.
 
 **Response 200**
 

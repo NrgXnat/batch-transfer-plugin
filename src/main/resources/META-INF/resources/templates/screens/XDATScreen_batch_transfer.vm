@@ -106,6 +106,7 @@
                     <section class="bt-help-note" data-help="script">
                         <h4 class="bt-help-title">Anonymization script</h4>
                         <p>Applied to each session as it is imported. It runs after the site-wide anonymization script and before the destination project's script, when those are enabled.</p>
+                        <p>Type or paste the script, or load it from a file: click <b>Upload file</b> or drop the file on the panel. Any file name or extension is accepted<span class="bt-script-limit-wrap" hidden>, up to <span class="bt-script-limit"></span>, a limit set by your site administrator</span>. A loaded file replaces what is in the editor; <b>Undo</b> brings it back.</p>
                         <p><code>${csv.column}</code> takes that session's value from the manifest column of the same name.</p>
                         <p><b>Validate</b> checks the script and its placeholders. Submit is blocked while the script has errors.</p>
                     </section>
@@ -211,12 +212,20 @@
                     </div>
                     <div class="bt-panel-body">
                         <div class="bt-anon-editor-hint">Applied per session at ingest, in addition to the destination's anonymization. <code>${csv.column}</code> placeholders bind to manifest columns.</div>
+                        ## Load the script from a file: the button, or a file dropped anywhere on this panel.
+                        <div class="bt-script-tools">
+                            <button type="button" class="bt-btn bt-btn-secondary" id="bt-script-pick">Upload file</button>
+                            <span id="bt-script-source">or drop a file on this panel. Any file type.</span>
+                            <input type="file" id="bt-script-file" style="display:none;">
+                        </div>
+                        <div class="bt-verdict-line bt-verdict-bad bt-script-err" id="bt-script-err" role="alert" hidden></div>
                         <textarea id="bt-anon-script" class="bt-anon-textarea" spellcheck="false" placeholder='version "6.1"' aria-label="Anonymization script"></textarea>
                         <div class="bt-anon-editor-row">
                             <button type="button" class="bt-btn bt-btn-secondary" id="bt-anon-validate">Validate</button>
                             <div class="bt-anon-verdict" id="bt-anon-verdict"></div>
                         </div>
                     </div>
+                    <div class="bt-drop-over" aria-hidden="true">Drop the file to load it into the editor</div>
                 </div>
 
                 <!-- Cohort builder: the mode toggle in its header, and whichever mode is active (interactive tree,
