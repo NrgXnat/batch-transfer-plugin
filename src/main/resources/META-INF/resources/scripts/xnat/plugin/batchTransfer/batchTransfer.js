@@ -1610,6 +1610,7 @@ var XNAT = getObject(XNAT || {});
             if (row.csv_values) { item.csv_values = row.csv_values; }
             if (row.destination_subject_label) { item.destination_subject_label = row.destination_subject_label; }
             if (row.destination_session_label) { item.destination_session_label = row.destination_session_label; }
+            if (row.row_number) { item.row_number = row.row_number; }
             items.push(item);
         });
         return items;

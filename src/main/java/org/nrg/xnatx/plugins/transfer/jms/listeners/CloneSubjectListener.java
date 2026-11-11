@@ -8,6 +8,7 @@ import org.nrg.xnatx.plugins.transfer.event.BatchTransferEvent;
 import org.nrg.xnatx.plugins.transfer.jms.config.BatchTransferJmsConfig;
 import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
 import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
@@ -25,8 +26,9 @@ import org.springframework.stereotype.Component;
  * {@code BatchTransferPrefsBean}) is how many subjects clone at once.
  *
  * <p>Never rethrows (a thrown exception would trigger JMS redelivery and reprocess the bundle). Each
- * item reports its outcome to {@link BatchTransferMonitor} exactly once, so the batch's completion
- * count always advances even when some items fail.
+ * item asks {@link BatchTransferMonitor} whether to run, so a stop between items of one bundle skips the
+ * rest, and each item that runs or fails reports its outcome exactly once, so the batch's completion
+ * count always advances.
  */
 @Slf4j
 @Component
@@ -60,9 +62,10 @@ public class CloneSubjectListener {
         } catch (Exception e) {
             log.error("Clone subject {}: could not load user {}", request.getSubjectId(), request.getUsername(), e);
             // Report every item in the bundle so fan-in still completes.
+            final String message = "Could not load user " + request.getUsername();
             for (final CloneSubjectRequest.CloneItem item : request.getItems()) {
-                emitFail(request, item.getItemId() + " failed. Cause: could not load user " + request.getUsername());
-                monitor.itemDone(trackingId, true);
+                emitFail(request, item.getItemId() + " failed. Cause: " + message);
+                monitor.finishItem(trackingId, item.getItemId(), Outcome.FAILED, message, null);
             }
             return;
         }
@@ -71,19 +74,26 @@ public class CloneSubjectListener {
         // experiment is created once and reused (no get-or-create race). A failed parent fails its
         // dependents item-by-item; siblings still proceed.
         for (final CloneSubjectRequest.CloneItem item : request.getItems()) {
-            boolean failed = false;
+            if (!monitor.startItem(trackingId, item.getItemId())) {
+                continue;   // the run was stopped before this item started, or the item has already finished
+            }
+            Outcome outcome = Outcome.DONE;
+            String message = null;
+            String destinationId = null;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
                         0, trackingId,
                         "Cloning " + item.getItemId() + " to " + item.getDestinationProject()));
-                service.processItem(new TransferRequest(item.getDestinationProject(), item.getItemId(), TransferMode.CLONE),
+                destinationId = service.processItem(
+                        new TransferRequest(item.getDestinationProject(), item.getItemId(), TransferMode.CLONE),
                         user, new EventInfo(trackingId, 0));
             } catch (Exception e) {
                 log.error("Clone {} failed", item.getItemId(), e);
-                failed = true;
-                emitFail(request, item.getItemId() + " failed. Cause: " + XnatUtils.rootCauseMessage(e));
+                outcome = Outcome.FAILED;
+                message = XnatUtils.rootCauseMessage(e);
+                emitFail(request, item.getItemId() + " failed. Cause: " + message);
             } finally {
-                monitor.itemDone(trackingId, failed);
+                monitor.finishItem(trackingId, item.getItemId(), outcome, message, destinationId);
             }
         }
     }

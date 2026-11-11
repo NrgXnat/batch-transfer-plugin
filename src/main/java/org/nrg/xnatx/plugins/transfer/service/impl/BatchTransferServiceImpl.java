@@ -37,6 +37,8 @@ import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistoryService;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
 import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
 import org.nrg.xdat.XDAT;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,6 +77,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     private final DicomObjectIdentifier identifier;
     private final BatchTransferMonitor monitor;
     private final ScriptCompiler scriptCompiler;
+    private final BatchTransferHistoryService historyService;
 
     @Autowired
     public BatchTransferServiceImpl(final NrgEventService eventService,
@@ -82,13 +85,15 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                                  final AnonUtils anonUtils,
                                  final ContextService contextService,
                                  final BatchTransferMonitor monitor,
-                                 final ScriptCompiler scriptCompiler) {
+                                 final ScriptCompiler scriptCompiler,
+                                 final BatchTransferHistoryService historyService) {
         this.eventService = eventService;
         this.executorService = executorService;
         this.anonUtils = anonUtils;
         this.identifier = contextService.getBean("dicomObjectIdentifier", DicomObjectIdentifier.class);
         this.monitor = monitor;
         this.scriptCompiler = scriptCompiler;
+        this.historyService = historyService;
     }
 
     public void submitTransferRequest(BatchTransfer batchTransferRequest, UserI user) {
@@ -99,6 +104,10 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         if (StringUtils.isBlank(batchTransferRequest.getTrackingId())) {
             batchTransferRequest.setTrackingId(String.format("batch_transfer_%s", System.currentTimeMillis()));
         }
+
+        // The run and its item rows commit here, before the task below can queue any item, so a consumer on any
+        // node always finds its item's row.
+        historyService.recordSubmit(batchTransferRequest, user);
 
         final String queuedMsg = String.format("Transfer Queued (%s items)", batchTransferRequest.getRequests().size());
         eventService.triggerEvent(BatchTransferEvent.waiting(user.getID(), batchTransferRequest.getTrackingId(), queuedMsg));
@@ -176,9 +185,10 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
+                final String message = "Could not be queued. Cause: " + e.getMessage();
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
-                monitor.itemDone(trackingId, true);
+                monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
             }
         }
     }
@@ -200,9 +210,10 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } catch (Exception e) {
                 // Couldn't determine the subject — report this item failed so the batch still finishes.
                 log.error("Failed to group clone item {}", request.getId(), e);
+                final String message = "Could not be queued. Cause: " + e.getMessage();
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
-                monitor.itemDone(trackingId, true);
+                monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
             }
         }
 
@@ -213,10 +224,11 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             } catch (Exception e) {
                 // Couldn't enqueue this subject's bundle — report all of its items failed.
                 log.error("Failed to queue clone bundle for subject {}", entry.getKey(), e);
+                final String message = "Could not be queued. Cause: " + e.getMessage();
                 for (final CloneSubjectRequest.CloneItem item : entry.getValue()) {
                     eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                             item.getItemId() + " could not be queued. Cause: " + e.getMessage()));
-                    monitor.itemDone(trackingId, true);
+                    monitor.finishItem(trackingId, item.getItemId(), Outcome.FAILED, message, null);
                 }
             }
         }
@@ -242,30 +254,37 @@ public class BatchTransferServiceImpl implements BatchTransferService {
     }
 
     /**
-     * In-process path for Share (and any null/unknown-mode) items. Calls {@link #processItem} per item
-     * and reports each one to the {@link BatchTransferMonitor}; the monitor (not this method) emits the
-     * batch's single terminal event once every item across all operations has finished — so this path
-     * composes with the parallel Reimport/Clone queues in a mixed batch.
+     * In-process path for Share (and any null/unknown-mode) items. Asks the {@link BatchTransferMonitor}
+     * before each item whether to run it (not once the run has been stopped), calls {@link #processItem},
+     * and reports the outcome; the monitor (not this method) emits the batch's single terminal event once
+     * every item across all operations has finished — so this path composes with the parallel
+     * Reimport/Clone queues in a mixed batch.
      */
     private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user) {
         for (final TransferRequest request : requests) {
+            if (!monitor.startItem(trackingId, request.getId())) {
+                continue;   // the run was stopped before this item started
+            }
             final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
             // Progress percent is not surfaced to the user (dropped from the tracking payload), so we no
             // longer query it per item; the terminal event alone drives the UI to completion.
             final int progress = 0;
-            boolean failed = false;
+            Outcome outcome = Outcome.DONE;
+            String message = null;
+            String destinationId = null;
             try {
                 eventService.triggerEvent(BatchTransferEvent.progress(user.getID(), progress, trackingId,
                         String.format("%s %s into project: %s", modeAction, request.getId(), request.getDestinationProject())));
-                processItem(request, user, new EventInfo(trackingId, progress));
+                destinationId = processItem(request, user, new EventInfo(trackingId, progress));
             } catch (Exception e) {
-                failed = true;
+                outcome = Outcome.FAILED;
+                message = XnatUtils.rootCauseMessage(e);
                 log.debug(e.getMessage(), e);
-                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), XnatUtils.rootCauseMessage(e));
+                final String err = String.format("%s %s failed. Cause: %s", request.getId(), request.getMode(), message);
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), progress, trackingId, err));
             }
             // Report completion; the monitor emits the batch's terminal event when the last item finishes.
-            monitor.itemDone(trackingId, failed);
+            monitor.finishItem(trackingId, request.getId(), outcome, message, destinationId);
         }
     }
 
@@ -273,10 +292,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * Validates, loads, permission-checks, and dispatches a single transfer item by mode. Shared by
      * the sequential path ({@link #runSequential}) and the JMS consumers, so it is the single source
      * of truth for per-item transfer logic. Throws on any failure; the caller records it (a fail
-     * event in the sequential path, a failed workflow + fail event in the consumer).
+     * event in the sequential path, a failed workflow + fail event in the consumer). Returns what the
+     * item became in the destination: the shared item, the clone, or the reimported session (null when
+     * there is none, e.g. a Reimport that went to the prearchive).
      */
     @Override
-    public void processItem(final TransferRequest request, final UserI user, final EventInfo eventInfo) throws Exception {
+    public String processItem(final TransferRequest request, final UserI user, final EventInfo eventInfo) throws Exception {
         validateRequest(request);
         final XnatProjectdata destinationProjectData = XnatUtils.getProject(request.getDestinationProject(), user);
         final ArchivableItem item = XnatUtils.getArchivableItem(request.getId(), null);
@@ -314,10 +335,12 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
             if (request.getMode().equals(TransferMode.SHARE)) {
                 shareSubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+                return sourceSubject.getId();
             } else if (request.getMode().equals(TransferMode.CLONE)) {
-                getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo);
+                return getOrCopySubject(sourceSubject, existingSubject, destinationProjectData, user, eventInfo).getId();
             } else if (request.getMode().equals(TransferMode.REIMPORT)) {
                 log.warn("Reimport operation is not supported for subjects.");
+                return null;
             } else {
                 throw new Exception(String.format("Unsupported mode %s", request.getMode()));
             }
@@ -329,10 +352,11 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
             if (request.getMode().equals(TransferMode.SHARE)) {
                 shareExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+                return sourceExperiment.getId();
             } else if (request.getMode().equals(TransferMode.CLONE)) {
-                getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+                return getOrCopyExperimentOrAssessor(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
             } else if (request.getMode().equals(TransferMode.REIMPORT)) {
-                importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
+                return importExperiment(sourceExperiment, destinationProjectData, user, eventInfo,
                         request.getPreserveSubjectLabel(),
                         request.getPreserveSessionLabel(),
                         request.getDestinationSubjectLabel(),
@@ -363,7 +387,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         }
     }
 
-    private void importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
+    private String importExperiment(XnatExperimentdata sourceExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo,
                                   Boolean preserveSubjectLabel, Boolean preserveSessionLabel,
                                   String destinationSubjectLabel, String destinationSessionLabel, String anonScript,
                                   boolean anonReplacePipeline) throws Exception {
@@ -435,6 +459,32 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             }
             log.debug(message.toString());
         }
+        return archivedSessionId(uriRef.get(), user);
+    }
+
+    /**
+     * The ID of the session an import archived, from the archive URI the importer returned
+     * ({@code /archive/projects/<project>/subjects/<subject>/experiments/<session>}). Null when the import
+     * went to the prearchive, or the session can't be found.
+     */
+    private String archivedSessionId(final List<String> uris, final UserI user) {
+        for (final String uri : uris) {
+            final String[] parts = StringUtils.split(uri, '/');
+            if (parts.length >= 7 && "archive".equals(parts[0]) && "projects".equals(parts[1])
+                    && "experiments".equals(parts[parts.length - 2])) {
+                return findArchivedSessionId(parts[2], parts[parts.length - 1], user);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds a session in a project by label or ID. Protected seam (like {@link #runImporter}) so tests
+     * need no XDAT wiring.
+     */
+    protected String findArchivedSessionId(final String project, final String labelOrId, final UserI user) {
+        final XnatExperimentdata session = XnatExperimentdata.GetExptByProjectIdentifier(project, labelOrId, user, false);
+        return session == null ? null : session.getId();
     }
 
     /**
@@ -736,23 +786,22 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         @Override public void close() { shutdown(); }
     }
 
-    private void getOrCopyExperimentOrAssessor(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+    private String getOrCopyExperimentOrAssessor(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
         if (sourceExperiment instanceof XnatImageassessordata) {
-            checkOrCopyAssessor((XnatImageassessordata) sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
-        } else {
-            getOrCopyExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
+            return checkOrCopyAssessor((XnatImageassessordata) sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo);
         }
+        return getOrCopyExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, eventInfo).getId();
     }
 
-    private void checkOrCopyAssessor(XnatImageassessordata sourceAssess, XnatExperimentdata existingAssessor, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
+    private String checkOrCopyAssessor(XnatImageassessordata sourceAssess, XnatExperimentdata existingAssessor, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
         if (existingAssessor != null) {
             throwForLabelConflictAssessor(sourceAssess, existingAssessor, destinationProjectData, user, eventInfo);
-        } else {
-            copyAssessor(sourceAssess, destinationProjectData, user);
+            return existingAssessor.getId();
         }
+        return copyAssessor(sourceAssess, destinationProjectData, user);
     }
 
-    private void copyAssessor(XnatImageassessordata sourceAssess, XnatProjectdata destinationProjectData, UserI user) throws Exception {
+    private String copyAssessor(XnatImageassessordata sourceAssess, XnatProjectdata destinationProjectData, UserI user) throws Exception {
         final XnatExperimentdata sourceExperiment = sourceAssess.getImageSessionData();
         final XnatExperimentdata existingExperiment = XnatExperimentdata.GetExptByProjectIdentifier(destinationProjectData.getId(), sourceExperiment.getLabel(), null, false);
         final XnatExperimentdata destinationExperiment = getOrCopyExperiment(sourceExperiment, existingExperiment, destinationProjectData, user, null);
@@ -791,6 +840,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             saveItemAndCopyFiles(user, sourceAssess, newAssessor, filepath, newFilepath);
             return true;
         });
+        return newId;
     }
 
     private XnatExperimentdata getOrCopyExperiment(XnatExperimentdata sourceExperiment, XnatExperimentdata existingExperiment, XnatProjectdata destinationProjectData, UserI user, EventInfo eventInfo) throws Exception {
