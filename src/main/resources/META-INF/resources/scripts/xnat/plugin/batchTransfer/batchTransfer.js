@@ -62,6 +62,7 @@ var XNAT = getObject(XNAT || {});
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
         applyOperationEligibility('Share');
         updateOperationDetail();
+        renderSummary();
         updateSummary();
     };
 
@@ -236,7 +237,6 @@ var XNAT = getObject(XNAT || {});
     // -- Operation Detail --
 
     function updateOperationDetail() {
-        renderSummary();
         var reimport = selectedOp === 'Reimport';
         // The Anonymization row: Reimport's anonymization and label controls, or for Share and Clone the note that
         // only Reimport anonymizes.
@@ -255,19 +255,14 @@ var XNAT = getObject(XNAT || {});
 
     // The summary above the setup card: what the chosen operation does, that the source isn't changed, and that
     // the transfer runs in the background. From search results the source is the projects in the results.
+    // What the tool does, the same for every operation. Only the source and destination names change.
     function renderSummary() {
         var project = config.projectContext ? escapeHtml(config.projectContext) : null;
         var src = project ? '<b>' + project + '</b>' : 'the projects in your search results';
-        var to = selectedProject ? '<b>' + escapeHtml(selectedProject) + '</b>' : 'another project';
-        var what = {
-            Share: 'Share data from ' + src + ' into ' + to + '. Nothing is copied: ' + (project ? project + ' keeps' : 'they keep') +
-                   ' the data, and changes made there show in the destination.',
-            Clone: 'Clone data from ' + src + ' into ' + to + ' as an independent copy that can be edited separately. ' +
-                   'Files are hard-linked, so no extra disk space is used at clone time.',
-            Reimport: 'Reimport image sessions from ' + src + ' into ' + to + '. Only DICOM files are transferred, ' +
-                      'anonymized on the way in; session metadata is derived from the DICOM tags.'
-        }[selectedOp] || '';
-        $('#bt-summary').html(what + ' ' + (project ? project + ' itself is' : 'The source projects are') +
+        var to = selectedProject ? '<b>' + escapeHtml(selectedProject) + '</b>' : 'a destination project';
+        $('#bt-summary').html('Transfer subjects and image sessions from ' + src + ' into ' + to + ' in one batch: ' +
+            'share them, clone them, or reimport them with anonymization. ' +
+            (project ? project + ' itself is' : 'The source projects are') +
             ' not changed, and once submitted the transfer runs in the background.');
     }
 
