@@ -25,6 +25,8 @@ public class BatchTransferProgress extends AbstractHibernateEntity {
     private int     total;
     private int     completed;
     private int     failed;
+    // Nullable so a row created before this column existed still completes: null reads as 0.
+    private Integer stopped;
 
     public BatchTransferProgress() {
         super();
@@ -37,5 +39,6 @@ public class BatchTransferProgress extends AbstractHibernateEntity {
         this.total      = total;
         this.completed  = 0;
         this.failed     = 0;
+        this.stopped    = 0;
     }
 }

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategy;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -12,7 +11,6 @@ import java.util.Map;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 @JsonInclude
 @JsonNaming(PropertyNamingStrategy.LowerCaseWithUnderscoresStrategy.class)
 public class TransferRequest {
@@ -29,6 +27,8 @@ public class TransferRequest {
     // params, which override DICOM-tag-derived labels). Blank/null = derive normally.
     private String destinationSubjectLabel;
     private String destinationSessionLabel;
+    // Optional: the manifest row the item came from, as a spreadsheet numbers the file. Recorded in history.
+    private Integer rowNumber;
     // Internal threading only (the batch-level fields live on BatchTransfer): the compiled per-item script
     // and whether it replaces the destination pipeline. Not part of the per-request wire contract.
     @JsonIgnore
@@ -38,5 +38,22 @@ public class TransferRequest {
     //  Retain no-preserve-flag default constructor
     public TransferRequest(String destinationProject, String id, TransferMode mode) {
         this(destinationProject, id, mode, null, null, null, null, null, null, false);
+    }
+
+    public TransferRequest(final String destinationProject, final String id, final TransferMode mode,
+                           final Boolean preserveSubjectLabel, final Boolean preserveSessionLabel,
+                           final Map<String, String> csvValues, final String destinationSubjectLabel,
+                           final String destinationSessionLabel, final String anonScript,
+                           final boolean anonReplacePipeline) {
+        this.destinationProject = destinationProject;
+        this.id = id;
+        this.mode = mode;
+        this.preserveSubjectLabel = preserveSubjectLabel;
+        this.preserveSessionLabel = preserveSessionLabel;
+        this.csvValues = csvValues;
+        this.destinationSubjectLabel = destinationSubjectLabel;
+        this.destinationSessionLabel = destinationSessionLabel;
+        this.anonScript = anonScript;
+        this.anonReplacePipeline = anonReplacePipeline;
     }
 }

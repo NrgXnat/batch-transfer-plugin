@@ -8,6 +8,7 @@ import org.nrg.xnatx.plugins.transfer.event.BatchTransferEvent;
 import org.nrg.xnatx.plugins.transfer.jms.config.BatchTransferJmsConfig;
 import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
 import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
@@ -22,12 +23,12 @@ import org.springframework.stereotype.Component;
  * {@code BatchTransferPrefsBean}) is the parallelism. Reloads the requesting user and runs the
  * shared per-item transfer logic via {@link BatchTransferService#processItem} — which, for Reimport,
  * drives the session's own persistent workflow (created inside {@code importExperiment}) to its
- * terminal state. The listener keeps no workflow of its own; it just reports each item's outcome to
- * {@link BatchTransferMonitor}, whose counter fires the batch terminal event once every item is in.
+ * terminal state. The listener keeps no workflow of its own: it asks {@link BatchTransferMonitor} whether
+ * the item should run (not when the run has been stopped), and reports the item's outcome to it.
  *
  * <p><b>Never rethrows</b> — a thrown exception would trigger JMS redelivery and reprocess the item.
- * Every path reports exactly one outcome to the monitor (in {@code finally}), so the batch's
- * completion count always advances and fan-in can't stall on a handled error.
+ * Every item that runs, or fails before it can, reports exactly one outcome to the monitor (in
+ * {@code finally}), so the batch's completion count always advances.
  */
 @Slf4j
 @Component
@@ -55,18 +56,24 @@ public class TransferReimportListener {
     public void onRequest(final TransferItemRequest request) {
         final String trackingId     = request.getTrackingId();
         final String itemId         = request.getItemId();
+        if (!monitor.startItem(trackingId, itemId)) {
+            return;   // the run was stopped before this item started, or the item has already finished
+        }
 
         final UserI user;
         try {
             user = userManagementService.getUser(request.getUsername());
         } catch (Exception e) {
             log.error("Reimport {}: could not load user {}", itemId, request.getUsername(), e);
-            emitFail(request, "Could not load user " + request.getUsername());
-            monitor.itemDone(trackingId, true);
+            final String message = "Could not load user " + request.getUsername();
+            emitFail(request, message);
+            monitor.finishItem(trackingId, itemId, Outcome.FAILED, message, null);
             return;
         }
 
-        boolean failed = false;
+        Outcome outcome = Outcome.DONE;
+        String message = null;
+        String destinationId = null;
         try {
             eventService.triggerEvent(BatchTransferEvent.progress(request.getRequestingUserId(),
                     0, trackingId, "Reimporting " + itemId + " to " + request.getDestinationProject()));
@@ -74,13 +81,14 @@ public class TransferReimportListener {
                     request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(), null,
                     request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
                     request.getAnonScript(), request.isAnonReplacePipeline());
-            service.processItem(transferRequest, user, new EventInfo(trackingId, 0));
+            destinationId = service.processItem(transferRequest, user, new EventInfo(trackingId, 0));
         } catch (Exception e) {
             log.error("Reimport {} failed", itemId, e);
-            failed = true;
-            emitFail(request, itemId + " failed. Cause: " + XnatUtils.rootCauseMessage(e));
+            outcome = Outcome.FAILED;
+            message = XnatUtils.rootCauseMessage(e);
+            emitFail(request, itemId + " failed. Cause: " + message);
         } finally {
-            monitor.itemDone(trackingId, failed);
+            monitor.finishItem(trackingId, itemId, outcome, message, destinationId);
         }
     }
 

@@ -14,6 +14,10 @@ import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferRunExistsException;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistoryService;
+import org.mockito.InOrder;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -47,6 +51,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -57,6 +63,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -89,6 +96,7 @@ public class BatchTransferServiceImplTest {
     @Autowired private XnatImageassessordata imageAssessor;
     @Autowired private XnatSubjectdata subject;
     @Autowired private BatchTransferMonitor monitor;
+    @Autowired private BatchTransferHistoryService historyService;
 
     private static final String DEST_PROJECT = "destProj";
     private static final String SRC_PROJECT  = "srcProj";
@@ -99,7 +107,7 @@ public class BatchTransferServiceImplTest {
     @Before
     public void setUp() throws Exception {
         Mockito.reset(service, nrgEventService, executorService, user,
-                destinationProjectData, imageSession, imageAssessor, subject, monitor);
+                destinationProjectData, imageSession, imageAssessor, subject, monitor, historyService);
 
         when(user.getID()).thenReturn(42);
 
@@ -787,7 +795,8 @@ public class BatchTransferServiceImplTest {
 
         // Share items run in-process via processItem; stub it (the service is a spy) so this router test
         // doesn't execute the real share logic. Reimport/Clone items are enqueued, not processed here.
-        Mockito.doNothing().when(service).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+        Mockito.doReturn(null).when(service).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+        when(monitor.startItem(anyString(), anyString())).thenReturn(true);
 
         try (MockedStatic<XDAT>      xdat  = mockStatic(XDAT.class);
              MockedStatic<XnatUtils> utils = mockStatic(XnatUtils.class)) {
@@ -824,6 +833,58 @@ public class BatchTransferServiceImplTest {
             verify(service).processItem(processed.capture(), any(UserI.class), any(EventInfo.class));
             assertEquals("exp_share", processed.getValue().getId());
             assertEquals(TransferMode.SHARE, processed.getValue().getMode());
+            verify(monitor).finishItem(TRACKING_ID, "exp_share", Outcome.DONE, null, null);
         }
+    }
+
+    /**
+     * The run and its item rows are recorded before the batch is handed to the executor, so a consumer on
+     * any node finds its item's row; a reused tracking id stops the submit before anything is queued.
+     */
+    @Test
+    public void submitTransferRequest_recordsTheRunBeforeQueuing() {
+        final BatchTransfer batch = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), TRACKING_ID);
+        doReturn(null).when(executorService).submit(any(Runnable.class));
+
+        service.submitTransferRequest(batch, user);
+
+        final InOrder order = Mockito.inOrder(historyService, executorService);
+        order.verify(historyService).recordSubmit(batch, user);
+        order.verify(executorService).submit(any(Runnable.class));
+    }
+
+    @Test
+    public void submitTransferRequest_withoutATrackingId_getsADistinctOne() {
+        doReturn(null).when(executorService).submit(any(Runnable.class));
+        final BatchTransfer first = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), null);
+        final BatchTransfer second = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), null);
+
+        service.submitTransferRequest(first, user);
+        service.submitTransferRequest(second, user);
+
+        assertTrue(first.getTrackingId(), first.getTrackingId().matches("batch_transfer_\\d+_[0-9a-f]{8}"));
+        assertNotEquals(first.getTrackingId(), second.getTrackingId());
+    }
+
+    @Test
+    public void submitTransferRequest_aRepeatedTrackingId_queuesNothing() {
+        final BatchTransfer batch = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), TRACKING_ID);
+        doThrow(new BatchTransferRunExistsException(TRACKING_ID)).when(historyService).recordSubmit(batch, user);
+
+        assertThrows(BatchTransferRunExistsException.class, () -> service.submitTransferRequest(batch, user));
+        verify(executorService, never()).submit(any(Runnable.class));
+        verifyNoInteractions(nrgEventService);
+    }
+
+    /** A Share item the run was stopped before is skipped: not processed, and not finished a second time. */
+    @Test
+    public void runSequential_skipsAnItemTheMonitorStops() throws Exception {
+        final TransferRequest share = new TransferRequest(DEST_PROJECT, "exp_share", TransferMode.SHARE);
+        when(monitor.startItem(TRACKING_ID, "exp_share")).thenReturn(false);
+
+        service.submitTransferRequest(new BatchTransfer(new ArrayList<>(List.of(share)), TRACKING_ID), user);
+
+        verify(service, never()).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+        verify(monitor, never()).finishItem(anyString(), anyString(), any(), any(), any());
     }
 }

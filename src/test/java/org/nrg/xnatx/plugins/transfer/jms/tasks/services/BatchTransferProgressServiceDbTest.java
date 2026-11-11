@@ -6,6 +6,7 @@ import org.junit.runner.RunWith;
 import org.nrg.xnatx.plugins.transfer.DatabaseTest;
 import org.nrg.xnatx.plugins.transfer.config.DatabaseTestConfig;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Completion;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.test.context.ContextConfiguration;
@@ -72,7 +73,7 @@ public class BatchTransferProgressServiceDbTest {
                 start.await();
                 final List<Completion> completions = new ArrayList<>();
                 for (int item = first; item < first + itemsPerThread; item++) {
-                    final Completion completion = service.recordItemDone(trackingId, item % 4 == 0);
+                    final Completion completion = service.recordItemDone(trackingId, item % 4 == 0 ? Outcome.FAILED : Outcome.DONE);
                     if (completion != null) {
                         completions.add(completion);
                     }
@@ -86,15 +87,15 @@ public class BatchTransferProgressServiceDbTest {
         assertEquals(Integer.valueOf(USER_ID), completions.get(0).getUserId());
         assertEquals(10, completions.get(0).getFailed());
         assertEquals("the completing call deletes the row", 0, rowCount(trackingId));
-        assertNull("a later item finds no row", service.recordItemDone(trackingId, false));
+        assertNull("a later item finds no row", service.recordItemDone(trackingId, Outcome.DONE));
     }
 
     @Test
     public void aRepeatedTrackingIdResetsTheRow() {
         final String trackingId = newTrackingId();
         service.register(trackingId, USER_ID, 5);
-        assertNull(service.recordItemDone(trackingId, true));
-        assertNull(service.recordItemDone(trackingId, false));
+        assertNull(service.recordItemDone(trackingId, Outcome.FAILED));
+        assertNull(service.recordItemDone(trackingId, Outcome.DONE));
 
         service.register(trackingId, 7, 2);
 
@@ -103,8 +104,8 @@ public class BatchTransferProgressServiceDbTest {
         assertEquals(2, row.get("total"));
         assertEquals(0, row.get("completed"));
         assertEquals(0, row.get("failed"));
-        assertNull(service.recordItemDone(trackingId, false));
-        final Completion completion = service.recordItemDone(trackingId, false);
+        assertNull(service.recordItemDone(trackingId, Outcome.DONE));
+        final Completion completion = service.recordItemDone(trackingId, Outcome.DONE);
         assertEquals("the failure before the reset isn't counted", 0, completion.getFailed());
         assertEquals(Integer.valueOf(7), completion.getUserId());
     }

@@ -1,5 +1,6 @@
 package org.nrg.xnatx.plugins.transfer.api;
 
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferRunExistsException;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSummary;
@@ -43,6 +44,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -86,7 +88,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
                             + "routed to one session label, an invalid routing label, or a custom anon_script on a "
                             + "non-Reimport item)"),
                     @ApiResponse(code = 403, message = "No edit access to a destination project required by a custom anon_script"),
-                    @ApiResponse(code = 409, message = "This XNAT build does not support per-import anonymization"),
+                    @ApiResponse(code = 409, message = "The tracking_id already has a run, or this XNAT build does "
+                            + "not support per-import anonymization"),
                     @ApiResponse(code = 500, message = "An unexpected error occurred.")})
     @XapiRequestMapping(value = {""}, consumes = APPLICATION_JSON_VALUE, method = POST)
     @ResponseBody
@@ -108,23 +111,49 @@ public class BatchTransferApi extends AbstractXapiRestController {
             return guardrail;
         }
 
-        batchTransferService.submitTransferRequest(batchTransferRequest, user);
+        try {
+            batchTransferService.submitTransferRequest(batchTransferRequest, user);
+        } catch (BatchTransferRunExistsException e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT);
+        } catch (RuntimeException e) {
+            // Two submits with one tracking id at the same moment: the run's unique key rejects the second.
+            if (isUniqueViolation(e)) {
+                return new ResponseEntity<>(new BatchTransferRunExistsException(batchTransferRequest.getTrackingId())
+                        .getMessage(), HttpStatus.CONFLICT);
+            }
+            throw e;
+        }
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
+    private static boolean isUniqueViolation(final Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException && "23505".equals(((SQLException) cause).getSQLState())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
-     * Checks on the batch as a whole that need no XNAT lookup: no item listed twice, every explicit Reimport
-     * routing label a valid XNAT label, and no two Reimport items routed to the same explicit session label.
-     * Routing labels apply only to Reimport, so Share and Clone items aren't label-checked. Returns the 400
-     * message naming the items, or {@code null} when the batch passes.
+     * Checks on the batch as a whole that need no XNAT lookup: every item has an id, no item listed twice, every
+     * explicit Reimport routing label a valid XNAT label, and no two Reimport items routed to the same explicit
+     * session label. Routing labels apply only to Reimport, so Share and Clone items aren't label-checked. Returns
+     * the 400 message naming the items, or {@code null} when the batch passes.
      */
     static String checkBatch(final List<TransferRequest> requests) {
         final Set<String> seen = new HashSet<>();
         final Set<String> repeated = new LinkedHashSet<>();
+        int missing = 0;
         for (final TransferRequest request : requests) {
-            if (request.getId() != null && !seen.add(request.getId())) {
+            if (StringUtils.isBlank(request.getId())) {
+                missing++;
+            } else if (!seen.add(request.getId())) {
                 repeated.add(request.getId());
             }
+        }
+        if (missing > 0) {
+            return "Every item needs an id; " + missing + (missing == 1 ? " item has" : " items have") + " none.";
         }
         if (!repeated.isEmpty()) {
             return "The request lists the same item more than once: " + listOf(repeated) + ".";

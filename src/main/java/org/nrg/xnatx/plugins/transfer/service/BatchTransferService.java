@@ -11,7 +11,8 @@ public interface BatchTransferService {
     /**
      * Validates, loads, permission-checks, and performs a single transfer item by mode. Shared by
      * the sequential Share/Clone path and the JMS consumers (the parallel Reimport path), so it is
-     * the single source of truth for per-item transfer logic. Throws on any failure.
+     * the single source of truth for per-item transfer logic. Throws on any failure. Returns the ID of what
+     * the item became in the destination (the shared item, the clone, or the reimported session), or null.
      */
-    void processItem(TransferRequest request, UserI user, EventInfo eventInfo) throws Exception;
+    String processItem(TransferRequest request, UserI user, EventInfo eventInfo) throws Exception;
 }

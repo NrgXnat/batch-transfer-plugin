@@ -6,15 +6,26 @@ import org.nrg.framework.annotations.XnatPlugin;
 import org.nrg.framework.orm.hibernate.AggregatedAnnotationSessionFactoryBean;
 import org.nrg.framework.orm.hibernate.HibernateEntityPackageList;
 import org.nrg.framework.orm.hibernate.PrefixedPhysicalNamingStrategy;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.BatchTransferHistoryDAO;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.BatchTransferItemDAO;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.BatchTransferProgressDAO;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.XnatItemQueries;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistoryService;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferItemService;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.impl.HibernateBatchTransferHistoryService;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.impl.HibernateBatchTransferItemService;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.impl.HibernateBatchTransferProgressService;
 import org.nrg.xnatx.plugins.transfer.plugin.BatchTransferPlugin;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.init.DataSourceInitializer;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.orm.hibernate5.HibernateTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
@@ -31,7 +42,8 @@ import java.util.Properties;
  * Spring context for the database tests: the plugin's Hibernate entities, DAOs and services on a real PostgreSQL in
  * Docker, with the session factory built the way XNAT builds it (the plugin's entity packages, the {@code xhbm_}
  * table prefix and the legacy implicit naming strategy). Trimmed from container-service's test
- * {@code HibernateConfig}.
+ * {@code HibernateConfig}. {@code db/xnat-stub.sql} adds the columns of XNAT's own tables that the plugin's SQL
+ * reads, so that SQL runs against PostgreSQL without XNAT's schema.
  *
  * <p>Tests that use this context carry the {@code DatabaseTest} category, so only {@code ./gradlew dbTest} runs them.
  * One container serves the whole test JVM. Without Docker the context fails to start with a message saying so, so
@@ -108,6 +120,47 @@ public class DatabaseTestConfig {
     @Bean
     public NamedParameterJdbcTemplate namedParameterJdbcTemplate(final DataSource dataSource) {
         return new NamedParameterJdbcTemplate(dataSource);
+    }
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(final DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    @Bean
+    public DataSourceInitializer xnatStubTables(final DataSource dataSource) {
+        final DataSourceInitializer initializer = new DataSourceInitializer();
+        initializer.setDataSource(dataSource);
+        initializer.setDatabasePopulator(new ResourceDatabasePopulator(new ClassPathResource("db/xnat-stub.sql")));
+        return initializer;
+    }
+
+    @Bean
+    public XnatItemQueries xnatItemQueries(final JdbcTemplate jdbcTemplate) {
+        return new XnatItemQueries(jdbcTemplate);
+    }
+
+    @Bean
+    public BatchTransferHistoryDAO batchTransferHistoryDAO() {
+        return new BatchTransferHistoryDAO();
+    }
+
+    @Bean
+    public BatchTransferItemDAO batchTransferItemDAO() {
+        return new BatchTransferItemDAO();
+    }
+
+    @Bean
+    public BatchTransferHistoryService batchTransferHistoryService(final BatchTransferItemDAO itemDao,
+                                                                  final BatchTransferProgressService progressService,
+                                                                  final XnatItemQueries xnatItems) {
+        return new HibernateBatchTransferHistoryService(itemDao, progressService, xnatItems);
+    }
+
+    @Bean
+    public BatchTransferItemService batchTransferItemService(final BatchTransferHistoryDAO historyDao,
+                                                            final BatchTransferProgressService progressService) {
+        return new HibernateBatchTransferItemService(historyDao, progressService);
     }
 
     @Bean

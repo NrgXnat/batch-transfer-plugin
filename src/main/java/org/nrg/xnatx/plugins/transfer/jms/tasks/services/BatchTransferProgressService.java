@@ -19,12 +19,24 @@ public interface BatchTransferProgressService extends BaseHibernateService<Batch
      * pessimistic lock, so exactly one caller across all nodes gets it); returns {@code null} otherwise
      * (batch not yet complete, already completed, or never registered).
      */
-    Completion recordItemDone(String trackingId, boolean failed);
+    Completion recordItemDone(String trackingId, Outcome outcome);
 
-    /** The data the caller needs to fire a batch's terminal event, returned by the completing {@code recordItemDone}. */
+    /** The batch's progress row, or null once it has completed (or if it was never registered). */
+    BatchTransferProgress findByTrackingId(String trackingId);
+
+    /** How one item ended: transferred, failed, or skipped because the run was stopped before it started. */
+    enum Outcome { DONE, FAILED, STOPPED }
+
+    /** The data the caller needs to finish a batch, returned by the completing {@code recordItemDone}. */
     @Value
     class Completion {
         Integer userId;
+        int     total;
         int     failed;
+        int     stopped;
+
+        public int getPassed() {
+            return total - failed - stopped;
+        }
     }
 }

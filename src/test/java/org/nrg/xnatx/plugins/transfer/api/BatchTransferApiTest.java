@@ -6,6 +6,7 @@ import org.junit.Test;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferRunExistsException;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
@@ -28,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -36,12 +38,14 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -282,6 +286,36 @@ public class BatchTransferApiTest {
         second.setDestinationSubjectLabel("not a label");
 
         assertEquals(HttpStatus.OK, api.submit(batch(first, second)).getStatusCode());
+    }
+
+    @Test
+    public void submit_itemsWithoutAnId_are400() {
+        final ResponseEntity<String> resp = api.submit(batch(reimport("E1"), reimport(null), reimport(" ")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("Every item needs an id; 2 items have none.", resp.getBody());
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submit_aTrackingIdThatAlreadyHasARun_is409() {
+        doThrow(new BatchTransferRunExistsException("trk")).when(service).submitTransferRequest(any(), any());
+        final ResponseEntity<String> resp = api.submit(batch(reimport("E1")));
+        assertEquals(HttpStatus.CONFLICT, resp.getStatusCode());
+        assertEquals("A transfer with tracking id trk already exists.", resp.getBody());
+    }
+
+    @Test
+    public void submit_aSimultaneousSubmitWithTheSameTrackingId_is409() {
+        doThrow(new RuntimeException("insert failed", new SQLException("duplicate key", "23505")))
+                .when(service).submitTransferRequest(any(), any());
+        assertEquals(HttpStatus.CONFLICT, api.submit(batch(reimport("E1"))).getStatusCode());
+    }
+
+    @Test
+    public void submit_anotherFailureIsRethrown() {
+        doThrow(new IllegalStateException("broker down")).when(service).submitTransferRequest(any(), any());
+        assertThrows(IllegalStateException.class, () -> api.submit(batch(reimport("E1"))));
     }
 
     @Test
