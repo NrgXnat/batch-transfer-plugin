@@ -76,10 +76,32 @@ dependencies {
     testImplementation "org.mockito:mockito-core"
     testImplementation "org.springframework:spring-test"
     testImplementation "javax.servlet:javax.servlet-api"
+    // Database tests (dbTest): XNAT's Hibernate setup on PostgreSQL in a Testcontainers container.
+    testImplementation "org.springframework:spring-orm"
+    testImplementation "org.springframework:spring-jdbc"
+    testImplementation "org.testcontainers:postgresql"
+    testRuntimeOnly "org.postgresql:postgresql"
 }
 
+// Database tests need Docker, so they are kept out of test (and so out of build). Run them with ./gradlew dbTest;
+// CI runs them on every build.
+def databaseTestCategory = "org.nrg.xnatx.plugins.transfer.DatabaseTest"
+
 test {
-    useJUnit()
+    useJUnit {
+        excludeCategories databaseTestCategory
+    }
+}
+
+tasks.register("dbTest", Test) {
+    description = "Runs the database tests against PostgreSQL in a Testcontainers container. Needs Docker."
+    group = "verification"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnit {
+        includeCategories databaseTestCategory
+    }
+    shouldRunAfter test
 }
 
 task sourceJar(type: Jar, dependsOn: classes) {
