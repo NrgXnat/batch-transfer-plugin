@@ -5,7 +5,6 @@ import org.junit.Test;
 import org.nrg.dicom.mizer.service.MizerService;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
-import org.nrg.xnatx.plugins.transfer.model.TransferMode;
 import org.springframework.http.HttpStatus;
 
 import java.util.Arrays;
@@ -39,11 +38,7 @@ public class ManifestServiceTest {
     }
 
     private ManifestValidationResult parse(final String csv) throws ManifestValidationException {
-        return service.parse(csv, null, TransferMode.REIMPORT);
-    }
-
-    private ManifestValidationResult parse(final String csv, final TransferMode mode) throws ManifestValidationException {
-        return service.parse(csv, null, mode);
+        return service.parse(csv, null);
     }
 
     @Test
@@ -144,7 +139,7 @@ public class ManifestServiceTest {
                 new ScriptCompiler(mock(MizerService.class), tinyCap));
 
         final ManifestValidationResult r = capped.parse(
-                "source_subject_label,source_session_label\nA,1\n\n\nB,2\n\n", null, TransferMode.REIMPORT);
+                "source_subject_label,source_session_label\nA,1\n\n\nB,2\n\n", null);
 
         assertEquals(2, r.getTotalRows());
     }
@@ -172,7 +167,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.destination_patient_id}\"";
         final String csv = "source_subject_label,source_session_label,destination_patient_id\n"
                 + "S1,SESS1,\n";                        // empty bound cell
-        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
+        final ManifestValidationResult r = service.parse(csv, script);
 
         assertTrue(r.getScriptBinding().isBound());
         assertFalse(r.getRows().get(0).getValueWarnings().isEmpty());
@@ -183,7 +178,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.not_a_column}\"";
         final String csv = "source_subject_label,source_session_label,destination_patient_id\n"
                 + "S1,SESS1,ANON-1\n";
-        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
+        final ManifestValidationResult r = service.parse(csv, script);
 
         assertFalse(r.getScriptBinding().isBound());
         assertTrue(r.getScriptBinding().getUnbound().contains("not_a_column"));
@@ -211,7 +206,7 @@ public class ManifestServiceTest {
         final String script = "version \"6.1\"\n(0010,0020) := \"${csv.destination_subject_label}\"";
         final String csv = "source_subject_label,source_session_label,destination_subject_label\n"
                 + "S1,SESS1,ANON-042\n";
-        final ManifestValidationResult r = service.parse(csv, script, TransferMode.REIMPORT);
+        final ManifestValidationResult r = service.parse(csv, script);
 
         assertTrue("a routing column binds ${csv.*}", r.getScriptBinding().isBound());
     }
@@ -258,7 +253,7 @@ public class ManifestServiceTest {
 
         final String csv = "source_subject_label,source_session_label\nA,1\nB,2\nC,3\n";
         try {
-            capped.parse(csv, null, TransferMode.REIMPORT);
+            capped.parse(csv, null);
             fail("expected ManifestValidationException for exceeding the row cap");
         } catch (ManifestValidationException e) {
             assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, e.getStatus());
@@ -318,28 +313,6 @@ public class ManifestServiceTest {
     }
 
     @Test
-    public void forShareAndCloneASubjectRowCanSitBesideItsSessionRows() throws Exception {
-        for (final TransferMode mode : Arrays.asList(TransferMode.SHARE, TransferMode.CLONE)) {
-            final ManifestValidationResult r = parse("source_subject_label,source_session_label\n"
-                    + "S1,\n"
-                    + "S1,SESS1\n"
-                    + "S2,\n"
-                    + "S2,\n"
-                    + "S3,SESS3\n"
-                    + "S3,SESS3\n", mode);
-
-            assertNull(mode + ": the subject record and one of its sessions", r.getRows().get(0).getStatus());
-            assertNull(r.getRows().get(1).getStatus());
-            assertEquals(mode + ": the same subject twice", ManifestRow.STATUS_DUPLICATE_SESSION,
-                    r.getRows().get(2).getStatus());
-            assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(3).getStatus());
-            assertEquals(mode + ": the same session twice", ManifestRow.STATUS_DUPLICATE_SESSION,
-                    r.getRows().get(4).getStatus());
-            assertEquals(ManifestRow.STATUS_DUPLICATE_SESSION, r.getRows().get(5).getStatus());
-        }
-    }
-
-    @Test
     public void twoSubjectRowsForTheSameSubjectAreDuplicateSession() throws Exception {
         final ManifestValidationResult r = parse("source_subject_label,source_session_label\nS1,\nS1,\n");
 
@@ -384,31 +357,5 @@ public class ManifestServiceTest {
         assertTrue(third.getValueErrors().get(0).contains("row 2"));
         assertTrue(r.getRows().get(1).getValueErrors().isEmpty());
         assertNull("a destination-label clash is a value error, not a status", first.getStatus());
-    }
-
-    @Test
-    public void forShareAndCloneTheValueAndRoutingColumnsAreNotChecked() throws Exception {
-        final String script = "version \"6.1\"\n(0010,0020) := \"${csv.pid}\"";
-        for (final TransferMode mode : Arrays.asList(TransferMode.SHARE, TransferMode.CLONE)) {
-            final ManifestValidationResult r = parse(HEADER
-                    + "S1,,STUDY2_S1\n"                  // on a subject row
-                    + "S2,SESS2,STUDY2_A\n"              // the same label twice
-                    + "S3,SESS3,STUDY2_A\n"
-                    + "S4,SESS4,STUDY2.042\n", mode);    // not a valid XNAT label
-            for (final ManifestRow row : r.getRows()) {
-                assertTrue(mode + ", row " + row.getRowNumber() + ": " + row.getValueErrors(),
-                        row.getValueErrors().isEmpty());
-            }
-
-            final ManifestValidationResult values = service.parse("source_subject_label,source_session_label,pid\n"
-                    + "S1,SESS1,\"bad\"\"value\"\n"      // outside the value charset
-                    + "S2,SESS2,\n", script, mode);      // empty, though the script binds it
-            for (final ManifestRow row : values.getRows()) {
-                assertTrue(mode + ": " + row.getValueErrors(), row.getValueErrors().isEmpty());
-                assertTrue(mode + ": " + row.getValueWarnings(), row.getValueWarnings().isEmpty());
-            }
-        }
-        assertFalse("a null mode is Reimport",
-                parse(HEADER + "S1,,STUDY2_S1\n", null).getRows().get(0).getValueErrors().isEmpty());
     }
 }

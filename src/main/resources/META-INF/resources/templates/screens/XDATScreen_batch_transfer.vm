@@ -65,8 +65,7 @@
             </div>
 
             <!-- Operation. Ahead of Cohort because it decides what is eligible to select: the tree
-                 hides rows the operation cannot transfer, and the manifest's routing/value columns
-                 only apply to Reimport. -->
+                 hides rows the operation cannot transfer, and a manifest is for Reimport only. -->
             <div class="bt-rail-sect">
                 <div class="bt-rail-lbl">Operation</div>
                 <div class="bt-op-stack">
