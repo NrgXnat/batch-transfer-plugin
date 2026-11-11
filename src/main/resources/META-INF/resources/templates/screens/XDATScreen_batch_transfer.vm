@@ -96,8 +96,10 @@
                         <div data-help-ops="Reimport">
                             <p>How sessions are anonymized and where their labels come from.</p>
                             <h5>Anonymize with</h5>
-                            <p>Each reimported session goes through the site-wide anonymization script and the destination project's script, each if it is enabled. <b>Destination only</b> runs just those. <b>Add custom script</b> also runs a DicomEdit 6 script you write here.</p>
-                            <p>If neither script is enabled and you don't add one, the sessions are not anonymized.</p>
+                            <p><b>Destination only</b> applies the destination's anonymization, which may include the destination project's anonymization script and the site-wide anonymization script, if configured.</p>
+                            <p><b>Add custom script</b> applies a DicomEdit 6 script you write here, in addition to those configured scripts, not instead of them.</p>
+                            <p class="bt-help-site" id="bt-help-site" hidden></p>
+                            <p>If no script is configured and you don't add one, the sessions are not anonymized. The action bar lists the scripts that will run, in order.</p>
                             <h5>Preserve source labels</h5>
                             <p>Use the source's XNAT subject and session labels instead of deriving them from DICOM tags. Anonymization does not change XNAT labels, so a preserved label is kept as it is.</p>
                             <p>A manifest's <code>destination_subject_label</code> and <code>destination_session_label</code> override this per row; sessions from a subject row always take their session label from this setting.</p>
@@ -105,7 +107,7 @@
                     </section>
                     <section class="bt-help-note" data-help="script">
                         <h4 class="bt-help-title">Anonymization script</h4>
-                        <p>Applied to each session as it is imported. It runs after the site-wide anonymization script and before the destination project's script, when those are enabled.</p>
+                        <p>Applied to each session as it is imported, in addition to the configured anonymization scripts, not instead of them. It runs after the site-wide anonymization script and before the destination project's script, when those are configured.</p>
                         <p>Type or paste the script, or load it from a file: click <b>Upload file</b> or drop the file on the panel. Any file name or extension is accepted<span class="bt-script-limit-wrap" hidden>, up to <span class="bt-script-limit"></span>, a limit set by your site administrator</span>. A loaded file replaces what is in the editor; <b>Undo</b> brings it back.</p>
                         <p><code>${csv.column}</code> takes that session's value from the manifest column of the same name.</p>
                         <p><b>Validate</b> checks the script and its placeholders. Submit is blocked while the script has errors.</p>
@@ -181,8 +183,8 @@
                                 <div>
                                     <div class="bt-opt-cap">Anonymize with</div>
                                     <div class="bt-anon-seg" id="bt-anon-seg">
-                                        <button type="button" class="bt-anon-mode selected" data-anon="none">Destination only</button>
-                                        <button type="button" class="bt-anon-mode" data-anon="script">Add custom script</button>
+                                        <button type="button" class="bt-anon-mode selected" data-anon="none" title="The destination's anonymization: its project script and the site-wide script, if configured.">Destination only</button>
+                                        <button type="button" class="bt-anon-mode" data-anon="script" title="Your own DicomEdit script, applied in addition to the configured anonymization scripts.">Add custom script</button>
                                     </div>
                                     <div class="bt-anon-unsupported" id="bt-anon-unsupported" style="display:none;">
                                         This XNAT build does not support per-import anonymization; Reimport will use the destination's anonymization only.
@@ -211,7 +213,7 @@
                         <div class="bt-panel-meta"><span class="bt-mode-pill">DicomEdit 6</span></div>
                     </div>
                     <div class="bt-panel-body">
-                        <div class="bt-anon-editor-hint">Applied per session at ingest, in addition to the destination's anonymization. <code>${csv.column}</code> placeholders bind to manifest columns.</div>
+                        <div class="bt-anon-editor-hint">Applied per session at ingest, in addition to the site-wide and destination anonymization scripts. <code>${csv.column}</code> placeholders bind to manifest columns.</div>
                         ## Load the script from a file: the button, or a file dropped anywhere on this panel.
                         <div class="bt-script-tools">
                             <button type="button" class="bt-btn bt-btn-secondary" id="bt-script-pick">Upload file</button>

@@ -12,6 +12,7 @@ var XNAT = getObject(XNAT || {});
     XNAT.plugin.batchtransfer = getObject(XNAT.plugin.batchtransfer || {});
 
     var projectAnonCache = {};
+    var siteAnon;                  // site-wide script: true / false / null (check failed) / undefined (not checked)
     var selectedOp = 'Share';
     var lastOp = 'Share';          // previous operation, to detect leaving Reimport
     var selectedProject = null;
@@ -56,6 +57,7 @@ var XNAT = getObject(XNAT || {});
         bindAnonBand();
         bindScriptFile();
         fetchCapabilities();
+        checkSiteAnon();
         // One item set is rendered (all readable items). Apply the default operation's
         // eligibility so rows whose project can't be shared are hidden/excluded on load.
         applyOperationEligibility('Share');
@@ -139,6 +141,50 @@ var XNAT = getObject(XNAT || {});
             }
         });
     };
+
+    // The site-wide anonymization script runs on every Reimport when it is enabled. Any logged-in user may read
+    // whether it is.
+    function checkSiteAnon() {
+        $.ajax({
+            type: 'GET',
+            url: XNAT.url.rootUrl('/xapi/anonymize/site/enabled'),
+            contentType: 'application/json',
+            success: function(data) { siteAnon = data === true || data === 'true'; siteAnonChecked(); },
+            error: function() { siteAnon = null; siteAnonChecked(); }
+        });
+    }
+
+    function siteAnonChecked() {
+        var help = siteAnon === true
+            ? 'The site-wide anonymization script is enabled on this site, so it runs on every reimported session.'
+            : siteAnon === false
+                ? 'The site-wide anonymization script is not enabled on this site.'
+                : 'Could not check whether the site-wide anonymization script is enabled on this site.';
+        $('#bt-help-site').text(help).prop('hidden', false);
+        if (XNAT.plugin.batchtransfer.help) { XNAT.plugin.batchtransfer.help.layout(); }
+        updateSummary();
+    }
+
+    // The anonymization scripts a Reimport applies to each session, in the order they run: the site-wide script as
+    // each file is received, the custom script right after it, and the destination project's script when the
+    // session is archived. Each is 'on', 'off', or 'unknown' while its check hasn't answered or after it failed.
+    function anonScripts() {
+        function state(v) { return v === true ? 'on' : v === false ? 'off' : 'unknown'; }
+        return [
+            { key: 'site-wide', name: 'the site-wide script', state: state(siteAnon) },
+            { key: 'custom', name: 'your custom script', state: hasCustomScript() ? 'on' : 'off' },
+            { key: 'destination', name: selectedProject + '\'s script',
+              state: state(projectAnonCache[selectedProject]) }
+        ];
+    }
+
+    function scriptsIn(scripts, state) {
+        return scripts.filter(function(s) { return s.state === state; });
+    }
+
+    function scriptNames(scripts, separator) {
+        return scripts.map(function(s) { return s.name; }).join(separator);
+    }
 
     // -- Operation Banners --
     // Share or Clone into a destination with anonymization enabled: the Anonymization row warns that the
@@ -1117,43 +1163,41 @@ var XNAT = getObject(XNAT || {});
         return out;
     }
 
-    // Anonymization-status chips for the action bar. Reimport reflects destination-anon x custom-script;
+    // Anonymization-status chips for the action bar. Reimport lists the anonymization scripts that will run;
     // Clone advertises hard-linking; Share shows none. These are the only place Reimport's anonymization
     // status and storage cost appear, so each chip's title carries the full explanation.
     function anonChipsHtml() {
         if (selectedOp === 'Reimport') {
-            var script = hasCustomScript();
-            var dest = selectedProject;
-            var anon = projectAnonCache[dest];   // true / false / null (the check failed) / undefined (not checked yet)
-            var out;
-            if (anon === true && script) {
-                out = chip('warn', '&#9888; double anonymization',
-                    'Both ' + dest + '\'s anonymization and your custom script will be applied.');
-            } else if (anon === true) {
-                out = chip('good', '&#10003; destination anonymization',
-                    'Image sessions will be anonymized by ' + dest + '\'s anonymization on reimport.');
-            } else if (anon === false && script) {
-                out = chip('good', '&#10003; custom script',
-                    dest + ' has no anonymization configured; your custom script will anonymize the reimported sessions.');
-            } else if (anon === false) {
-                out = chip('warn', '&#9888; not anonymized',
-                    dest + ' has no anonymization configured and no custom script is set - reimported sessions will not be anonymized.');
-            } else if (script) {
-                out = chip('good', '&#10003; custom script', 'Your custom script will run on each session.');
-            } else if (anon === null) {
+            var scripts = anonScripts();
+            var on = scriptsIn(scripts, 'on'), unknown = scriptsIn(scripts, 'unknown');
+            var out = '';
+            if (!selectedProject || siteAnon === undefined || !projectAnonCache.hasOwnProperty(selectedProject)) {
+                // No destination yet, or a check is still running: nothing to report.
+            } else if (!on.length && !unknown.length) {
+                out = chip('warn', '&#9888; not anonymized', 'Neither the site-wide script nor ' + selectedProject +
+                    '\'s script is enabled, and no custom script is set - reimported sessions will not be anonymized.');
+            } else if (!on.length) {
                 // Unknown, so neither good nor bad: anonymization may or may not run.
                 out = chip('muted', '? anonymization not checked',
-                    'Could not check whether ' + dest + ' has an anonymization script.');
+                    'Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.');
             } else {
-                // No destination yet, or its check is still running: nothing to report.
-                out = '';
+                // The scripts that run, in order; one whose check failed is marked "?". A custom script that isn't
+                // the only one is double anonymization.
+                var double = hasCustomScript() && on.length > 1;
+                var listed = scripts.filter(function(s) { return s.state !== 'off'; });
+                out = chip(double ? 'warn' : 'good', (double ? '&#9888; ' : '&#10003; ') +
+                    listed.map(function(s) { return s.key + (s.state === 'unknown' ? '?' : ''); }).join(' + ') +
+                    ' script' + (listed.length > 1 ? 's' : ''),
+                    'Each session is anonymized by ' + scriptNames(on, ', then ') + '.' +
+                    (double ? ' Your custom script is not the only one, and a later script can change what an' +
+                              ' earlier one set.' : '') +
+                    (unknown.length ? ' Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.' : ''));
             }
-            // Anonymization (destination pipeline or custom script) is in effect, but preserving the source
-            // XNAT labels re-introduces the original subject/session labels - which may carry identifiers and
-            // are not touched by anonymization. Warn when both are set.
-            var anonInEffect = anon === true || script;
+            // Anonymization is in effect, but preserving the source XNAT labels re-introduces the original
+            // subject/session labels - which may carry identifiers and are not touched by anonymization. Warn
+            // when both are set.
             var preserved = preservedLabels();
-            if (anonInEffect && preserved.length) {
+            if (on.length && preserved.length) {
                 // Kept short: this is the longest chip, and the action bar is a single row. The
                 // reason behind it is in its title and in the Anonymization help topic.
                 out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
@@ -1823,7 +1867,6 @@ var XNAT = getObject(XNAT || {});
         var noun = (selectedOp === 'Reimport' ? 'session' : 'item') + (count === 1 ? '' : 's');
         var src = config.projectContext ? escapeHtml(config.projectContext) : 'the source project';
         var dest = escapeHtml(selectedProject);
-        var destAnon = projectAnonCache[selectedProject];
         var script = hasCustomScript();
 
         var rows = dlgRow('Cohort', isCsv
@@ -1841,15 +1884,21 @@ var XNAT = getObject(XNAT || {});
         rows += dlgRow('Operation', selectedOp + ' &middot; ' + src + ' to ' + dest);
 
         if (selectedOp === 'Reimport') {
+            // The scripts that run, in order. A check that failed or hasn't answered yet is named.
+            var scripts = anonScripts();
+            var on = scriptsIn(scripts, 'on'), unknown = scriptsIn(scripts, 'unknown');
             var anonText;
-            if (destAnon === true && script) { anonText = 'Destination anonymization <strong>+ custom script (double anonymization)</strong>'; }
-            else if (destAnon === true) { anonText = 'Destination anonymization'; }
-            else if (destAnon === false && script) { anonText = 'Custom script only'; }
-            else if (destAnon === false) { anonText = '<span style="color:#c5221f;">None - sessions will not be anonymized</span>'; }
-            else {
-                // The check failed, or hasn't answered yet.
-                anonText = 'Not checked - couldn\'t check whether ' + dest + ' has an anonymization script' +
-                           (script ? '; custom script applied' : '');
+            if (on.length) {
+                var order = scriptNames(on, ', then ');
+                anonText = escapeHtml(order.charAt(0).toUpperCase() + order.slice(1)) +
+                    (script && on.length > 1 ? ' <strong>(double anonymization)</strong>' : '') +
+                    (unknown.length ? '; couldn\'t check whether ' + escapeHtml(scriptNames(unknown, ' or ')) +
+                                      ' is enabled' : '');
+            } else if (unknown.length) {
+                anonText = 'Not checked - couldn\'t check whether ' + escapeHtml(scriptNames(unknown, ' or ')) +
+                           ' is enabled';
+            } else {
+                anonText = '<span style="color:#c5221f;">None - sessions will not be anonymized</span>';
             }
             rows += dlgRow('Anonymization', anonText);
             if (script) { rows += dlgRow('Custom script', 'applied per session' + (isCsv ? ' (values from manifest)' : '')); }
