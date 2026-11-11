@@ -74,7 +74,6 @@ public class BatchTransferHistoryApiTest {
 
         // By default the caller is no admin and has no access to the source project.
         doReturn(false).when(api).isSiteAdmin(any());
-        doReturn(false).when(api).canReadProject(any(), anyString());
         doReturn(false).when(api).canEditProject(any(), anyString());
         doReturn(Collections.emptyList()).when(api).readableProjects(any());
     }
@@ -100,7 +99,7 @@ public class BatchTransferHistoryApiTest {
     @Test
     public void detail_aSourceReaderSeesTheRunWithoutValuesOrScript() {
         stubRun("alice", BatchTransferHistory.Status.Completed);
-        doReturn(true).when(api).canReadProject(any(), eq(SOURCE));
+        doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
 
         final TransferRunDetail detail = body(api.detail(TRACKING_ID));
 
@@ -114,7 +113,7 @@ public class BatchTransferHistoryApiTest {
     @Test
     public void detail_aSourceEditorAndTheCreatorSeeValuesAndScript() {
         stubRun("alice", BatchTransferHistory.Status.Running);
-        doReturn(true).when(api).canReadProject(any(), eq(SOURCE));
+        doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
         doReturn(true).when(api).canEditProject(any(), eq(SOURCE));
         TransferRunDetail detail = body(api.detail(TRACKING_ID));
         assertEquals("the script", detail.getAnonScript());
@@ -149,7 +148,7 @@ public class BatchTransferHistoryApiTest {
     @Test
     public void stop_byAnotherUser_is403() {
         stubRun("alice", BatchTransferHistory.Status.Running);
-        doReturn(true).when(api).canReadProject(any(), anyString());
+        doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
         assertEquals(HttpStatus.FORBIDDEN, api.stop(TRACKING_ID).getStatusCode());
         verify(historyService, never()).requestStop(anyString(), anyString());
     }

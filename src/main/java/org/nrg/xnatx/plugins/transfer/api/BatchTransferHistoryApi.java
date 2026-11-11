@@ -49,8 +49,9 @@ import static org.springframework.web.bind.annotation.RequestMethod.GET;
 import static org.springframework.web.bind.annotation.RequestMethod.POST;
 
 /**
- * Transfer history and Stop. A run is visible to the user who started it, to users who can read its source project,
- * and to site admins. Its CSV values and custom script go only to users who could have submitted it: its creator,
+ * Transfer history and Stop. A run is visible to the user who started it, to users who can read its source project's
+ * data, and to site admins. Data access is what counts: on a protected project, a non-member can see that the project
+ * exists but not its sessions, so they can't see its runs. Its CSV values and custom script go only to users who could have submitted it: its creator,
  * site admins, and users who can edit its source project. Only the creator or a site admin can stop it.
  */
 @Slf4j
@@ -191,7 +192,7 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
 
     private boolean canSee(final UserI user, final BatchTransferHistory run) {
         return isCreator(user, run) || isSiteAdmin(user)
-                || (run.getSourceProject() != null && canReadProject(user, run.getSourceProject()));
+                || (run.getSourceProject() != null && readableProjects(user).contains(run.getSourceProject()));
     }
 
     private boolean canSeeValues(final UserI user, final BatchTransferHistory run) {
@@ -212,15 +213,6 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         return Roles.isSiteAdmin(user);
     }
 
-    protected boolean canReadProject(final UserI user, final String project) {
-        try {
-            return Permissions.canReadProject(user, project);
-        } catch (Exception e) {
-            log.error("Could not check read access on project {}", project, e);
-            return false;
-        }
-    }
-
     protected boolean canEditProject(final UserI user, final String project) {
         try {
             return Permissions.canEditProject(user, project);
@@ -230,6 +222,7 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         }
     }
 
+    /** The projects whose data the user can read. Unlike Permissions.canReadProject, excludes protected projects. */
     protected Collection<String> readableProjects(final UserI user) {
         return Permissions.getReadableProjects(user);
     }
