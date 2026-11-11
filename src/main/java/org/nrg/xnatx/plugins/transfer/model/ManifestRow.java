@@ -11,9 +11,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * One resolved manifest row. Parsing fills {@code index}, the source labels, {@code csvValues}, and the
- * per-cell {@code valueErrors}/{@code valueWarnings}; the preflight resolver then sets {@code status} and, for
- * a match, {@code resolvedId}.
+ * One manifest row, or one session resolved from it. Parsing fills {@code index}, {@code rowNumber}, the source
+ * labels, {@code subjectRow}, {@code csvValues}, and the per-cell {@code valueErrors}/{@code valueWarnings}, and
+ * sets {@code status} to {@code duplicate_session} for rows that cover the same session; the preflight resolver
+ * sets every other {@code status} and, for a match, {@code resolvedId}. For Reimport the resolver replaces a
+ * matched subject row with one entry per image session, each keeping the row's {@code index} and
+ * {@code rowNumber}.
  */
 @Data
 @NoArgsConstructor
@@ -25,11 +28,26 @@ public class ManifestRow {
     public static final String STATUS_MATCHED           = "matched";
     public static final String STATUS_SUBJECT_NOT_FOUND = "subject_not_found";
     public static final String STATUS_SESSION_NOT_FOUND = "session_not_found";
+    /** A found subject with nothing the operation can transfer (for Reimport, no image sessions). */
+    public static final String STATUS_NO_SESSIONS       = "no_sessions";
+    /** Another row covers the same session (a subject row plus a session row, or a repeated row). Blocks submit. */
+    public static final String STATUS_DUPLICATE_SESSION = "duplicate_session";
 
-    /** 1-based row number within the manifest's data rows (the header is not counted). */
+    /** 1-based position among the manifest's data rows (the header and blank lines are not counted). */
     private int index;
+    /**
+     * The row's number as a spreadsheet shows the file: the header is row 1, and blank lines take a row. Messages
+     * and the screen refer to rows by this number.
+     */
+    private int rowNumber;
     private String sourceSubjectLabel;
     private String sourceSessionLabel;
+
+    /**
+     * True when the manifest row left {@code source_session_label} blank, so it covers the whole subject. On an
+     * entry expanded from such a row, {@code sourceSessionLabel} holds the resolved session's label.
+     */
+    private boolean subjectRow;
 
     /** Optional routing: the destination subject/session label this Reimport should land in (null = derive). */
     private String destinationSubjectLabel;

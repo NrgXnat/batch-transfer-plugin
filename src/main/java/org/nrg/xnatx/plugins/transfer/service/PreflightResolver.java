@@ -2,6 +2,7 @@ package org.nrg.xnatx.plugins.transfer.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.nrg.xdat.model.XnatImagesessiondataI;
 import org.nrg.xdat.model.XnatSubjectassessordataI;
 import org.nrg.xdat.om.XnatExperimentdata;
 import org.nrg.xdat.om.XnatSubjectdata;
@@ -19,74 +20,86 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Resolves each manifest row's {@code source_subject_label} + {@code source_session_label} to a session in the
- * source project, honoring the user's read permission. Synchronous, no persistence — the "light preflight" the
- * CSV-selection flow needs, not a job engine. Sets each row's {@code status} to {@code matched} (+
- * {@code resolvedId}), {@code subject_not_found}, or {@code session_not_found}.
+ * Resolves each manifest row against the source project, honoring the user's read permission. Synchronous, no
+ * persistence — the "light preflight" the CSV-selection flow needs, not a job engine.
  *
- * <p>Existence only: the row is matched when the subject has an experiment with that label. Reimportability
- * (image-session-only, assessor rejection) is re-checked at submit ({@code BatchTransferServiceImpl}), which is
- * the authoritative gate. Subjects are cached by label within a batch so repeated rows don't re-load.
+ * <ul>
+ *   <li><b>Session row</b> → {@code matched} (+ {@code resolvedId}), {@code subject_not_found} or
+ *   {@code session_not_found}. Existence only: the row is matched when the subject has an experiment with that
+ *   label; reimportability (image-session-only, assessor rejection) is re-checked at submit
+ *   ({@code BatchTransferServiceImpl}), which is the authoritative gate.</li>
+ *   <li><b>Subject row</b> (blank session label) → one {@code matched} entry per image session of the subject,
+ *   each a copy of the row with that session's label and id; {@code no_sessions} when the subject has none.</li>
+ * </ul>
+ * A row that already carries a status from parsing ({@code duplicate_session}) is passed through unresolved.
+ * Subjects are cached by label within a batch so repeated rows don't re-load.
  *
  * <p>The XNAT calls are isolated in {@code protected} seams so the resolution logic is unit-testable
- * without XDAT/Spring wiring. Resolution is existence only; a matched row carries a reimportable-DICOM
- * {@code fileCount} only when {@code includeFileCount} is requested (a display-only advisory number, computed
- * lazily per row on cohort-table expand — a filesystem walk, so it is skipped by default).
+ * without XDAT/Spring wiring. A matched entry carries a reimportable-DICOM {@code fileCount} only when
+ * {@code includeFileCount} is requested (a display-only advisory number, computed lazily on cohort-table
+ * expand — a filesystem walk, so it is skipped by default).
  */
 @Slf4j
 @Service
 public class PreflightResolver {
 
-    /** Resolve every row in place (no file counts). */
-    public void resolveAll(final String sourceProject, final List<ManifestRow> rows, final UserI user) {
-        resolveAll(sourceProject, rows, user, false);
-    }
-
     /**
-     * Resolve every row in place, caching each subject's sessions by label for the span of this batch. When
-     * {@code includeFileCount} is true, each matched row also gets its reimportable-DICOM {@code fileCount}
-     * (a filesystem walk per matched session — request it only for the rows that need it).
+     * Resolve {@code rows} for a Reimport and return the resolved entries, in manifest order. A matched subject
+     * row is replaced by its sessions, so the result can be longer than {@code rows}. When
+     * {@code includeFileCount} is true, each matched session also gets its reimportable-DICOM {@code fileCount}
+     * (a filesystem walk per session — request it only for the rows that need it).
      */
-    public void resolveAll(final String sourceProject, final List<ManifestRow> rows, final UserI user,
-                           final boolean includeFileCount) {
-        final Map<String, List<SessionRef>> cache = new HashMap<>();
+    public List<ManifestRow> resolveAll(final String sourceProject, final List<ManifestRow> rows, final UserI user,
+                                        final boolean includeFileCount) {
+        final Map<String, SubjectRef> cache = new HashMap<>();
+        final List<ManifestRow> resolved = new ArrayList<>(rows.size());
         for (final ManifestRow row : rows) {
-            resolve(sourceProject, row, user, cache, includeFileCount);
+            if (row.getStatus() != null) {
+                resolved.add(row);
+                continue;
+            }
+            final String subjectLabel = row.getSourceSubjectLabel();
+            if (StringUtils.isBlank(subjectLabel)) {
+                row.setStatus(ManifestRow.STATUS_SUBJECT_NOT_FOUND);
+                resolved.add(row);
+                continue;
+            }
+            // containsKey, not computeIfAbsent: a subject that isn't found is cached as null too.
+            if (!cache.containsKey(subjectLabel)) {
+                cache.put(subjectLabel, lookUpSubject(sourceProject, subjectLabel, user));
+            }
+            final SubjectRef subject = cache.get(subjectLabel);
+            if (subject == null) {
+                row.setStatus(ManifestRow.STATUS_SUBJECT_NOT_FOUND);
+                resolved.add(row);
+            } else if (!row.isSubjectRow()) {
+                resolveSession(row, subject, user, includeFileCount);
+                resolved.add(row);
+            } else {
+                resolved.addAll(expandSubject(row, subject, user, includeFileCount));
+            }
         }
+        return resolved;
     }
 
-    private void resolve(final String sourceProject, final ManifestRow row, final UserI user,
-                         final Map<String, List<SessionRef>> cache, final boolean includeFileCount) {
-        final String subjectLabel = row.getSourceSubjectLabel();
-        final String sessionLabel = row.getSourceSessionLabel();
+    /** The subject with its sessions, or null when it isn't found or isn't readable. */
+    private SubjectRef lookUpSubject(final String sourceProject, final String label, final UserI user) {
+        final XnatSubjectdata subject = findSubject(sourceProject, label, user);
+        return (subject == null) ? null : new SubjectRef(listSessions(subject));
+    }
 
-        if (StringUtils.isBlank(subjectLabel)) {
-            row.setStatus(ManifestRow.STATUS_SUBJECT_NOT_FOUND);
-            return;
-        }
-
-        final List<SessionRef> sessions;
-        if (cache.containsKey(subjectLabel)) {
-            sessions = cache.get(subjectLabel);         // may be null = subject not found
-        } else {
-            final XnatSubjectdata subject = findSubject(sourceProject, subjectLabel, user);
-            sessions = (subject == null) ? null : listSessions(subject);
-            cache.put(subjectLabel, sessions);
-        }
-
-        if (sessions == null) {
-            row.setStatus(ManifestRow.STATUS_SUBJECT_NOT_FOUND);
-            return;
-        }
-
-        for (final SessionRef session : sessions) {
-            if (session.label != null && session.label.equals(sessionLabel)) {
+    private void resolveSession(final ManifestRow row, final SubjectRef subject, final UserI user,
+                                final boolean includeFileCount) {
+        for (final SessionRef session : subject.sessions) {
+            if (session.label != null && session.label.equals(row.getSourceSessionLabel())) {
                 row.setStatus(ManifestRow.STATUS_MATCHED);
                 row.setResolvedId(session.id);
                 if (includeFileCount) {
@@ -95,8 +108,51 @@ public class PreflightResolver {
                 return;
             }
         }
-
         row.setStatus(ManifestRow.STATUS_SESSION_NOT_FOUND);
+    }
+
+    /** A subject row → one matched entry per image session (by label), or the row as {@code no_sessions}. */
+    private List<ManifestRow> expandSubject(final ManifestRow row, final SubjectRef subject, final UserI user,
+                                            final boolean includeFileCount) {
+        final List<SessionRef> imageSessions = new ArrayList<>();
+        for (final SessionRef session : subject.sessions) {
+            if (session.imageSession) {
+                imageSessions.add(session);
+            }
+        }
+        if (imageSessions.isEmpty()) {
+            row.setStatus(ManifestRow.STATUS_NO_SESSIONS);
+            return Collections.singletonList(row);
+        }
+        imageSessions.sort(Comparator.comparing(session -> StringUtils.defaultString(session.label)));
+        final List<ManifestRow> entries = new ArrayList<>(imageSessions.size());
+        for (final SessionRef session : imageSessions) {
+            final ManifestRow entry = copyOf(row);
+            entry.setSourceSessionLabel(session.label);
+            entry.setStatus(ManifestRow.STATUS_MATCHED);
+            entry.setResolvedId(session.id);
+            if (includeFileCount) {
+                entry.setFileCount(countReimportableFiles(session.id, user));
+            }
+            entries.add(entry);
+        }
+        return entries;
+    }
+
+    /** A copy of a parsed row (its own value lists; the {@code csvValues} map is shared, read-only from here). */
+    private static ManifestRow copyOf(final ManifestRow row) {
+        final ManifestRow copy = new ManifestRow();
+        copy.setIndex(row.getIndex());
+        copy.setRowNumber(row.getRowNumber());
+        copy.setSourceSubjectLabel(row.getSourceSubjectLabel());
+        copy.setSourceSessionLabel(row.getSourceSessionLabel());
+        copy.setSubjectRow(row.isSubjectRow());
+        copy.setDestinationSubjectLabel(row.getDestinationSubjectLabel());
+        copy.setDestinationSessionLabel(row.getDestinationSessionLabel());
+        copy.setCsvValues(row.getCsvValues());
+        copy.setValueErrors(new ArrayList<>(row.getValueErrors()));
+        copy.setValueWarnings(new ArrayList<>(row.getValueWarnings()));
+        return copy;
     }
 
     /**
@@ -107,11 +163,12 @@ public class PreflightResolver {
         return XnatSubjectdata.GetSubjectByProjectIdentifier(project, label, user, false);
     }
 
-    /** The subject's experiments as (id, label) pairs. Overridable so tests need no XDAT wiring. */
+    /** The subject's experiments as (id, label, image session?) refs. Overridable so tests need no XDAT wiring. */
     protected List<SessionRef> listSessions(final XnatSubjectdata subject) {
         final List<SessionRef> sessions = new ArrayList<>();
         for (final XnatSubjectassessordataI experiment : subject.getExperiments_experiment()) {
-            sessions.add(new SessionRef(experiment.getId(), experiment.getLabel()));
+            sessions.add(new SessionRef(experiment.getId(), experiment.getLabel(),
+                    experiment instanceof XnatImagesessiondataI));
         }
         return sessions;
     }
@@ -180,14 +237,25 @@ public class PreflightResolver {
         return false;
     }
 
-    /** An experiment reference: its id and label. */
+    /** An experiment reference: its id, its label, and whether it is an image session (Reimport's unit). */
     protected static final class SessionRef {
-        final String id;
-        final String label;
+        final String  id;
+        final String  label;
+        final boolean imageSession;
 
-        SessionRef(final String id, final String label) {
+        SessionRef(final String id, final String label, final boolean imageSession) {
             this.id = id;
             this.label = label;
+            this.imageSession = imageSession;
+        }
+    }
+
+    /** A found subject's experiments. */
+    private static final class SubjectRef {
+        final List<SessionRef> sessions;
+
+        SubjectRef(final List<SessionRef> sessions) {
+            this.sessions = sessions;
         }
     }
 }

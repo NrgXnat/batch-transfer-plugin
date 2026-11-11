@@ -65,8 +65,7 @@
             </div>
 
             <!-- Operation. Ahead of Cohort because it decides what is eligible to select: the tree
-                 hides rows the operation cannot transfer, and the manifest's routing/value columns
-                 only apply to Reimport. -->
+                 hides rows the operation cannot transfer, and a manifest is for Reimport only. -->
             <div class="bt-rail-sect">
                 <div class="bt-rail-lbl">Operation</div>
                 <div class="bt-op-stack">
@@ -112,7 +111,7 @@
             <div class="bt-rail-sect" id="bt-reimport-label-option" style="display:none;">
                 <div class="bt-rail-lbl">Preserve source labels</div>
                 <div class="bt-reimport-opts">
-                    <p class="bt-label-options-help">Use the source's XNAT subject/session labels instead of deriving them from DICOM tags. A manifest's <code>destination_subject_label</code> / <code>destination_session_label</code> columns override this per row.</p>
+                    <p class="bt-label-options-help">Use the source's XNAT subject/session labels instead of deriving them from DICOM tags. A manifest's <code>destination_subject_label</code> / <code>destination_session_label</code> columns override this per row; sessions from a subject row always take their session label from this setting.</p>
                     <div class="bt-label-checks">
                         <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
                         <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>

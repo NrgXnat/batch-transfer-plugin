@@ -1242,7 +1242,7 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 
 .bt-csv-loading { padding: 14px; font-size: 13px; color: #5f6368; }
 .bt-csv-error { padding: 14px; font-size: 13px; color: #c5221f; }
-.bt-csv-head { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; }
+.bt-csv-head { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 10px; font-size: 12.5px; }
 .bt-csv-ok { color: #137333; }
 .bt-csv-miss { color: #c5221f; }
 .bt-csv-file {
@@ -1263,6 +1263,8 @@ tr.bt-import-disabled[data-type="subject"]:hover {
     font-size: 12.5px;
 }
 .bt-csv-replace-link:hover { text-decoration: underline; }
+.bt-csv-retry-link { margin-left: 6px; color: #1a73e8; cursor: pointer; text-decoration: none; }
+.bt-csv-retry-link:hover { text-decoration: underline; }
 
 /* Simple manifest pager: prev/next arrows around a "start-end of total" range, plus one "Show all". */
 .bt-pager { display: flex; align-items: center; gap: 12px; padding: 10px 2px 2px; font-size: 12.5px; color: #5f6368; }
@@ -1299,19 +1301,11 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 }
 
 .bt-cohort-table { font-size: 12.5px; }
-/* Cells keep a stable width so the table scrolls cleanly (the not-found reason cell is exempted just
-   below so its message can still wrap). Headers are the exception: they carry raw manifest column
-   names, and on one line it is the NAME that sets the column width - destination_subject_label
-   reserved 231px for values that need 97. Letting headers wrap reclaims ~400px of table width and
-   hides nothing - a column still grows when its own DATA needs more, which is why a long session
-   label keeps its full width.
-   No min/max-width here on purpose, both measured as wrong: a max-width never binds (word-break
-   already lets the header shrink to the data width), and a min-width applies to the narrow columns
-   too - buying 34px of header height cost 440px of table width. */
+/* Cells don't wrap unless a rule below lets them (labels, messages, status, subject lines). Headers
+   wrap at their spaces, so a two-word header doesn't set its column's width. */
 .bt-cohort-table td { white-space: nowrap; }
 .bt-cohort-table th {
     white-space: normal;
-    word-break: break-word;
     vertical-align: bottom;
 }
 .bt-cohort-table th.bt-route-head { color: #8430ce; }
@@ -1332,8 +1326,49 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-cohort-table tr.bt-csv-rowerr { background: #fef6f5; }
 .bt-cohort-table tr.bt-csv-errrow td { color: #c5221f; font-size: 11.5px; }
 .bt-cohort-table tr.bt-csv-warnrow td { color: #b06000; font-size: 11.5px; }
+/* A row's error or warning text wraps within the table rather than setting its width. */
+.bt-cohort-table tr.bt-csv-noterow td { white-space: normal; }
 .bt-cohort-table tr.bt-csv-detailrow td { background: #fafbfc; }
 .bt-csv-detail-line { font-size: 11.5px; color: #3c4043; margin: 2px 0; }
+/* The manifest table is grouped by subject: a header line per subject, its sessions indented under it,
+   and each line's row number in the file. */
+.bt-cohort-table .bt-csv-rown { width: 30px; padding-left: 8px; padding-right: 8px; color: #5f6368; text-align: right; }
+/* "Row" is short, so its header stays on one line instead of breaking like a column-name header. */
+.bt-cohort-table th.bt-csv-rown { white-space: nowrap; }
+/* A label longer than its cap wraps instead of widening the table, so the table fits the workspace and
+   every label stays fully visible. A label within its cap keeps its width (break-word, not anywhere,
+   so the table can't squeeze it). Destination subject labels are usually short, so their cap is lower.
+   Table cells ignore max-width, so the label is an inline block inside its cell. */
+.bt-cohort-table .bt-csv-label {
+    display: inline-block;
+    max-width: 200px;
+    white-space: normal;
+    overflow-wrap: break-word;
+}
+.bt-cohort-table td.bt-csv-dsubj .bt-csv-label { max-width: 160px; }
+.bt-cohort-table .bt-csv-caret-col,
+.bt-cohort-table td.bt-csv-caret-cell { width: 12px; padding-left: 8px; padding-right: 4px; }
+.bt-cohort-table tr.bt-csv-subj td { background: #f8f9fa; }
+.bt-cohort-table tr.bt-csv-subj.bt-csv-missrow td,
+.bt-cohort-table tr.bt-csv-subj.bt-csv-rowerr td { background: #fef6f5; }
+.bt-cohort-table .bt-csv-subjlabel { font-weight: 600; color: #202124; }
+.bt-cohort-table .bt-csv-scope {
+    display: inline-block;
+    white-space: nowrap;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border: 1px solid #dadce0;
+    border-radius: 10px;
+    background: #fff;
+    color: #5f6368;
+    font-size: 11px;
+}
+.bt-cohort-table td.bt-csv-src { padding-left: 24px; }
+/* Three label columns share the workspace, so cells are padded less than in the other tables, and a
+   subject's scope pill may drop below a long subject label. */
+.bt-cohort-table th,
+.bt-cohort-table td { padding-left: 8px; padding-right: 8px; }
+.bt-cohort-table tr.bt-csv-subj td { white-space: normal; }
 /* Same failure as the two above: this renders as real text in manifest cells and verdicts. */
 .bt-muted { color: #5f6368; }
 .bt-script-preview {

@@ -21,13 +21,15 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Parses a session-level manifest CSV and classifies its columns, with per-cell value checks and (optionally)
+ * Parses a manifest CSV and classifies its columns, with per-cell value checks and (optionally)
  * {@code ${csv.*}} binding. Pure text work — no XNAT involvement, so it is unit-testable without XDAT/Spring;
- * per-row session resolution is the {@link PreflightResolver}'s job, run by the API after this.
+ * per-row resolution is the {@link PreflightResolver}'s job, run by the API after this.
  *
  * <p>Column roles:
  * <ul>
- *   <li><b>Required</b> columns {@value #COL_SUBJECT} + {@value #COL_SESSION} identify the session.</li>
+ *   <li><b>Required</b> columns {@value #COL_SUBJECT} + {@value #COL_SESSION} identify the session. A blank
+ *   {@value #COL_SESSION} cell makes the row a subject row, which covers every session of the subject; the
+ *   column itself stays required.</li>
  *   <li><b>Reserved</b> columns are {@code _}-prefixed (notes; never exposed to a script).</li>
  *   <li><b>Value</b> columns are the rest — the {@code ${csv.*}}-eligible set.</li>
  * </ul>
@@ -48,6 +50,11 @@ public class ManifestService {
      *  of the {@code ${csv.*}} DICOM-safe charset, so a routing-valid value is always substitution-valid. */
     private static final Pattern LABEL_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9_-]*$");
 
+    /** True when {@code label} is an XNAT label that is kept as written (see {@link #LABEL_PATTERN}). */
+    public static boolean isValidLabel(final String label) {
+        return label != null && LABEL_PATTERN.matcher(label).matches();
+    }
+
     private final BatchTransferPolicy policy;
     private final ScriptCompiler scriptCompiler;
 
@@ -60,19 +67,44 @@ public class ManifestService {
     /**
      * Parse and classify {@code rawCsv}, filling every field of the result except each row's resolution
      * ({@code status}/{@code resolvedId}) and the summary tally, which the caller
-     * completes after running the {@link PreflightResolver}.
+     * completes after running the {@link PreflightResolver}. A manifest always describes a Reimport: a subject
+     * row covers all of the subject's image sessions, and the value and routing columns are checked.
+     *
+     * <p>Blank lines (empty, only spaces, or only commas, as a spreadsheet exports an emptied row) are skipped, but
+     * each row's {@code rowNumber} still counts them, as a spreadsheet does, so a message about row 7 points at
+     * row 7 when the file is opened.
      */
     public ManifestValidationResult parse(final String rawCsv, final String anonScript)
             throws ManifestValidationException {
-        final String csv = stripBom(rawCsv);
-        if (StringUtils.isBlank(csv)) {
+        final String bomless = stripBom(rawCsv);
+        if (StringUtils.isBlank(bomless)) {
             throw new ManifestValidationException(HttpStatus.BAD_REQUEST, "The manifest is empty.");
         }
 
+        // Blank lines above the header would otherwise be read as the header; drop them but keep their count.
+        int start = 0;
+        int linesAboveHeader = 0;
+        while (start < bomless.length()) {
+            int end = start;
+            while (end < bomless.length() && bomless.charAt(end) != '\r' && bomless.charAt(end) != '\n') {
+                end++;
+            }
+            if (!isBlankLine(bomless.substring(start, end))) {
+                break;
+            }
+            start = bomless.startsWith("\r\n", end) ? end + 2 : end + 1;
+            linesAboveHeader++;
+        }
+        if (start >= bomless.length()) {
+            throw new ManifestValidationException(HttpStatus.BAD_REQUEST, "The manifest is empty.");
+        }
+        final String csv = bomless.substring(start);
+
+        // Empty lines are kept as records so the parser's record numbers line up with the file's rows.
         final CSVFormat format = CSVFormat.DEFAULT.builder()
                 .setHeader()
                 .setSkipHeaderRecord(true)
-                .setIgnoreEmptyLines(true)
+                .setIgnoreEmptyLines(false)
                 .setTrim(true)
                 .build();
 
@@ -82,6 +114,9 @@ public class ManifestService {
         try (CSVParser parser = CSVParser.parse(csv, format)) {
             headers = parser.getHeaderNames();
             for (final CSVRecord record : parser) {
+                if (isBlankRecord(record)) {
+                    continue;
+                }
                 if (records.size() >= maxRows) {
                     throw new ManifestValidationException(HttpStatus.PAYLOAD_TOO_LARGE,
                             "The manifest exceeds the maximum of " + maxRows + " rows.");
@@ -160,6 +195,8 @@ public class ManifestService {
             index++;
             final ManifestRow row = new ManifestRow();
             row.setIndex(index);
+            // Record numbers start at 1 for the first line after the header and count blank lines.
+            row.setRowNumber(linesAboveHeader + 1 + (int) record.getRecordNumber());
             row.setSourceSubjectLabel(cell(record, COL_SUBJECT));
             row.setSourceSessionLabel(cell(record, COL_SESSION));
             if (hasDestSubject) {
@@ -188,9 +225,9 @@ public class ManifestService {
             }
             for (final String column : routing) {
                 final String label = csvValues.get(column);
-                if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
+                if (StringUtils.isNotBlank(label) && !isValidLabel(label)) {
                     row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
-                            + "digits, _ and - ; must start alphanumeric — other characters are rewritten to "
+                            + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
                             + "'_' at ingest, so the label would not route as written).");
                 }
             }
@@ -200,11 +237,89 @@ public class ManifestService {
                             + "' is empty but the script binds ${csv." + column + "}.");
                 }
             }
+            row.setSubjectRow(StringUtils.isBlank(row.getSourceSessionLabel()));
+            if (row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+                row.getValueErrors().add("'" + COL_DEST_SESSION + "' can't be set on a subject row: it would apply "
+                        + "to every session of the subject. List the subject's sessions individually instead.");
+            }
             rows.add(row);
         }
+        flagDuplicateSessions(rows);
+        flagDuplicateDestinationLabels(rows);
         result.setRows(rows);
-        result.setSummary(new ManifestSummary(0, 0));   // matched/not_found filled after resolution
+        result.setSummary(new ManifestSummary(0, 0));   // filled after resolution
         return result;
+    }
+
+    /**
+     * Marks {@code duplicate_session} on every row that covers what another row also covers: the same subject and
+     * session listed twice, the same subject row twice, and a subject row (which means all of the subject's
+     * sessions) together with any other row for that subject. Labels only, so it needs no XNAT lookup. Rows with a
+     * blank subject label are left to the resolver.
+     */
+    private static void flagDuplicateSessions(final List<ManifestRow> rows) {
+        final Map<String, List<ManifestRow>> bySubject = new LinkedHashMap<>();
+        for (final ManifestRow row : rows) {
+            if (StringUtils.isNotBlank(row.getSourceSubjectLabel())) {
+                bySubject.computeIfAbsent(row.getSourceSubjectLabel(), k -> new ArrayList<>()).add(row);
+            }
+        }
+        for (final List<ManifestRow> subjectRows : bySubject.values()) {
+            final boolean coversAllSessions = subjectRows.stream().anyMatch(ManifestRow::isSubjectRow);
+            if (coversAllSessions && subjectRows.size() > 1) {
+                subjectRows.forEach(row -> row.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION));
+                continue;
+            }
+            final Map<String, List<ManifestRow>> bySession = new LinkedHashMap<>();
+            for (final ManifestRow row : subjectRows) {
+                bySession.computeIfAbsent(row.getSourceSessionLabel(), k -> new ArrayList<>()).add(row);
+            }
+            for (final List<ManifestRow> sessionRows : bySession.values()) {
+                if (sessionRows.size() > 1) {
+                    sessionRows.forEach(row -> row.setStatus(ManifestRow.STATUS_DUPLICATE_SESSION));
+                }
+            }
+        }
+    }
+
+    /**
+     * Adds a {@code duplicate_destination_label} value error to each row whose {@value #COL_DEST_SESSION} is also
+     * another row's: two sessions can't land under one session label in the destination project. Labels only;
+     * a label that already exists in the destination still fails per session at import.
+     */
+    private static void flagDuplicateDestinationLabels(final List<ManifestRow> rows) {
+        final Map<String, List<ManifestRow>> byLabel = new LinkedHashMap<>();
+        for (final ManifestRow row : rows) {
+            if (!row.isSubjectRow() && row.getDestinationSessionLabel() != null) {
+                byLabel.computeIfAbsent(row.getDestinationSessionLabel(), k -> new ArrayList<>()).add(row);
+            }
+        }
+        for (final Map.Entry<String, List<ManifestRow>> entry : byLabel.entrySet()) {
+            final List<ManifestRow> sameLabel = entry.getValue();
+            if (sameLabel.size() < 2) {
+                continue;
+            }
+            for (final ManifestRow row : sameLabel) {
+                final List<String> others = new ArrayList<>();
+                for (final ManifestRow other : sameLabel) {
+                    if (other != row) {
+                        others.add(String.valueOf(other.getRowNumber()));
+                    }
+                }
+                row.getValueErrors().add("duplicate_destination_label: '" + entry.getKey() + "' is also the "
+                        + COL_DEST_SESSION + " of row " + String.join(", ", others) + ".");
+            }
+        }
+    }
+
+    /** A line of only spaces and commas: an empty spreadsheet row, however many columns it was exported with. */
+    private static boolean isBlankLine(final String line) {
+        return StringUtils.isBlank(StringUtils.remove(line, ','));
+    }
+
+    /** A record whose cells all trim to nothing: an empty line, or one of only spaces and commas. */
+    private static boolean isBlankRecord(final CSVRecord record) {
+        return record.stream().allMatch(String::isEmpty);
     }
 
     /** A mapped, present cell value; {@code ""} when the row is short a column (commons-csv would throw). */
