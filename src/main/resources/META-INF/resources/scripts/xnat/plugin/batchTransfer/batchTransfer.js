@@ -991,6 +991,8 @@ var XNAT = getObject(XNAT || {});
             // A matched row with a value error is not transferable as written.
             var errors = valueErrorRows();
             if (errors.length) { reasons.push('value errors in ' + rowList(errors)); }
+            var clashes = preservedLabelClashRows();
+            if (clashes.length) { reasons.push('two sessions would get the same session label in ' + rowList(clashes)); }
             if (anonBlocks()) { reasons.push('fix the anonymization script'); }
             return reasons;
         }
@@ -1224,6 +1226,31 @@ var XNAT = getObject(XNAT || {});
 
     function valueErrorRows() {
         return manifestRowNumbers(function(e) { return e.status === 'matched' && (e.value_errors || []).length > 0; });
+    }
+
+    // The rows of matched sessions that would arrive with the same session label as another session because
+    // Preserve session labels is on: an explicit destination_session_label equal to another session's
+    // preserved source label. Two explicit labels that clash are already a duplicate_destination_label value
+    // error, so they aren't counted again here.
+    function preservedLabelClashRows() {
+        if (!$('#bt-preserve-session-label').is(':checked')) { return []; }
+        var byLabel = Object.create(null);
+        ((manifestResult && manifestResult.rows) || []).forEach(function(e) {
+            if (e.status !== 'matched') { return; }
+            var label = e.destination_session_label || e.source_session_label;
+            if (!label) { return; }
+            (byLabel[label] = byLabel[label] || []).push(e);
+        });
+        var seen = {}, out = [];
+        Object.keys(byLabel).forEach(function(label) {
+            var entries = byLabel[label];
+            var preserved = entries.some(function(e) { return !e.destination_session_label; });
+            if (entries.length < 2 || !preserved) { return; }
+            entries.forEach(function(e) {
+                if (!seen[e.row_number]) { seen[e.row_number] = true; out.push(e.row_number); }
+            });
+        });
+        return out.sort(function(a, b) { return a - b; });
     }
 
     // "row 9", or "rows 3, 4, 7, 9, 12 and 4 more".

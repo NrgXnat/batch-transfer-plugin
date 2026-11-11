@@ -43,8 +43,12 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
@@ -78,7 +82,9 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
     @ApiOperation(value = "Submits an async batch transfer request")
     @ApiResponses({ @ApiResponse(code = 200, message = "Request submitted"),
-                    @ApiResponse(code = 400, message = "Invalid request (e.g. a custom anon_script on a non-Reimport item)"),
+                    @ApiResponse(code = 400, message = "Invalid request (e.g. the same item twice, two Reimport items "
+                            + "routed to one session label, an invalid routing label, or a custom anon_script on a "
+                            + "non-Reimport item)"),
                     @ApiResponse(code = 403, message = "No edit access to a destination project required by a custom anon_script"),
                     @ApiResponse(code = 409, message = "This XNAT build does not support per-import anonymization"),
                     @ApiResponse(code = 500, message = "An unexpected error occurred.")})
@@ -90,6 +96,11 @@ public class BatchTransferApi extends AbstractXapiRestController {
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
 
+        final String batchError = checkBatch(requests);
+        if (batchError != null) {
+            return new ResponseEntity<>(batchError, HttpStatus.BAD_REQUEST);
+        }
+
         final UserI user = getSessionUser();
 
         final ResponseEntity<String> guardrail = checkAnonGuardrails(batchTransferRequest.getAnonScript(), requests, user);
@@ -99,6 +110,68 @@ public class BatchTransferApi extends AbstractXapiRestController {
 
         batchTransferService.submitTransferRequest(batchTransferRequest, user);
         return new ResponseEntity<>(HttpStatus.OK);
+    }
+
+    /**
+     * Checks on the batch as a whole that need no XNAT lookup: no item listed twice, every explicit Reimport
+     * routing label a valid XNAT label, and no two Reimport items routed to the same explicit session label.
+     * Routing labels apply only to Reimport, so Share and Clone items aren't label-checked. Returns the 400
+     * message naming the items, or {@code null} when the batch passes.
+     */
+    static String checkBatch(final List<TransferRequest> requests) {
+        final Set<String> seen = new HashSet<>();
+        final Set<String> repeated = new LinkedHashSet<>();
+        for (final TransferRequest request : requests) {
+            if (request.getId() != null && !seen.add(request.getId())) {
+                repeated.add(request.getId());
+            }
+        }
+        if (!repeated.isEmpty()) {
+            return "The request lists the same item more than once: " + listOf(repeated) + ".";
+        }
+
+        final List<String> invalid = new ArrayList<>();
+        final Map<String, List<String>> bySessionLabel = new LinkedHashMap<>();
+        for (final TransferRequest request : requests) {
+            if (request.getMode() != TransferMode.REIMPORT) {
+                continue;
+            }
+            final String subjectLabel = request.getDestinationSubjectLabel();
+            final String sessionLabel = request.getDestinationSessionLabel();
+            if (StringUtils.isNotBlank(subjectLabel) && !ManifestService.isValidLabel(subjectLabel)) {
+                invalid.add(request.getId() + " destination_subject_label '" + subjectLabel + "'");
+            }
+            if (StringUtils.isNotBlank(sessionLabel)) {
+                if (!ManifestService.isValidLabel(sessionLabel)) {
+                    invalid.add(request.getId() + " destination_session_label '" + sessionLabel + "'");
+                }
+                bySessionLabel.computeIfAbsent(sessionLabel, k -> new ArrayList<>()).add(request.getId());
+            }
+        }
+        if (!invalid.isEmpty()) {
+            return "Invalid destination labels (letters, digits, _ and -, starting with a letter or digit): "
+                    + listOf(invalid) + ".";
+        }
+
+        final List<String> shared = new ArrayList<>();
+        for (final Map.Entry<String, List<String>> entry : bySessionLabel.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                shared.add("'" + entry.getKey() + "' (" + String.join(", ", entry.getValue()) + ")");
+            }
+        }
+        if (!shared.isEmpty()) {
+            return "Reimport items are routed to the same destination_session_label: " + listOf(shared) + ".";
+        }
+        return null;
+    }
+
+    /** "A, B, C", or the first ten and "and N more". */
+    private static String listOf(final Iterable<String> values) {
+        final List<String> all = new ArrayList<>();
+        values.forEach(all::add);
+        final int shown = Math.min(all.size(), 10);
+        final String head = String.join(", ", all.subList(0, shown));
+        return all.size() > shown ? head + " and " + (all.size() - shown) + " more" : head;
     }
 
     /**

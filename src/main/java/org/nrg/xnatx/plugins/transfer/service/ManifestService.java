@@ -50,6 +50,11 @@ public class ManifestService {
      *  of the {@code ${csv.*}} DICOM-safe charset, so a routing-valid value is always substitution-valid. */
     private static final Pattern LABEL_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9_-]*$");
 
+    /** True when {@code label} is an XNAT label that is kept as written (see {@link #LABEL_PATTERN}). */
+    public static boolean isValidLabel(final String label) {
+        return label != null && LABEL_PATTERN.matcher(label).matches();
+    }
+
     private final BatchTransferPolicy policy;
     private final ScriptCompiler scriptCompiler;
 
@@ -220,7 +225,7 @@ public class ManifestService {
             }
             for (final String column : routing) {
                 final String label = csvValues.get(column);
-                if (StringUtils.isNotBlank(label) && !LABEL_PATTERN.matcher(label).matches()) {
+                if (StringUtils.isNotBlank(label) && !isValidLabel(label)) {
                     row.getValueErrors().add("Value for '" + column + "' is not a valid XNAT label (letters, "
                             + "digits, _ and - ; must start alphanumeric; other characters are rewritten to "
                             + "'_' at ingest, so the label would not route as written).");

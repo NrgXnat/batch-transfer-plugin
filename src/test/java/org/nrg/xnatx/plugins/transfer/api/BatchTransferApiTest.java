@@ -6,12 +6,14 @@ import org.junit.Test;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.ScriptValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
+import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
 import org.nrg.xnatx.plugins.transfer.service.ManifestService;
 import org.nrg.xnatx.plugins.transfer.service.ManifestValidationException;
@@ -34,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -48,7 +51,8 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests for {@link BatchTransferApi} — the HTTP wiring the service-layer tests
  * ({@code ManifestServiceTest}/{@code PreflightResolverTest}) don't reach: source-project read gate, parse
- * error → status mapping and mode parsing on {@code validate/manifest}, and script validation. The
+ * error → status mapping and mode parsing on {@code validate/manifest}, the lookup-free batch checks on
+ * {@code POST /xapi/transfer}, and script validation. The
  * {@code ManifestService}/{@code PreflightResolver}/{@code BatchTransferService} collaborators are mocked, so
  * these assert routing/orchestration, not parsing or resolution.
  *
@@ -205,6 +209,95 @@ public class BatchTransferApiTest {
         verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
     }
 
+    // ---- POST /xapi/transfer batch checks --------------------------------------------------------------
+
+    @Test
+    public void submit_distinctItems_areSubmitted() {
+        final TransferRequest first = reimport("E1");
+        first.setDestinationSessionLabel("STUDY2_A");
+        final TransferRequest second = reimport("E2");
+        second.setDestinationSessionLabel("STUDY2_B");
+        second.setDestinationSubjectLabel("ANON-042");
+
+        final ResponseEntity<String> resp = api.submit(batch(first, second));
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(service).submitTransferRequest(any(BatchTransfer.class), eq(user));
+    }
+
+    @Test
+    public void submit_theSameItemTwice_returns400NamingIt() {
+        final ResponseEntity<String> resp = api.submit(batch(reimport("E1"), reimport("E2"), reimport("E1")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("The request lists the same item more than once: E1.", resp.getBody());
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submit_twoReimportItemsRoutedToOneSessionLabel_returns400() {
+        final TransferRequest first = reimport("E1");
+        first.setDestinationSessionLabel("STUDY2_A");
+        final TransferRequest second = reimport("E2");
+        second.setDestinationSessionLabel("STUDY2_A");
+
+        final ResponseEntity<String> resp = api.submit(batch(first, second, reimport("E3")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue(resp.getBody(), resp.getBody().contains("'STUDY2_A' (E1, E2)"));
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submit_anInvalidRoutingLabel_returns400() {
+        final TransferRequest subject = reimport("E1");
+        subject.setDestinationSubjectLabel("ANON 042");
+        final TransferRequest session = reimport("E2");
+        session.setDestinationSessionLabel("STUDY2.042");
+
+        final ResponseEntity<String> resp = api.submit(batch(subject, session));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue(resp.getBody(), resp.getBody().contains("E1 destination_subject_label 'ANON 042'"));
+        assertTrue(resp.getBody(), resp.getBody().contains("E2 destination_session_label 'STUDY2.042'"));
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
+    public void submit_blankRoutingLabelsMeanDeriveAndPass() {
+        final TransferRequest first = reimport("E1");
+        first.setDestinationSessionLabel("");
+        final TransferRequest second = reimport("E2");
+        second.setDestinationSessionLabel("");
+
+        assertEquals(HttpStatus.OK, api.submit(batch(first, second)).getStatusCode());
+    }
+
+    @Test
+    public void submit_routingLabelsOnShareItemsAreNotChecked() {
+        final TransferRequest first = new TransferRequest(DEST, "E1", TransferMode.SHARE);
+        first.setDestinationSessionLabel("SAME");
+        final TransferRequest second = new TransferRequest(DEST, "E2", TransferMode.SHARE);
+        second.setDestinationSessionLabel("SAME");
+        second.setDestinationSubjectLabel("not a label");
+
+        assertEquals(HttpStatus.OK, api.submit(batch(first, second)).getStatusCode());
+    }
+
+    @Test
+    public void submit_aLongListIsShortened() {
+        final List<TransferRequest> requests = new ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            requests.add(reimport("E" + i));
+            requests.add(reimport("E" + i));
+        }
+
+        final ResponseEntity<String> resp = api.submit(new BatchTransfer(requests, "trk"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertTrue(resp.getBody(), resp.getBody().endsWith("E9, E10 and 2 more."));
+    }
+
     // ---- validate/script -----------------------------------------------------------------------------
 
     @Test
@@ -235,6 +328,14 @@ public class BatchTransferApiTest {
     }
 
     // ---- fixtures ------------------------------------------------------------------------------------
+
+    private static TransferRequest reimport(final String id) {
+        return new TransferRequest(DEST, id, TransferMode.REIMPORT);
+    }
+
+    private static BatchTransfer batch(final TransferRequest... requests) {
+        return new BatchTransfer(new ArrayList<>(Arrays.asList(requests)), "trk");
+    }
 
     private static ManifestValidationRequest validationRequest(final String sourceProject, final String anonScript) {
         final ManifestValidationRequest req = new ManifestValidationRequest();
