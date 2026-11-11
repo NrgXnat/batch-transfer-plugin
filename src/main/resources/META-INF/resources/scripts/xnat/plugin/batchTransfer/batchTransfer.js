@@ -134,6 +134,9 @@ var XNAT = getObject(XNAT || {});
             callback(projectAnonCache[projectId], null);
             return;
         }
+        // The cache holds true or false once checked, and null when the check failed. No entry means not
+        // checked yet, which is also the state while this request is in flight.
+        delete projectAnonCache[projectId];
         $.ajax({
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/anonymize/projects/' + projectId + '/enabled'),
@@ -143,6 +146,7 @@ var XNAT = getObject(XNAT || {});
                 callback(data, null);
             },
             error: function(xhr) {
+                projectAnonCache[projectId] = null;
                 callback(null, 'Could not retrieve anonymization setting: ' + xhr.status);
             }
         });
@@ -945,7 +949,7 @@ var XNAT = getObject(XNAT || {});
         if (selectedOp === 'Reimport') {
             var script = hasCustomScript();
             var dest = selectedProject;
-            var anon = projectAnonCache[dest];   // true / false / undefined (not yet known)
+            var anon = projectAnonCache[dest];   // true / false / null (the check failed) / undefined (not checked yet)
             var out;
             if (anon === true && script) {
                 out = chip('warn', '&#9888; double anonymization',
@@ -959,8 +963,15 @@ var XNAT = getObject(XNAT || {});
             } else if (anon === false) {
                 out = chip('warn', '&#9888; not anonymized',
                     dest + ' has no anonymization configured and no custom script is set - reimported sessions will not be anonymized.');
+            } else if (script) {
+                out = chip('good', '&#10003; custom script', 'Your custom script will run on each session.');
+            } else if (anon === null) {
+                // Unknown, so neither good nor bad: anonymization may or may not run.
+                out = chip('muted', '? anonymization not checked',
+                    'Could not check whether ' + dest + ' has an anonymization script.');
             } else {
-                out = script ? chip('good', '&#10003; custom script') : chip('good', '&#10003; destination anonymization');
+                // No destination yet, or its check is still running: nothing to report.
+                out = '';
             }
             // Anonymization (destination pipeline or custom script) is in effect, but preserving the source
             // XNAT labels re-introduces the original subject/session labels - which may carry identifiers and
@@ -1659,7 +1670,11 @@ var XNAT = getObject(XNAT || {});
             else if (destAnon === true) { anonText = 'Destination anonymization'; }
             else if (destAnon === false && script) { anonText = 'Custom script only'; }
             else if (destAnon === false) { anonText = '<span style="color:#c5221f;">None - sessions will not be anonymized</span>'; }
-            else { anonText = script ? 'Destination anonymization <strong>+ custom script</strong>' : 'Destination anonymization'; }
+            else {
+                // The check failed, or hasn't answered yet.
+                anonText = 'Not checked - couldn\'t check whether ' + dest + ' has an anonymization script' +
+                           (script ? '; custom script applied' : '');
+            }
             rows += dlgRow('Anonymization', anonText);
             if (script) { rows += dlgRow('Custom script', 'applied per session' + (isCsv ? ' (values from manifest)' : '')); }
             var preserve = [];
