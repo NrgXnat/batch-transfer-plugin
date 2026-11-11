@@ -245,26 +245,50 @@ var XNAT = getObject(XNAT || {});
     // -- Cohort mode (interactive tree | CSV manifest) --
     // Swaps the workspace between the interactive selection tree and the manifest dropzone; the
     // loaded-manifest state itself is rendered by renderCsvResults.
-    // Resolving a manifest needs a source project, which the search-results entry point does not have.
-    // Disable the mode up front rather than letting the user pick a file and only then be told.
+    // A manifest is for Reimport only, and resolving one needs a source project, which the search-results
+    // entry point does not have. The CSV mode is disabled up front in either case, rather than letting the
+    // user pick a file and only then be told. Leaving Reimport while a manifest is shown switches to the tree
+    // and keeps the manifest loaded; coming back to Reimport shows it again without resolving it again.
+    var csvParked = false;          // the CSV mode was showing when the operation left Reimport
+
     function configureCohortModes() {
-        if (csvSourceProject()) { return; }
-        $('.bt-cohort-mode[data-cohort="csv"]')
-            .prop('disabled', true)
-            .attr('title', 'Open Batch Transfer from a project to upload a manifest.');
+        var $csv = $('.bt-cohort-mode[data-cohort="csv"]');
+        if (!csvSourceProject()) {
+            $csv.prop('disabled', true).attr('title', 'Open Batch Transfer from a project to upload a manifest.');
+            return;
+        }
+        var reimport = selectedOp === 'Reimport';
+        $csv.prop('disabled', !reimport);
+        if (reimport) {
+            $csv.removeAttr('title');
+        } else {
+            $csv.attr('title', 'Manifests are for Reimport. Share and Clone use the selection tree.');
+        }
+        if (!reimport && cohortMode === 'csv') {
+            csvParked = true;
+            setCohortMode('tree');
+        } else if (reimport && csvParked) {
+            csvParked = false;
+            setCohortMode('csv');
+        }
+    }
+
+    function setCohortMode(mode) {
+        cohortMode = mode;
+        $('.bt-cohort-mode').removeClass('selected');
+        $('.bt-cohort-mode[data-cohort="' + mode + '"]').addClass('selected');
+        var tree = mode === 'tree';
+        $('#bt-cohort-tree').toggle(tree);
+        $('#bt-cohort-csv').toggle(!tree);
+        if (!tree) { refreshCsvRequiredHint(); }
+        updateSummary();
     }
 
     function bindCohortToggle() {
         $(document).on('click', '.bt-cohort-mode', function() {
             if (this.disabled) { return; }
-            cohortMode = $(this).data('cohort');
-            $('.bt-cohort-mode').removeClass('selected');
-            $(this).addClass('selected');
-            var tree = cohortMode === 'tree';
-            $('#bt-cohort-tree').toggle(tree);
-            $('#bt-cohort-csv').toggle(!tree);
-            if (!tree) { refreshCsvRequiredHint(); }
-            updateSummary();
+            csvParked = false;
+            setCohortMode($(this).data('cohort'));
         });
     }
 
@@ -430,10 +454,8 @@ var XNAT = getObject(XNAT || {});
         updateAnonBanner();
         updateOperationDetail();
 
-        // A manifest resolves differently per operation (what a subject row covers, which rows overlap), so
-        // it is resolved again rather than re-rendered.
-        if (manifestText != null && manifestRequestOp !== op) { resolveManifest(); }
-        if (cohortMode === 'csv') { refreshCsvRequiredHint(); }
+        // The CSV mode is offered for Reimport only.
+        configureCohortModes();
     }
 
     // Hide+disable rows not eligible for the chosen operation (excluded from counts/submission
@@ -869,7 +891,7 @@ var XNAT = getObject(XNAT || {});
         if (manifestError) { return 'manifest could not be resolved'; }
         if (!manifestResult) { return 'no file uploaded'; }
         if (!manifestResult.required_present) { return 'missing required columns'; }
-        return countText(manifestMatchedCount(), selectedOp === 'Reimport' ? 'session' : 'item') + ' from ' +
+        return countText(manifestMatchedCount(), 'session') + ' from ' +
                countText(manifestResult.total_rows || 0, 'row');
     }
 
@@ -890,8 +912,7 @@ var XNAT = getObject(XNAT || {});
 
     function actionCountInfo() {
         if (cohortMode === 'csv') {
-            return { count: manifestCurrent() ? manifestMatchedCount() : 0,
-                     noun: selectedOp === 'Reimport' ? 'sessions' : 'items' };
+            return { count: manifestCurrent() ? manifestMatchedCount() : 0, noun: 'sessions' };
         }
         if (selectedOp === 'Reimport') { return { count: lastTreeCount.sessions, noun: 'sessions' }; }
         return { count: lastTreeCount.selectedCount, noun: 'items' };
@@ -1002,17 +1023,13 @@ var XNAT = getObject(XNAT || {});
 
     // -- Cohort: CSV manifest mode --
     // The uploaded file's text is kept and posted, as a named file, to /validate/manifest. Submit sends the
-    // resolved entries to /xapi/transfer as items. The resolved cohort is shown grouped by
-    // subject: a header line per subject, then its sessions. A manifest resolves differently per operation (a
-    // subject row covers all of a subject's image sessions for Reimport, only the subject record for
-    // Share/Clone), so it is resolved again whenever the operation changes. file_count is computed lazily, per
-    // session, when a session is expanded.
+    // resolved entries to /xapi/transfer as items. A manifest is resolved for Reimport, so a subject row covers
+    // all of the subject's image sessions. The resolved cohort is shown grouped by subject: a header line per
+    // subject, then its sessions. file_count is computed lazily, per session, when a session is expanded.
 
     var manifestText = null;        // the uploaded file's text, or null when no manifest is loaded
     var manifestFileName = '';      // uploaded file name (status, confirmation, and the posted file's name)
     var manifestResult = null;      // last /validate/manifest response
-    var manifestResultOp = null;    // the operation manifestResult was resolved for
-    var manifestRequestOp = null;   // the operation of the newest /validate/manifest request
     var manifestPending = false;    // a /validate/manifest request is in flight
     var manifestError = null;       // why the last request failed, while the file is kept for a retry
     var manifestSeq = 0;            // request counter, so only the newest response is used
@@ -1092,23 +1109,18 @@ var XNAT = getObject(XNAT || {});
         });
     }
 
-    // The dropzone's column hint, including what a blank source_session_label means for the operation.
+    // The dropzone's column hint, including what a blank source_session_label means.
     function refreshCsvRequiredHint() {
-        var reimport = selectedOp === 'Reimport';
-        var routing = reimport
-            ? ' &middot; optional routing: <span class="bt-mono">destination_subject_label</span>, <span class="bt-mono">destination_session_label</span>'
-            : '';
-        var subjectRows = reimport
-            ? 'Leave <span class="bt-mono">source_session_label</span> blank to include all of a subject\'s image sessions.'
-            : 'A blank <span class="bt-mono">source_session_label</span> means the subject record only; give each session its own row.';
         $('#bt-csv-required').html('Required: <span class="bt-mono">source_subject_label</span>, ' +
-            '<span class="bt-mono">source_session_label</span>' + routing + '<br>' + subjectRows);
+            '<span class="bt-mono">source_session_label</span> &middot; optional routing: ' +
+            '<span class="bt-mono">destination_subject_label</span>, <span class="bt-mono">destination_session_label</span>' +
+            '<br>Leave <span class="bt-mono">source_session_label</span> blank to include all of a subject\'s image sessions.');
     }
 
     function resetManifest() {
         manifestSeq++;                 // a response still in flight no longer applies
         manifestText = null; manifestFileName = '';
-        manifestResult = null; manifestResultOp = null; manifestRequestOp = null;
+        manifestResult = null;
         manifestPending = false; manifestError = null; manifestGroupsCache = null;
         manifestExpanded = {}; manifestFileCounts = {}; manifestFileCountErr = {};
         manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
@@ -1137,19 +1149,17 @@ var XNAT = getObject(XNAT || {});
     }
 
     // The kept manifest text as a named file part, with the fields /validate/manifest takes.
-    function manifestFormData(op) {
+    function manifestFormData() {
         var fd = new FormData();
         fd.append('manifest', new Blob([manifestText], { type: 'text/csv' }), manifestFileName);
         fd.append('source_project', csvSourceProject());
-        fd.append('mode', op);
+        fd.append('mode', 'Reimport');
         return fd;
     }
 
     function resolveManifest() {
         if (manifestText == null) { return; }
-        var op = selectedOp;
         var seq = ++manifestSeq;
-        manifestRequestOp = op;
         manifestPending = true; manifestError = null;
         $('#bt-dropzone').hide();
         renderCsvResults();
@@ -1157,14 +1167,13 @@ var XNAT = getObject(XNAT || {});
         $.ajax({
             type: 'POST',
             url: XNAT.url.rootUrl('/xapi/transfer/validate/manifest'),
-            data: manifestFormData(op),
+            data: manifestFormData(),
             processData: false,
             contentType: false,
             success: function(data) {
                 if (seq !== manifestSeq) { return; }
                 manifestPending = false;
                 manifestResult = data;
-                manifestResultOp = op;
                 manifestGroupsCache = null;
                 manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
                 renderCsvResults();
@@ -1183,7 +1192,7 @@ var XNAT = getObject(XNAT || {});
                     return;
                 }
                 manifestPending = false;
-                manifestResult = null; manifestResultOp = null; manifestGroupsCache = null;
+                manifestResult = null; manifestGroupsCache = null;
                 manifestError = message;
                 renderCsvResults();
                 updateSummary();
@@ -1191,9 +1200,9 @@ var XNAT = getObject(XNAT || {});
         });
     }
 
-    // True when the loaded result was resolved for the current operation and no newer request is pending.
+    // True when a result is loaded and no newer request is pending.
     function manifestCurrent() {
-        return !!manifestResult && !manifestPending && manifestResultOp === selectedOp;
+        return !!manifestResult && !manifestPending;
     }
 
     function manifestMatchedCount() {
@@ -1292,25 +1301,14 @@ var XNAT = getObject(XNAT || {});
                 escapeHtml((r.missing_columns || []).join(', ')) + '.</div>');
             return;
         }
-        var reimport = selectedOp === 'Reimport';
-
-        var html = bar;
-        // Share/Clone use neither the routing nor the value columns, so the server doesn't check them.
-        if (!reimport && ((r.routing_columns || []).length || (r.value_columns || []).length)) {
-            html += '<div class="bt-anon-banner bt-anon-ok" style="margin:0 0 12px;"><span class="bt-anon-icon">&#8505;</span>' +
-                '<div>Routing and ${csv.*} value columns in this manifest are not used for ' + selectedOp +
-                ', so their values are not checked.</div></div>';
-        }
-        html += manifestSummaryHtml(reimport);
+        var html = bar + manifestSummaryHtml();
 
         // Fixed column set: where each session comes from and what it becomes. Value columns are not shown as
         // columns (a manifest can carry any number of them); a session's values appear in its compiled-script
         // preview, and a bad value reports itself on the row's own error line.
         var rowHead = '<th class="bt-csv-rown" title="The row in the file, numbered as a spreadsheet shows it (the header is row 1)">Row</th>';
-        var cols = reimport
-            ? '<th class="bt-csv-caret-col"></th>' + rowHead + '<th>Source</th>' +
-              '<th class="bt-route-head">Destination subject</th><th class="bt-route-head">Destination session</th><th>Files</th>'
-            : rowHead + '<th>Source</th><th>Status</th>';
+        var cols = '<th class="bt-csv-caret-col"></th>' + rowHead + '<th>Source</th>' +
+            '<th class="bt-route-head">Destination subject</th><th class="bt-route-head">Destination session</th><th>Files</th>';
 
         // Render the current page: MANIFEST_PAGE_SIZE subjects from manifestStart (or every subject on Show all).
         var groups = manifestGroups();
@@ -1318,7 +1316,7 @@ var XNAT = getObject(XNAT || {});
         var start = manifestShowAll ? 0 : Math.min(Math.max(0, manifestStart), total > 0 ? total - 1 : 0);
         manifestStart = start;
         var end = manifestShowAll ? total : Math.min(start + MANIFEST_PAGE_SIZE, total);
-        var body = groups.slice(start, end).map(function(g) { return renderGroup(g, reimport); }).join('');
+        var body = groups.slice(start, end).map(function(g) { return renderGroup(g); }).join('');
 
         // Horizontally-scrollable wrapper (not .bt-table-wrap, which clips): the manifest table can be wider
         // than the workspace, so it needs its own x-scroll.
@@ -1328,18 +1326,16 @@ var XNAT = getObject(XNAT || {});
         $('#bt-csv-results').html(html);
     }
 
-    // "16 sessions in 7 subjects from 12 rows" (Reimport) or "9 items from 9 rows", then the rows by problem.
-    function manifestSummaryHtml(reimport) {
+    // "16 sessions in 7 subjects from 12 rows", then the rows by problem.
+    function manifestSummaryHtml() {
         var matched = manifestMatchedCount();
         var rows = manifestResult.total_rows || 0;
-        var lead = '<strong>' + matched + '</strong> ' + plural(matched, reimport ? 'session' : 'item');
-        if (reimport) {
-            var subjects = manifestGroups().filter(function(g) {
-                return g.entries.some(function(e) { return e.status === 'matched'; });
-            }).length;
-            lead += ' in <strong>' + subjects + '</strong> ' + plural(subjects, 'subject');
-        }
-        lead += ' from <strong>' + rows + '</strong> ' + plural(rows, 'row');
+        var subjects = manifestGroups().filter(function(g) {
+            return g.entries.some(function(e) { return e.status === 'matched'; });
+        }).length;
+        var lead = '<strong>' + matched + '</strong> ' + plural(matched, 'session') +
+                   ' in <strong>' + subjects + '</strong> ' + plural(subjects, 'subject') +
+                   ' from <strong>' + rows + '</strong> ' + plural(rows, 'row');
         var parts = MANIFEST_PROBLEM_CODES.map(function(code) {
             var n = statusRows(code).length;
             return n ? '<span class="bt-csv-miss"><strong>' + n + '</strong> ' + code + '</span>' : '';
@@ -1352,84 +1348,75 @@ var XNAT = getObject(XNAT || {});
     }
 
     // One subject: a header line, then a line per manifest row with its row number. A subject's single
-    // subject row shows on the header instead, with the sessions it expanded to (Reimport) listed under it.
-    function renderGroup(g, reimport) {
+    // subject row shows on the header instead, with the sessions it expanded to listed under it.
+    function renderGroup(g) {
         var head = g.headEntries[0] || null;
         var headMatched = !!head && head.status === 'matched';
         var listed = g.lines.filter(function(e) { return !e.subject_row && e.status === 'matched'; }).length;
-        var scope = '', scopeTitle = '';
-        if (headMatched && reimport) {
+        var scope = '';
+        if (headMatched) {
             scope = 'subject row &middot; ' + countText(g.headEntries.length, 'session');
-        } else if (headMatched) {
-            scope = listed ? 'subject record + ' + countText(listed, 'session') : 'subject record only';
-            scopeTitle = 'A subject row transfers the subject itself, not its sessions. Give each session its own row to include it.';
         } else if (!head && listed) {
             scope = countText(listed, 'session');
         }
         var problem = (head && !headMatched) ? head.status : null;
         var headErr = !!head && (head.value_errors || []).length > 0;
         var h = '<tr class="bt-csv-subj' + (problem ? ' bt-csv-missrow' : headErr ? ' bt-csv-rowerr' : '') + '">' +
-                (reimport ? '<td></td>' : '') +
+                '<td></td>' +
                 '<td class="bt-csv-rown">' + (head ? head.row_number : '') + '</td>' +
                 '<td><span class="bt-mono bt-csv-subjlabel">' + (g.label ? escapeHtml(g.label) : '(blank)') + '</span>' +
-                (scope ? '<span class="bt-csv-scope"' + (scopeTitle ? ' title="' + escapeHtml(scopeTitle) + '"' : '') + '>' + scope + '</span>' : '') +
-                '</td>' + statusCells(problem, reimport) + '</tr>';
-        if (head) { h += noteRow(head, reimport); }
-        if (headMatched && reimport) {
-            g.headEntries.forEach(function(e) { h += sessionLine(e, reimport, false); });
+                (scope ? '<span class="bt-csv-scope">' + scope + '</span>' : '') +
+                '</td>' + statusCells(problem) + '</tr>';
+        if (head) { h += noteRow(head); }
+        if (headMatched) {
+            g.headEntries.forEach(function(e) { h += sessionLine(e, false); });
         }
         g.lines.forEach(function(e) {
-            h += (e.status === 'matched') ? sessionLine(e, reimport, true) : problemLine(e, reimport);
-            h += noteRow(e, reimport);
+            h += (e.status === 'matched') ? sessionLine(e, true) : problemLine(e);
+            h += noteRow(e);
         });
         return h;
     }
 
-    // The cells after Source: Reimport's two destination columns and Files, or Share/Clone's Status column.
-    // A problem shows its status code across them.
-    function statusCells(status, reimport) {
-        var span = reimport ? ' colspan="3"' : '';
-        if (!status) { return '<td' + span + '></td>'; }
-        return '<td' + span + ' class="bt-csv-reason"><span class="bt-csv-x">&#10007;</span> <strong>' +
+    // The cells after Source: the two destination columns and Files. A problem shows its status code across them.
+    function statusCells(status) {
+        if (!status) { return '<td colspan="3"></td>'; }
+        return '<td colspan="3" class="bt-csv-reason"><span class="bt-csv-x">&#10007;</span> <strong>' +
                escapeHtml(status) + '</strong></td>';
     }
 
-    // A matched session (or, for Share/Clone, any matched session row). showRow is false for the sessions a
-    // subject row expanded to, whose row number is on the subject's header line.
-    function sessionLine(e, reimport, showRow) {
+    // A matched session. showRow is false for the sessions a subject row expanded to, whose row number is on
+    // the subject's header line.
+    function sessionLine(e, showRow) {
         var id = e.resolved_id || '';
         var hasErr = showRow && (e.value_errors || []).length > 0;
-        var h = '<tr class="bt-csv-row' + (hasErr ? ' bt-csv-rowerr' : '') + '">';
-        if (reimport) {
-            h += '<td><span class="bt-csv-caret" data-id="' + escapeHtml(id) + '">' +
-                 (manifestExpanded[id] ? '&#9662;' : '&#9656;') + '</span></td>';
-        }
-        h += '<td class="bt-csv-rown">' + (showRow ? e.row_number : '') + '</td>' +
-             '<td class="bt-mono bt-csv-src">' + escapeHtml(e.source_session_label) + '</td>';
-        h += reimport
-            ? destinationCell(e, 'subject') + destinationCell(e, 'session') + '<td>' + filesCell(id) + '</td>'
-            : '<td></td>';
-        h += '</tr>';
-        if (reimport && manifestExpanded[id]) { h += detailRow(e); }
+        var h = '<tr class="bt-csv-row' + (hasErr ? ' bt-csv-rowerr' : '') + '">' +
+                '<td><span class="bt-csv-caret" data-id="' + escapeHtml(id) + '">' +
+                (manifestExpanded[id] ? '&#9662;' : '&#9656;') + '</span></td>' +
+                '<td class="bt-csv-rown">' + (showRow ? e.row_number : '') + '</td>' +
+                '<td class="bt-mono bt-csv-src">' + escapeHtml(e.source_session_label) + '</td>' +
+                destinationCell(e, 'subject') + destinationCell(e, 'session') + '<td>' + filesCell(id) + '</td>' +
+                '</tr>';
+        if (manifestExpanded[id]) { h += detailRow(e); }
         return h;
     }
 
     // A row that won't be transferred: its session label (or what its subject row covers) and its status code.
-    function problemLine(e, reimport) {
+    function problemLine(e) {
         var what = e.source_session_label
             ? escapeHtml(e.source_session_label)
-            : (e.subject_row ? '<span class="bt-muted">' + (reimport ? 'all sessions' : 'subject record') + '</span>' : '');
-        return '<tr class="bt-csv-missrow">' + (reimport ? '<td></td>' : '') +
+            : (e.subject_row ? '<span class="bt-muted">all sessions</span>' : '');
+        return '<tr class="bt-csv-missrow"><td></td>' +
                '<td class="bt-csv-rown">' + e.row_number + '</td>' +
-               '<td class="bt-mono bt-csv-src">' + what + '</td>' + statusCells(e.status, reimport) + '</tr>';
+               '<td class="bt-mono bt-csv-src">' + what + '</td>' + statusCells(e.status) + '</tr>';
     }
 
     // A row's value errors (or, when it has none, its warnings), shown once under the row's line.
-    function noteRow(e, reimport) {
+    function noteRow(e) {
         var errors = e.value_errors || [], warnings = e.value_warnings || [];
         if (!errors.length && !warnings.length) { return ''; }
         return '<tr class="bt-csv-noterow ' + (errors.length ? 'bt-csv-errrow' : 'bt-csv-warnrow') + '">' +
-               '<td colspan="' + (reimport ? 2 : 1) + '"></td><td colspan="' + (reimport ? 4 : 2) + '">' +
+               '<td colspan="2"></td><td colspan="4">' +
                escapeHtml((errors.length ? errors : warnings).join('; ')) + '</td></tr>';
     }
 
@@ -1481,7 +1468,7 @@ var XNAT = getObject(XNAT || {});
     function toggleManifestEntry(id) {
         if (!id) { return; }
         manifestExpanded[id] = !manifestExpanded[id];
-        if (manifestExpanded[id] && selectedOp === 'Reimport' && manifestFileCounts[id] == null) {
+        if (manifestExpanded[id] && manifestFileCounts[id] == null) {
             delete manifestFileCountErr[id];   // re-expanding retries a count that failed
             fetchFileCount(id);
         }
@@ -1499,7 +1486,7 @@ var XNAT = getObject(XNAT || {});
             type: 'POST',
             url: XNAT.url.rootUrl('/xapi/transfer/validate/manifest'),
             contentType: 'application/json',
-            data: JSON.stringify({ source_project: csvSourceProject(), mode: selectedOp, file_count: true, manifest_csv: csv }),
+            data: JSON.stringify({ source_project: csvSourceProject(), mode: 'Reimport', file_count: true, manifest_csv: csv }),
             success: function(data) {
                 var rows = (data && data.rows) || [];
                 if (rows.length && rows[0].file_count != null) {
@@ -1570,22 +1557,24 @@ var XNAT = getObject(XNAT || {});
         return items;
     }
 
-    // One item per matched manifest entry, which is one per session once subject rows are expanded.
+    // One Reimport item per matched manifest entry, which is one per session once subject rows are expanded.
     function buildCsvItems() {
         if (!manifestResult) return [];
-        var preserveSubjectLabel = (selectedOp === 'Reimport') && $('#bt-preserve-subject-label').is(':checked');
-        var preserveSessionLabel = (selectedOp === 'Reimport') && $('#bt-preserve-session-label').is(':checked');
+        var preserveSubjectLabel = $('#bt-preserve-subject-label').is(':checked');
+        var preserveSessionLabel = $('#bt-preserve-session-label').is(':checked');
         var items = [];
         (manifestResult.rows || []).forEach(function(row) {
             if (row.status !== 'matched' || !row.resolved_id) return;
-            var item = { id: row.resolved_id, mode: selectedOp, destination_project: selectedProject };
-            if (selectedOp === 'Reimport') {
-                item.preserve_subject_label = preserveSubjectLabel;
-                item.preserve_session_label = preserveSessionLabel;
-                if (row.csv_values) { item.csv_values = row.csv_values; }
-                if (row.destination_subject_label) { item.destination_subject_label = row.destination_subject_label; }
-                if (row.destination_session_label) { item.destination_session_label = row.destination_session_label; }
-            }
+            var item = {
+                id: row.resolved_id,
+                mode: 'Reimport',
+                destination_project: selectedProject,
+                preserve_subject_label: preserveSubjectLabel,
+                preserve_session_label: preserveSessionLabel
+            };
+            if (row.csv_values) { item.csv_values = row.csv_values; }
+            if (row.destination_subject_label) { item.destination_subject_label = row.destination_subject_label; }
+            if (row.destination_session_label) { item.destination_session_label = row.destination_session_label; }
             items.push(item);
         });
         return items;
