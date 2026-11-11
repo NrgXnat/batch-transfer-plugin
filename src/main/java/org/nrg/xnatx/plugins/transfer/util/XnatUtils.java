@@ -27,7 +27,10 @@ import org.nrg.xft.utils.SaveItemHelper;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnat.utils.WorkflowUtils;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 import static org.nrg.xft.event.XftItemEventI.DELETE;
@@ -184,13 +187,22 @@ public class XnatUtils {
     }
 
     /**
-     * The message of {@code t}'s root cause, for surfacing the real failure reason to the user rather than
-     * a generic wrapper message. Falls back to the root's simple class name when its message is blank.
+     * The deepest non-blank message in {@code t}'s cause chain, for surfacing the real failure reason to the user
+     * rather than a generic wrapper message. Some XNAT failures end in a cause with no message (an archive conflict
+     * ends in {@code java.lang.Exception: null} below "Session already exists with matching files."), so the root
+     * alone isn't enough. Falls back to the root's simple class name when no cause has a message. Cycle-safe.
      */
     public static String rootCauseMessage(final Throwable t) {
-        final Throwable root = rootCause(t);
-        final String message = root.getMessage();
-        return (message != null && !message.trim().isEmpty()) ? message : root.getClass().getSimpleName();
+        final Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        String message = null;
+        Throwable deepest = t;
+        for (Throwable cause = t; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause.getMessage() != null && !cause.getMessage().trim().isEmpty()) {
+                message = cause.getMessage();
+            }
+            deepest = cause;
+        }
+        return message != null ? message : deepest.getClass().getSimpleName();
     }
 
     /**
