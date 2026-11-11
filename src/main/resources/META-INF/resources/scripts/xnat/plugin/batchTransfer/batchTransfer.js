@@ -239,10 +239,10 @@ var XNAT = getObject(XNAT || {});
     // -- Cohort mode (interactive tree | CSV manifest) --
     // Swaps the workspace between the interactive selection tree and the manifest dropzone; the
     // loaded-manifest state itself is rendered by renderCsvResults.
-    // A manifest is for Reimport only, and resolving one needs a source project, which the search-results
-    // entry point does not have. The CSV mode is disabled up front in either case, rather than letting the
-    // user pick a file and only then be told. Leaving Reimport while a manifest is shown switches to the tree
-    // and keeps the manifest loaded; coming back to Reimport shows it again without resolving it again.
+    // A manifest is for Reimport only, and resolving one needs a single source project, which search results
+    // spanning several projects don't have. The CSV mode is disabled up front in either case, rather than
+    // letting the user pick a file and only then be told. Leaving Reimport while a manifest is shown switches to
+    // the tree and keeps the manifest loaded; coming back to Reimport shows it again without resolving it again.
     var csvParked = false;          // the CSV mode was showing when the operation left Reimport
 
     function configureCohortModes() {
@@ -276,7 +276,7 @@ var XNAT = getObject(XNAT || {});
         $('#bt-cohort-csv').toggle(!tree);
         if (!tree) { refreshCsvRequiredHint(); }
         // The columns placeholders can bind to depend on the mode, so the verdict has to be redone.
-        if (anonMode === 'script') { validateAnonScript(false); }
+        revalidateScript();
         updateSummary();
     }
 
@@ -333,12 +333,18 @@ var XNAT = getObject(XNAT || {});
         $(document).on('click', '#bt-anon-validate', function() { validateAnonScript(true); });
         var t = null;
         $(document).on('input', '#bt-anon-script', function() {
+            showScriptFileError(null);
             if (scriptFile && !scriptFile.edited) {
                 scriptFile.edited = true;
                 renderScriptSource();
             }
             clearTimeout(t);
-            t = setTimeout(function() { validateAnonScript(false); updateAnonBanner(); updateSummary(); }, 400);
+            t = setTimeout(function() {
+                validateAnonScript(false);
+                if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }   // the per-row compiled scripts
+                updateAnonBanner();
+                updateSummary();
+            }, 400);
         });
         // Preserve-source-labels toggles drive the "preserved labels not anonymized" action-bar chip and
         // the final destination labels in the manifest table, so re-render both whenever they change.
@@ -350,13 +356,15 @@ var XNAT = getObject(XNAT || {});
 
     // -- Loading a script from a file --
     // Upload file, or a file dropped anywhere on the script panel, replaces the editor's text, and Undo puts the
-    // previous text back. Any name or extension is accepted. The size is checked against the admin's limit
-    // (max_anon_script_bytes) before the file is read, so an oversized file is never loaded; before the
-    // capabilities load there is no limit to check, and the server checks again at validate and submit. A refused
-    // file leaves the editor unchanged. Typed or pasted text isn't checked against the limit here.
+    // previous text back, one load at a time. Any name or extension is accepted. The size is checked against the
+    // admin's limit (max_anon_script_bytes) before the file is read, so an oversized file is never loaded; until the
+    // capabilities say what that limit is, a fixed ceiling keeps a huge file from being read, and the server checks
+    // again at validate and submit. A refused file leaves the editor unchanged. Typed or pasted text isn't checked
+    // against the limit here.
 
+    var SCRIPT_FILE_CEILING = 16 * 1024 * 1024;   // while the admin's limit is unknown
     var scriptFile = null;          // { name, size, edited } of the file whose text is in the editor
-    var scriptBeforeFile = null;    // the editor's text before that file replaced it, for Undo
+    var scriptUndo = [];            // { text, file } as they were before each load, newest last
     var scriptLoadSeq = 0;          // counts load attempts, so a slow read can't land after a newer attempt
 
     function maxScriptBytes() {
@@ -416,8 +424,16 @@ var XNAT = getObject(XNAT || {});
         var unchanged = ' The editor was not changed.';
         var limit = maxScriptBytes();
         if (limit && file.size > limit) {
-            showScriptFileError(name + ' is ' + formatBytes(file.size) + ', over the ' + formatBytes(limit) +
+            // Sizes that round to the same figure are given in bytes, so the message doesn't contradict itself.
+            var size = formatBytes(file.size), max = formatBytes(limit);
+            if (size === max) { size = file.size + ' bytes'; max = limit + '-byte'; }
+            showScriptFileError(name + ' is ' + size + ', over the ' + max +
                 ' limit for anonymization scripts set by your site administrator.' + unchanged);
+            return;
+        }
+        if (!limit && file.size > SCRIPT_FILE_CEILING) {
+            showScriptFileError(name + ' is ' + formatBytes(file.size) + ', too large for an anonymization script.' +
+                unchanged);
             return;
         }
         if (file.size === 0) {
@@ -434,7 +450,7 @@ var XNAT = getObject(XNAT || {});
                 return;
             }
             var $editor = $('#bt-anon-script');
-            scriptBeforeFile = $editor.val() || '';
+            scriptUndo.push({ text: $editor.val() || '', file: scriptFile });
             scriptFile = { name: file.name, size: file.size, edited: false };
             $editor.val(text);
             scriptTextChanged();
@@ -445,12 +461,13 @@ var XNAT = getObject(XNAT || {});
         reader.readAsText(file);
     }
 
+    // Puts back the text, and the loaded file it came from, as they were before the latest load.
     function undoScriptFile() {
-        if (scriptBeforeFile === null) { return; }
+        if (!scriptUndo.length) { return; }
         scriptLoadSeq++;
-        $('#bt-anon-script').val(scriptBeforeFile);
-        scriptBeforeFile = null;
-        scriptFile = null;
+        var before = scriptUndo.pop();
+        $('#bt-anon-script').val(before.text);
+        scriptFile = before.file;
         scriptTextChanged();
     }
 
@@ -485,11 +502,16 @@ var XNAT = getObject(XNAT || {});
         $('#bt-script-err').html(html ? '<span>&#9888;</span><div>' + html + '</div>' : '').prop('hidden', !html);
     }
 
+    // One decimal below 10, whole numbers above; a value that rounds to 1024 moves up a unit.
     function formatBytes(n) {
         if (n < 1024) { return n + ' bytes'; }
-        var kb = n / 1024;
-        if (kb < 1024) { return parseFloat(kb < 10 ? kb.toFixed(1) : Math.round(kb)) + ' KB'; }
-        return parseFloat((kb / 1024).toFixed(1)) + ' MB';
+        var units = ['KB', 'MB', 'GB'], v = n / 1024, i = 0;
+        while (i < units.length - 1 && roundSize(v) >= 1024) { v /= 1024; i++; }
+        return roundSize(v) + ' ' + units[i];
+    }
+
+    function roundSize(v) {
+        return v < 10 ? parseFloat(v.toFixed(1)) : Math.round(v);
     }
 
     // The ${csv.*}-bindable columns for /validate/script: value + routing columns from the manifest
@@ -503,9 +525,19 @@ var XNAT = getObject(XNAT || {});
         return null;
     }
 
+    // Re-checks the script when what its placeholders can bind to has changed. Only Reimport runs a script.
+    function revalidateScript() {
+        if (anonMode === 'script' && selectedOp === 'Reimport') { validateAnonScript(false); }
+    }
+
     function validateAnonScript(showLoading) {
         var script = $('#bt-anon-script').val() || '';
-        if (script.trim().length === 0) { $('#bt-anon-verdict').empty(); anonVerdictValid = null; return; }
+        if (script.trim().length === 0) {
+            anonValidateSeq++;   // a request still in flight no longer applies
+            $('#bt-anon-verdict').empty();
+            anonVerdictValid = null;
+            return;
+        }
         var body = { anon_script: script };
         var cols = anonManifestColumns();
         if (cols) { body.manifest_columns = cols; }
@@ -1248,7 +1280,7 @@ var XNAT = getObject(XNAT || {});
             var dt = e.originalEvent.dataTransfer;
             if (dt && dt.files && dt.files[0]) { uploadManifest(dt.files[0]); }
         });
-        $(document).on('click', '#bt-csv-replace', function() { resetManifest(); });
+        $(document).on('click', '#bt-csv-replace', function() { resetManifest(); revalidateScript(); });
         $(document).on('click', '#bt-csv-retry', function() { resolveManifest(); });
         $(document).on('click', '.bt-csv-caret, .bt-files-lazy', function() {
             toggleManifestEntry($(this).attr('data-id'));
@@ -1289,13 +1321,12 @@ var XNAT = getObject(XNAT || {});
         $('#bt-csv-file').val('');
         $('#bt-csv-results').empty();
         $('#bt-dropzone').show();
-        if (anonMode === 'script') { validateAnonScript(false); }
         updateSummary();
     }
 
     function uploadManifest(file) {
         if (!csvSourceProject()) {
-            xmodal.message('Batch Transfer', 'A source project is required to resolve a manifest. Open Batch Transfer from a project.');
+            xmodal.message('Batch Transfer', 'Manifest CSV upload is not supported for multiple source projects.');
             return;
         }
         var reader = new FileReader();
@@ -1340,8 +1371,7 @@ var XNAT = getObject(XNAT || {});
                 manifestGroupsCache = null;
                 manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
                 renderCsvResults();
-                // Re-check binding against the manifest's columns if a custom script is in play.
-                if (anonMode === 'script') { validateAnonScript(false); }
+                revalidateScript();   // binding, against the manifest's columns
                 updateSummary();
             },
             error: function(xhr) {
@@ -1352,12 +1382,14 @@ var XNAT = getObject(XNAT || {});
                 if (xhr.status >= 400 && xhr.status < 500) {
                     resetManifest();
                     $('#bt-csv-results').html('<div class="bt-csv-error">Could not resolve the manifest: ' + escapeHtml(message) + '</div>');
+                    revalidateScript();
                     return;
                 }
                 manifestPending = false;
                 manifestResult = null; manifestGroupsCache = null;
                 manifestError = message;
                 renderCsvResults();
+                revalidateScript();
                 updateSummary();
             }
         });
