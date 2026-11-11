@@ -15,8 +15,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests the terminal-event decision in {@link BatchTransferMonitor} against a mocked service; the
- * service's atomic increment/locking needs a real Postgres and is out of scope here.
+ * Tests the terminal-event decision in {@link BatchTransferMonitor} against a mocked service. The service's
+ * atomic increment and locking are tested against PostgreSQL in {@code BatchTransferProgressServiceDbTest}.
  */
 public class BatchTransferMonitorTest {
 

@@ -41,10 +41,13 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 Build and test with JDK 21 (Gradle wrapper 9.4.1). The plugin targets XNAT 1.10.2.1; for XNAT 1.9, use a 1.x release.
 
 ```bash
-./gradlew build    # compile + tests + plugin jar
+./gradlew build    # compile + unit tests + plugin jar
 ./gradlew jar      # plugin jar only
-./gradlew test     # tests only
+./gradlew test     # unit tests only
+./gradlew dbTest   # database tests against PostgreSQL; needs Docker
 ```
+
+`build` and `test` don't run the database tests, so they need no Docker. CI runs `dbTest` on every build.
 
 Output: `build/libs/batch-transfer-<version>.jar`. Its dependencies, including `commons-csv` for manifests, come from XNAT at runtime.
 
