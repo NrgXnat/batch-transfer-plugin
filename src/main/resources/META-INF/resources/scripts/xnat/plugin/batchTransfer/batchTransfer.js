@@ -967,7 +967,7 @@ var XNAT = getObject(XNAT || {});
             var reasons = [];
             var duplicates = statusRows('duplicate_session');
             if (duplicates.length) { reasons.push('duplicate_session in ' + rowList(duplicates)); }
-            // /manifest rejects a matched row with a value error, so it blocks here too.
+            // A matched row with a value error is not transferable as written.
             var errors = valueErrorRows();
             if (errors.length) { reasons.push('value errors in ' + rowList(errors)); }
             if (anonBlocks()) { reasons.push('fix the anonymization script'); }
@@ -1001,8 +1001,8 @@ var XNAT = getObject(XNAT || {});
     }
 
     // -- Cohort: CSV manifest mode --
-    // The uploaded file's text is kept and posted, as a named file, to /validate/manifest and later to
-    // /manifest, so the preview and the submit see the same bytes. The resolved cohort is shown grouped by
+    // The uploaded file's text is kept and posted, as a named file, to /validate/manifest. Submit sends the
+    // resolved entries to /xapi/transfer as items. The resolved cohort is shown grouped by
     // subject: a header line per subject, then its sessions. A manifest resolves differently per operation (a
     // subject row covers all of a subject's image sessions for Reimport, only the subject record for
     // Share/Clone), so it is resolved again whenever the operation changes. file_count is computed lazily, per
@@ -1136,7 +1136,7 @@ var XNAT = getObject(XNAT || {});
         reader.readAsText(file);
     }
 
-    // The kept manifest text as a named file part, with the fields /validate/manifest and /manifest share.
+    // The kept manifest text as a named file part, with the fields /validate/manifest takes.
     function manifestFormData(op) {
         var fd = new FormData();
         fd.append('manifest', new Blob([manifestText], { type: 'text/csv' }), manifestFileName);
@@ -1570,6 +1570,27 @@ var XNAT = getObject(XNAT || {});
         return items;
     }
 
+    // One item per matched manifest entry, which is one per session once subject rows are expanded.
+    function buildCsvItems() {
+        if (!manifestResult) return [];
+        var preserveSubjectLabel = (selectedOp === 'Reimport') && $('#bt-preserve-subject-label').is(':checked');
+        var preserveSessionLabel = (selectedOp === 'Reimport') && $('#bt-preserve-session-label').is(':checked');
+        var items = [];
+        (manifestResult.rows || []).forEach(function(row) {
+            if (row.status !== 'matched' || !row.resolved_id) return;
+            var item = { id: row.resolved_id, mode: selectedOp, destination_project: selectedProject };
+            if (selectedOp === 'Reimport') {
+                item.preserve_subject_label = preserveSubjectLabel;
+                item.preserve_session_label = preserveSessionLabel;
+                if (row.csv_values) { item.csv_values = row.csv_values; }
+                if (row.destination_subject_label) { item.destination_subject_label = row.destination_subject_label; }
+                if (row.destination_session_label) { item.destination_session_label = row.destination_session_label; }
+            }
+            items.push(item);
+        });
+        return items;
+    }
+
     // Inline-styled confirmation body. xModalConfirm ignores width props and plugin CSS may not load
     // inside the modal, so the wrapper sets min-width inline and every element is inline-styled. It
     // restates the irreversible facts (cohort + exclusions, operation, anonymization, labels) with a
@@ -1642,8 +1663,8 @@ var XNAT = getObject(XNAT || {});
         }
 
         var csv = cohortMode === 'csv';
-        var items = csv ? null : buildTreeItems();
-        var count = csv ? actionCountInfo().count : items.length;
+        var items = csv ? buildCsvItems() : buildTreeItems();
+        var count = items.length;
         if (count === 0) {
             xmodal.message('Batch Transfer', csv ? 'No matched sessions to transfer.' : 'Please select at least one item');
             return false;
@@ -1663,17 +1684,18 @@ var XNAT = getObject(XNAT || {});
                 if (submitInFlight) return;
                 submitInFlight = true;
                 $('#bt-submit-btn').prop('disabled', true);
-                if (csv) { postManifest(count); } else { postTreeItems(items); }
+                postItems(items);
             }
         });
     };
 
-    function postTreeItems(items) {
+    function postItems(items) {
         var batchTransfer = {
             requests: items,
             tracking_id: 'batch_transfer_' + Date.now()
         };
-        // Batch-level Anon-Script (Reimport + custom script); omitted entirely when no custom script is set.
+        // Batch-level Anon-Script template (Reimport + custom script); per-item ${csv.*} values ride each
+        // request's csv_values. Omitted entirely when no custom script is set.
         var anonScript = anonScriptForSubmit();
         if (anonScript) {
             batchTransfer.anon_script = anonScript;
@@ -1689,44 +1711,6 @@ var XNAT = getObject(XNAT || {});
                 XNAT.app.activityTab.start(
                     'Batch Transfer (' + batchTransfer.requests.length + ' items)',
                     batchTransfer.tracking_id,
-                    'XNAT.plugin.batchtransfer.updateBatchTransferProgress'
-                );
-            },
-            error: function(xhr) {
-                xmodal.message('Error', 'The transfer was not submitted: ' + escapeHtml(responseMessage(xhr)));
-            },
-            complete: submitDone
-        });
-    }
-
-    // A manifest run is submitted as the file itself, so the server resolves it again for the operation being
-    // submitted and receives the file's name.
-    function postManifest(count) {
-        var trackingId = 'batch_transfer_' + Date.now();
-        var fd = manifestFormData(selectedOp);
-        fd.append('destination_project', selectedProject);
-        fd.append('tracking_id', trackingId);
-        if (selectedOp === 'Reimport') {
-            fd.append('preserve_subject_label', String($('#bt-preserve-subject-label').is(':checked')));
-            fd.append('preserve_session_label', String($('#bt-preserve-session-label').is(':checked')));
-        }
-        var anonScript = anonScriptForSubmit();
-        if (anonScript) {
-            fd.append('anon_script', anonScript);
-            fd.append('anon_replace_pipeline', 'false');
-        }
-        $.ajax({
-            type: 'POST',
-            url: XNAT.url.rootUrl('/xapi/transfer/manifest'),
-            data: fd,
-            processData: false,
-            contentType: false,
-            success: function(data) {
-                var submitted = (data && data.item_count != null) ? data.item_count : count;
-                XNAT.ui.banner.top(3000, 'Transfer request submitted.', 'success');
-                XNAT.app.activityTab.start(
-                    'Batch Transfer (' + submitted + ' items)',
-                    (data && data.tracking_id) || trackingId,
                     'XNAT.plugin.batchtransfer.updateBatchTransferProgress'
                 );
             },

@@ -3,20 +3,15 @@ package org.nrg.xnatx.plugins.transfer.api;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.ArgumentCaptor;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
-import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
-import org.nrg.xnatx.plugins.transfer.model.ManifestSubmitRequest;
-import org.nrg.xnatx.plugins.transfer.model.ManifestSubmitResult;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.ScriptValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ScriptValidationResult;
 import org.nrg.xnatx.plugins.transfer.model.TransferMode;
-import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
 import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
 import org.nrg.xnatx.plugins.transfer.service.ManifestService;
 import org.nrg.xnatx.plugins.transfer.service.ManifestValidationException;
@@ -39,8 +34,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -53,9 +46,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for the manifest endpoints on {@link BatchTransferApi} — the HTTP wiring the service-layer tests
+ * Unit tests for {@link BatchTransferApi} — the HTTP wiring the service-layer tests
  * ({@code ManifestServiceTest}/{@code PreflightResolverTest}) don't reach: source-project read gate, parse
- * error → status mapping, mode parsing, and the one-shot request-building + skip-not-found. The
+ * error → status mapping and mode parsing on {@code validate/manifest}, and script validation. The
  * {@code ManifestService}/{@code PreflightResolver}/{@code BatchTransferService} collaborators are mocked, so
  * these assert routing/orchestration, not parsing or resolution.
  *
@@ -239,232 +232,6 @@ public class BatchTransferApiTest {
         verify(scriptCompiler).validate(req.getAnonScript(), req.getManifestColumns());
     }
 
-    // ---- manifest (one-shot submit) ------------------------------------------------------------------
-
-    @Test
-    public void submitManifest_missingDestinationProject_returns400() {
-        final ManifestSubmitRequest req = new ManifestSubmitRequest();
-        req.setSourceProject(SRC);            // no destination
-        final ResponseEntity<?> resp = api.submitManifest(req);
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-    }
-
-    @Test
-    public void submitManifest_missingRequiredColumns_returns400() throws Exception {
-        final ManifestValidationResult result = result(false);
-        result.setMissingColumns(Arrays.asList("source_session_label"));
-        when(manifestService.parse(any(), any(), any())).thenReturn(result);
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_noMatchedRows_returns400() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                notFoundRow("S9", "SESS9", ManifestRow.STATUS_SESSION_NOT_FOUND)));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_happyPath_submitsMatchedRowsAndSkipsNotFound() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
-                matchedRow("S2", "SESS2", "E2", csv("pid", "ANON-2")),
-                notFoundRow("S9", "SESS9", ManifestRow.STATUS_SUBJECT_NOT_FOUND)));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk_1"));
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final List<TransferRequest> requests = batch.getValue().getRequests();
-        assertEquals(2, requests.size());
-        assertEquals("E1", requests.get(0).getId());
-        assertEquals(DEST, requests.get(0).getDestinationProject());
-        assertEquals(TransferMode.REIMPORT, requests.get(0).getMode());
-        assertEquals("ANON-1", requests.get(0).getCsvValues().get("pid"));
-
-        final ManifestSubmitResult body = (ManifestSubmitResult) resp.getBody();
-        assertEquals("trk_1", body.getTrackingId());
-        assertEquals(2, body.getItemCount());
-        assertEquals(1, body.getSkippedNotFound());
-    }
-
-    @Test
-    public void submitManifest_anonScriptOnUnsupportedBuild_returns409() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"))));
-        when(capabilities.isPerImportAnonSupported()).thenReturn(false);
-
-        final ResponseEntity<?> resp = api.submitManifest(
-                submitRequest(SRC, DEST, "version \"6.1\"\n(0010,0010) := \"X\"", "trk"));
-
-        assertEquals(HttpStatus.CONFLICT, resp.getStatusCode());
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_routingLabels_threadedToRequests() throws Exception {
-        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
-        row.setDestinationSubjectLabel("ANON-042");
-        row.setDestinationSessionLabel("STUDY2_042");
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.OK, resp.getStatusCode());
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final TransferRequest req = batch.getValue().getRequests().get(0);
-        assertEquals("ANON-042", req.getDestinationSubjectLabel());
-        assertEquals("STUDY2_042", req.getDestinationSessionLabel());
-    }
-
-    @Test
-    public void submitManifest_matchedRowWithValueError_returns400() throws Exception {
-        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
-        row.setRowNumber(5);
-        row.getValueErrors().add("destination_subject_label is not a valid XNAT label");
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        assertTrue("names the row as a spreadsheet numbers it", ((String) resp.getBody()).contains("row 5: "));
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_noDataRows_returns400() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        assertEquals("The manifest has no data rows.", resp.getBody());
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_duplicateSession_returns400() throws Exception {
-        final ManifestRow subject = notFoundRow("S1", "", ManifestRow.STATUS_DUPLICATE_SESSION);
-        subject.setIndex(1);
-        subject.setRowNumber(2);
-        final ManifestRow session = notFoundRow("S1", "SESS1", ManifestRow.STATUS_DUPLICATE_SESSION);
-        session.setIndex(2);
-        session.setRowNumber(3);
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, subject, session,
-                matchedRow("S2", "SESS2", "E2", csv("pid", "ANON-2"))));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        assertTrue(((String) resp.getBody()).contains("rows 2, 3"));
-        verify(service, never()).submitTransferRequest(any(), any());
-    }
-
-    @Test
-    public void submitManifest_preserveSettings_threadedToReimportRequests() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"))));
-        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
-        req.setPreserveSubjectLabel(true);
-        req.setPreserveSessionLabel(false);
-
-        api.submitManifest(req);
-
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final TransferRequest request = batch.getValue().getRequests().get(0);
-        assertEquals(Boolean.TRUE, request.getPreserveSubjectLabel());
-        assertEquals(Boolean.FALSE, request.getPreserveSessionLabel());
-    }
-
-    @Test
-    public void submitManifest_preserveSettings_notAppliedToShare() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "", "SUBJ1", Collections.<String, String>emptyMap())));
-        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
-        req.setMode(TransferMode.SHARE);
-        req.setPreserveSubjectLabel(true);
-
-        api.submitManifest(req);
-
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final TransferRequest request = batch.getValue().getRequests().get(0);
-        assertEquals("SUBJ1", request.getId());
-        assertEquals(TransferMode.SHARE, request.getMode());
-        assertNull(request.getPreserveSubjectLabel());
-    }
-
-    @Test
-    public void submitManifest_valuesAndRoutingLabels_notAppliedToShare() throws Exception {
-        final ManifestRow row = matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1"));
-        row.setDestinationSubjectLabel("ANON-042");
-        row.setDestinationSessionLabel("STUDY2_042");
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, row));
-        final ManifestSubmitRequest req = submitRequest(SRC, DEST, null, "trk");
-        req.setMode(TransferMode.SHARE);
-
-        api.submitManifest(req);
-
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final TransferRequest request = batch.getValue().getRequests().get(0);
-        assertNull(request.getCsvValues());
-        assertNull(request.getDestinationSubjectLabel());
-        assertNull(request.getDestinationSessionLabel());
-    }
-
-    @Test
-    public void submitManifest_expandedSubjectRow_submitsEachSessionWithTheRowsValues() throws Exception {
-        final ManifestRow sessionA = matchedRow("S1", "SESS_A", "E1", csv("pid", "ANON-1"));
-        sessionA.setDestinationSubjectLabel("ANON_S1");
-        final ManifestRow sessionB = matchedRow("S1", "SESS_B", "E2", csv("pid", "ANON-1"));
-        sessionB.setDestinationSubjectLabel("ANON_S1");
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true, sessionA, sessionB));
-
-        final ResponseEntity<?> resp = api.submitManifest(submitRequest(SRC, DEST, null, "trk"));
-
-        final ArgumentCaptor<BatchTransfer> batch = ArgumentCaptor.forClass(BatchTransfer.class);
-        verify(service).submitTransferRequest(batch.capture(), eq(user));
-        final List<TransferRequest> requests = batch.getValue().getRequests();
-        assertEquals(2, requests.size());
-        for (final TransferRequest request : requests) {
-            assertEquals("ANON-1", request.getCsvValues().get("pid"));
-            assertEquals("ANON_S1", request.getDestinationSubjectLabel());
-        }
-        assertEquals(2, ((ManifestSubmitResult) resp.getBody()).getItemCount());
-    }
-
-    @Test
-    public void submitManifest_reportsSkippedRowsByReason() throws Exception {
-        when(manifestService.parse(any(), any(), any())).thenReturn(result(true,
-                matchedRow("S1", "SESS1", "E1", csv("pid", "ANON-1")),
-                notFoundRow("S7", "SESS7", ManifestRow.STATUS_SUBJECT_NOT_FOUND),
-                notFoundRow("S8", "SESS8", ManifestRow.STATUS_SESSION_NOT_FOUND),
-                notFoundRow("S9", "", ManifestRow.STATUS_NO_SESSIONS),
-                notFoundRow("S10", "", ManifestRow.STATUS_NO_SESSIONS)));
-
-        final ManifestSubmitResult body =
-                (ManifestSubmitResult) api.submitManifest(submitRequest(SRC, DEST, null, "trk")).getBody();
-
-        assertEquals(1, body.getItemCount());
-        assertEquals(4, body.getSkippedNotFound());
-        assertEquals(Integer.valueOf(1), body.getSkipped().get(ManifestRow.STATUS_SUBJECT_NOT_FOUND));
-        assertEquals(Integer.valueOf(1), body.getSkipped().get(ManifestRow.STATUS_SESSION_NOT_FOUND));
-        assertEquals(Integer.valueOf(2), body.getSkipped().get(ManifestRow.STATUS_NO_SESSIONS));
-    }
-
     // ---- fixtures ------------------------------------------------------------------------------------
 
     private static ManifestValidationRequest validationRequest(final String sourceProject, final String anonScript) {
@@ -472,17 +239,6 @@ public class BatchTransferApiTest {
         req.setSourceProject(sourceProject);
         req.setManifestCsv("source_subject_label,source_session_label\nS1,SESS1\n");
         req.setAnonScript(anonScript);
-        return req;
-    }
-
-    private static ManifestSubmitRequest submitRequest(final String source, final String dest,
-                                                       final String anonScript, final String trackingId) {
-        final ManifestSubmitRequest req = new ManifestSubmitRequest();
-        req.setSourceProject(source);
-        req.setDestinationProject(dest);
-        req.setManifestCsv("source_subject_label,source_session_label\nS1,SESS1\n");
-        req.setAnonScript(anonScript);
-        req.setTrackingId(trackingId);
         return req;
     }
 
