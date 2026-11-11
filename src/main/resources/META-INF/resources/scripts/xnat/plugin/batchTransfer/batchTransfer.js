@@ -1334,8 +1334,10 @@ var XNAT = getObject(XNAT || {});
         // columns (a manifest can carry any number of them); a session's values appear in its compiled-script
         // preview, and a bad value reports itself on the row's own error line.
         var rowHead = '<th class="bt-csv-rown" title="The row in the file, numbered as a spreadsheet shows it (the header is row 1)">Row</th>';
+        // The destination headers always take two lines, so their width follows the labels under them.
         var cols = '<th class="bt-csv-caret-col"></th>' + rowHead + '<th>Source</th>' +
-            '<th class="bt-route-head">Destination subject</th><th class="bt-route-head">Destination session</th><th>Files</th>';
+            '<th class="bt-route-head">Destination<br>subject</th><th class="bt-route-head">Destination<br>session</th>' +
+            '<th>Files</th>';
 
         // Render the current page: MANIFEST_PAGE_SIZE subjects from manifestStart (or every subject on Show all).
         var groups = manifestGroups();
@@ -1389,9 +1391,9 @@ var XNAT = getObject(XNAT || {});
         var problem = (head && !headMatched) ? head.status : null;
         var headErr = !!head && (head.value_errors || []).length > 0;
         var h = '<tr class="bt-csv-subj' + (problem ? ' bt-csv-missrow' : headErr ? ' bt-csv-rowerr' : '') + '">' +
-                '<td></td>' +
+                '<td class="bt-csv-caret-cell"></td>' +
                 '<td class="bt-csv-rown">' + (head ? head.row_number : '') + '</td>' +
-                '<td><span class="bt-mono bt-csv-subjlabel">' + (g.label ? escapeHtml(g.label) : '(blank)') + '</span>' +
+                '<td><span class="bt-mono bt-csv-subjlabel bt-csv-label">' + (g.label ? escapeHtml(g.label) : '(blank)') + '</span>' +
                 (scope ? '<span class="bt-csv-scope">' + scope + '</span>' : '') +
                 '</td>' + statusCells(problem) + '</tr>';
         if (head) { h += noteRow(head); }
@@ -1418,10 +1420,10 @@ var XNAT = getObject(XNAT || {});
         var id = e.resolved_id || '';
         var hasErr = showRow && (e.value_errors || []).length > 0;
         var h = '<tr class="bt-csv-row' + (hasErr ? ' bt-csv-rowerr' : '') + '">' +
-                '<td><span class="bt-csv-caret" data-id="' + escapeHtml(id) + '">' +
+                '<td class="bt-csv-caret-cell"><span class="bt-csv-caret" data-id="' + escapeHtml(id) + '">' +
                 (manifestExpanded[id] ? '&#9662;' : '&#9656;') + '</span></td>' +
                 '<td class="bt-csv-rown">' + (showRow ? e.row_number : '') + '</td>' +
-                '<td class="bt-mono bt-csv-src">' + escapeHtml(e.source_session_label) + '</td>' +
+                '<td class="bt-mono bt-csv-src">' + labelHtml(e.source_session_label) + '</td>' +
                 destinationCell(e, 'subject') + destinationCell(e, 'session') + '<td>' + filesCell(id) + '</td>' +
                 '</tr>';
         if (manifestExpanded[id]) { h += detailRow(e); }
@@ -1431,11 +1433,16 @@ var XNAT = getObject(XNAT || {});
     // A row that won't be transferred: its session label (or what its subject row covers) and its status code.
     function problemLine(e) {
         var what = e.source_session_label
-            ? escapeHtml(e.source_session_label)
+            ? labelHtml(e.source_session_label)
             : (e.subject_row ? '<span class="bt-muted">all sessions</span>' : '');
-        return '<tr class="bt-csv-missrow"><td></td>' +
+        return '<tr class="bt-csv-missrow"><td class="bt-csv-caret-cell"></td>' +
                '<td class="bt-csv-rown">' + e.row_number + '</td>' +
                '<td class="bt-mono bt-csv-src">' + what + '</td>' + statusCells(e.status) + '</tr>';
+    }
+
+    // An XNAT label in a manifest cell, wrapped so a long one wraps rather than widening the table.
+    function labelHtml(label) {
+        return '<span class="bt-csv-label">' + escapeHtml(label) + '</span>';
     }
 
     // A row's value errors (or, when it has none, its warnings), shown once under the row's line.
@@ -1478,15 +1485,16 @@ var XNAT = getObject(XNAT || {});
     function destinationCell(row, which) {
         var subject = which === 'subject';
         var explicit = subject ? row.destination_subject_label : row.destination_session_label;
+        var dsubj = subject ? ' bt-csv-dsubj' : '';
         if (explicit) {
-            return '<td class="bt-mono bt-route">' + escapeHtml(explicit) + '</td>';
+            return '<td class="bt-mono bt-route' + dsubj + '">' + labelHtml(explicit) + '</td>';
         }
         var preserved = subject
             ? $('#bt-preserve-subject-label').is(':checked')
             : $('#bt-preserve-session-label').is(':checked');
         if (preserved) {
-            return '<td class="bt-mono bt-dest-inherited" title="Preserved from the source label">'
-                 + escapeHtml(subject ? row.source_subject_label : row.source_session_label) + '</td>';
+            return '<td class="bt-mono bt-dest-inherited' + dsubj + '" title="Preserved from the source label">'
+                 + labelHtml(subject ? row.source_subject_label : row.source_session_label) + '</td>';
         }
         return '<td class="bt-muted" title="Derived from DICOM tags when the session is imported">'
              + 'from DICOM</td>';
