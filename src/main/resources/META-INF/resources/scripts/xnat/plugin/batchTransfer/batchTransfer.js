@@ -1209,10 +1209,10 @@ var XNAT = getObject(XNAT || {});
                     'Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.');
             } else {
                 // The scripts that run, in order; one whose check failed is marked "?". A custom script that isn't
-                // the only one is double anonymization.
+                // the only one is double anonymization: worth a look (amber), not an error.
                 var double = hasCustomScript() && on.length > 1;
                 var listed = scripts.filter(function(s) { return s.state !== 'off'; });
-                out = chip(double ? 'warn' : 'good', (double ? '&#9888; ' : '&#10003; ') +
+                out = chip(double ? 'caution' : 'good', (double ? '&#9888; ' : '&#10003; ') +
                     listed.map(function(s) { return s.key + (s.state === 'unknown' ? '?' : ''); }).join(' + ') +
                     ' script' + (listed.length > 1 ? 's' : ''),
                     'Each session is anonymized by ' + scriptNames(on, ', then ') + '.' +
