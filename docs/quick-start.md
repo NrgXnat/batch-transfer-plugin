@@ -201,7 +201,7 @@ HA0016,HA0016_MR03,HAOPEN004,HAOPEN004_MR2,R1,
 | Column | Required? | Meaning |
 |---|---|---|
 | `source_subject_label`, `source_session_label` | Yes | The session in the source project. Leave the session blank to include all of a subject's image sessions. |
-| `destination_subject_label`, `destination_session_label` | No | The session's labels in the destination. They take precedence over Preserve source labels. |
+| `destination_subject_label`, `destination_session_label` | No | The session's labels in the destination. They take precedence over Preserve source labels. A row that leaves the session blank can't set `destination_session_label`, so its sessions' labels follow Preserve source labels. |
 | Columns starting with `_` | No | Notes. Batch Transfer ignores them. |
 | Any other column | No | A value for the custom script, as `${csv.<column>}`. Here, `release`. |
 
@@ -221,7 +221,8 @@ Rows that match nothing are listed and skipped. Some problems block Submit until
 Others are highlighted in the Destination columns and counted above the list, but don't block Submit. Hover over a
 highlighted cell for the reason:
 
-- a blank destination label, which falls back to Preserve source labels;
+- a blank destination label cell, which falls back to Preserve source labels. A row for all of a subject's sessions
+  has no session label to fill in, so its sessions aren't flagged for one;
 - a source subject whose sessions would go to more than one destination subject;
 - a session label the destination project already has. That session would fail, or merge into the existing session
   if it holds the same study.
@@ -345,17 +346,19 @@ see the transfer.
 - **Label clashes.** If the destination already has a different session with the label a reimported session would
   get, that session can fail and its copy stays in the destination's prearchive. Delete that copy, change the
   session's `destination_session_label` in the rerun manifest, and upload it again.
-- **Which files Reimport sends.** Reimport sends the files in each scan's DICOM resource. A session whose images are
-  stored in a resource with another name, such as the `secondary` resource XNAT uses for Secondary Capture images,
-  fails with "No DICOM files found".
+- **Which files Reimport sends.** Reimport sends the files in each scan's DICOM resource. Images stored in a resource
+  with another name, such as the `secondary` resource XNAT uses for Secondary Capture images, aren't sent. A session
+  made only of such images fails with "No DICOM files found", and a session that also has them arrives without
+  those scans.
 - **Manifest limits.** By default a manifest can have up to 5,000 rows, and values used by a script may contain only
   letters, digits, spaces and `^ _ . -`.
 - **Script rules.** By default custom scripts are DicomEdit 6.0 to 6.7 or 6.10, up to 256 KB. Commands that are
   unsafe when sessions are reimported in parallel, such as `mapUID` and `newUID`, aren't allowed; use `hashUID` to
   remap UIDs.
-- **Adjusting the limits.** A site administrator can change the manifest limits and script rules above on the
-  **Anonymization & Cohort Limits** tab in Site Administration: the maximum number of manifest rows, the characters
-  allowed in values, the maximum script size, the restricted commands, and the allowed DicomEdit versions.
+- **Adjusting the limits.** A site administrator can change the manifest limits and script rules above under
+  **Administer > Plugin Settings**, on the **Anonymization & Cohort Limits** tab of the Batch Transfer group: the
+  maximum number of manifest rows, the characters allowed in values, the maximum script size, the restricted
+  commands, and the allowed DicomEdit versions.
 - **XNAT 1.10.2.1.** Reimports that run at the same time soon after XNAT starts can fail with `Invalid attribute`
   and stay in the prearchive. This is an XNAT bug; Export for rerun transfers them once XNAT has warmed up.
 
