@@ -19,9 +19,9 @@ public class BatchTransfer {
     String trackingId;
 
     /**
-     * Optional. The ID of the project the transfer was started from. When every item belongs to it or is shared into
-     * it, the run is recorded under it, with subject labels as that project has them; otherwise under the project
-     * that owns the items. Wire name: {@code source_project}.
+     * Optional. The project the transfer was started from, by ID or alias. When every item belongs to it or is shared
+     * into it, the run is recorded under it, with subject labels as that project has them; otherwise under the
+     * project that owns the items. Wire name: {@code source_project}.
      */
     String sourceProject;
 

@@ -30,8 +30,9 @@ public interface BatchTransferHistoryService extends BaseHibernateService<BatchT
     void registerRun(String trackingId, Integer userId, int total);
 
     /**
-     * Fails a run that could not start: its unfinished items get {@code message} and become {@code Failed}, and so
-     * does the run. For a batch whose {@link #registerRun} failed, which has no progress row to count its items.
+     * Ends a run that could not start: its unfinished items get {@code message} and become {@code Failed}, and so
+     * does the run. A run already {@code Stopping} ends {@code Stopped} instead, with its items. For a batch whose
+     * {@link #registerRun} failed, which has no progress row to count its items.
      */
     void failRun(String trackingId, String message);
 

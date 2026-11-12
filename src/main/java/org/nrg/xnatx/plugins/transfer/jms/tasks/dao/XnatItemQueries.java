@@ -24,7 +24,8 @@ public class XnatItemQueries {
     // their own label: a manifest names a session by it.
     private static final String SOURCES_SQL =
             "WITH src AS (SELECT CAST(? AS VARCHAR) AS project, CAST(? AS VARCHAR[]) AS readable) "
-                    + "SELECT e.id, e.project, e.label, COALESCE(pp.label, s.label) AS subject_label, "
+                    + "SELECT e.id, e.project, e.label, s.label AS subject_label, e.label AS label_in_project, "
+                    + "COALESCE(pp.label, s.label) AS subject_label_in_project, "
                     + "(e.project = src.project OR EXISTS (SELECT 1 FROM xnat_experimentdata_share sh "
                     + "WHERE sh.sharing_share_xnat_experimentda_id = e.id AND sh.project = src.project)) AS in_project "
                     + "FROM src CROSS JOIN xnat_experimentdata e "
@@ -35,7 +36,7 @@ public class XnatItemQueries {
                     + "OR EXISTS (SELECT 1 FROM xnat_experimentdata_share r "
                     + "WHERE r.sharing_share_xnat_experimentda_id = e.id AND r.project = ANY(src.readable))) "
                     + "UNION ALL "
-                    + "SELECT s.id, s.project, COALESCE(pp.label, s.label), COALESCE(pp.label, s.label), "
+                    + "SELECT s.id, s.project, s.label, s.label, COALESCE(pp.label, s.label), COALESCE(pp.label, s.label), "
                     + "(s.project = src.project OR pp.subject_id IS NOT NULL) "
                     + "FROM src CROSS JOIN xnat_subjectdata s "
                     + "LEFT JOIN xnat_projectparticipant pp ON pp.subject_id = s.id AND pp.project = src.project "
@@ -56,8 +57,8 @@ public class XnatItemQueries {
     }
 
     /**
-     * An item's owning project, its own label, its subject's label (null for an assessor), and whether it belongs to
-     * or is shared into the project it was looked up in.
+     * An item's owning project, its own label and its subject's (null for an assessor), whether it belongs to or is
+     * shared into the project it was looked up in, and its labels as that project has them.
      */
     @Value
     public static class SourceItem {
@@ -65,13 +66,14 @@ public class XnatItemQueries {
         String  label;
         String  subjectLabel;
         boolean inProject;
+        String  labelInProject;
+        String  subjectLabelInProject;
     }
 
     /**
      * The subjects and experiments among {@code ids}, by ID. IDs that match nothing are left out, and so are items
-     * in none of {@code readableProjects}, owned or shared (null means every project). With a {@code project}, a
-     * subject's label is the one it has in that project. Without one, every label is the item's own and none is in
-     * the project.
+     * in none of {@code readableProjects}, owned or shared (null means every project). With a {@code project}, the
+     * labels in it are a subject's label there; without one, they are the item's own and nothing is in it.
      */
     public Map<String, SourceItem> sourceItems(final Collection<String> ids, final String project,
                                                final Collection<String> readableProjects) {
@@ -90,7 +92,8 @@ public class XnatItemQueries {
             return statement;
         }, row -> {
             found.put(row.getString("id"), new SourceItem(row.getString("project"), row.getString("label"),
-                    row.getString("subject_label"), row.getBoolean("in_project")));
+                    row.getString("subject_label"), row.getBoolean("in_project"), row.getString("label_in_project"),
+                    row.getString("subject_label_in_project")));
         });
         return found;
     }

@@ -230,6 +230,27 @@ public class BatchTransferHistoryDbTest {
     }
 
     @Test
+    public void aRunWithAnItemThatIsNotFoundGoesToTheOwner() {
+        final String project = id("HERE");
+        final String owner = id("OWNER");
+        subject(owner, id("S1"), "PRIMARY_SUBJ");
+        shareSubject(id("S1"), project, "HERE_SUBJ");
+        session(owner, id("S1"), id("E1"), "SHARED_SESS");
+        shareSession(id("E1"), project, "HERE_SESS");
+        final String trackingId = trackingId("notFound");
+        final BatchTransfer batch = new BatchTransfer(new ArrayList<>(Arrays.asList(
+                reimport(id("E1"), null, null), share(id("MISSING")))), trackingId);
+        batch.setSourceProject(project);
+
+        history.recordSubmit(batch, alice, Collections.singletonList(owner));
+
+        assertEquals("an ID that wasn't found isn't known to be in the project", owner,
+                runRow(trackingId).get("source_project"));
+        assertEquals("the owner's label, as the run is the owner's", "PRIMARY_SUBJ",
+                itemRows(trackingId).get(0).get("source_subject_label"));
+    }
+
+    @Test
     public void aRunWithAnItemFromOutsideTheProjectItWasStartedFromGoesToTheOwner() {
         final String project = id("HERE");
         final String owner = id("OWNER");
@@ -368,6 +389,20 @@ public class BatchTransferHistoryDbTest {
             assertNotNull(item.get("finished"));
         }
         history.failRun(trackingId("noSuchRun"), "nothing to fail");
+    }
+
+    @Test
+    public void aRunStoppedBeforeItCouldStartEndsStopped() {
+        final String trackingId = submit("stopNoStart", 2);
+        assertEquals(StopResult.STOPPING, history.requestStop(trackingId, "bob"));
+
+        history.failRun(trackingId, "Could not start. Cause: no database");
+
+        final Map<String, Object> run = runRow(trackingId);
+        assertEquals("Stopped", run.get("status"));
+        assertEquals(0, run.get("failed_count"));
+        assertEquals(2, run.get("stopped_count"));
+        assertEquals(2, countItems(trackingId, "Stopped"));
     }
 
     @Test

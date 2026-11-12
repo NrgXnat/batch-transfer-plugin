@@ -57,9 +57,10 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             throw new ClientException(Status.CLIENT_ERROR_FORBIDDEN, "Forbidden");
         }
 
-        // Check for a preset destination project passed via request parameter
-        String presetDestination = data.getParameters().getString("destination");
-        if (StringUtils.isNotBlank(presetDestination)) {
+        // A preset destination is taken only when it names a project, and passed on as that project's ID: the
+        // parameter itself must never reach the page's script or HTML.
+        final String presetDestination = projectId(data.getParameters().getString("destination"), user);
+        if (presetDestination != null) {
             context.put("presetDestination", presetDestination);
         }
 
@@ -231,6 +232,18 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         context.put("shareableProjects", shareableProjects);
         context.put("cloneableProjects", cloneableProjects);
         context.put("turbineUtils", TurbineUtils.GetInstance());
+    }
+
+    /**
+     * The ID of the project named by its ID or an alias; null when the name is blank or names no project.
+     * Overridable so tests need no XDAT wiring.
+     */
+    protected String projectId(final String project, final UserI user) {
+        if (StringUtils.isBlank(project)) {
+            return null;
+        }
+        final XnatProjectdata found = XnatProjectdata.getProjectByIDorAlias(project, user, false);
+        return found == null ? null : found.getId();
     }
 
     private void addShareIdDisplayField(SchemaElement rootElement, DisplaySearch search) {

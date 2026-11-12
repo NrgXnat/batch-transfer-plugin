@@ -150,7 +150,7 @@
                             <div class="bt-proj-btn #if($hasPresetDest)frozen#{else}select#end">
                                 <span class="bt-proj-lbl">Destination $displayManager.getSingularDisplayNameForProject()</span>
                                 #if($hasPresetDest)
-                                    <span class="bt-proj-name">$!presetDestination <span class="bt-proj-ic">&#128274;</span></span>
+                                    <span class="bt-proj-name">$!turbineUtils.escapeHTML($presetDestination) <span class="bt-proj-ic">&#128274;</span></span>
                                 #else
                                     <select class="bt-proj-select" id="bt-project-select" disabled="disabled" aria-label="Destination ${displayManager.getSingularDisplayNameForProject().toLowerCase()}">
                                         <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
@@ -385,7 +385,7 @@
         XNAT.plugin.batchtransfer.help.init();
         XNAT.plugin.batchtransfer.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end,
-            presetDestination: #if($hasPresetDest) '$!presetDestination' #else null #end
+            presetDestination: #if($hasPresetDest) '$!turbineUtils.escapeJS($presetDestination)' #else null #end
         });
         XNAT.plugin.batchtransfer.history.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end

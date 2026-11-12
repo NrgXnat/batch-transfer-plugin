@@ -154,41 +154,48 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         // last one finishes. This keeps one completion signal even when operations are mixed.
         try {
             monitor.register(trackingId, user.getID(), requests.size());
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             failToStart(trackingId, user, e);
             return;
         }
 
-        // Items sent to a queue are their consumer's to finish. If a step throws, every other item still
-        // unfinished is failed, so the run still finishes; finishing an item that already finished does nothing.
-        final Set<String> queued = new HashSet<>();
+        // Each item is handled once it is sent to a queue (its consumer finishes it) or finished here. If a step
+        // throws, every item not yet handled is failed, so the run still finishes.
+        final Set<String> handled = new HashSet<>();
         try {
             if (!reimportItems.isEmpty()) {
                 enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(),
-                        batchTransferRequest.isAnonReplacePipeline(), user, queued);
+                        batchTransferRequest.isAnonReplacePipeline(), user, handled);
             }
             if (!cloneItems.isEmpty()) {
-                enqueueClone(trackingId, cloneItems, user, queued);
+                enqueueClone(trackingId, cloneItems, user, handled);
             }
             if (!sequentialItems.isEmpty()) {
-                runSequential(trackingId, sequentialItems, user);
+                runSequential(trackingId, sequentialItems, user, handled);
             }
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             log.error("Batch {}: stopped before every item was handed out", trackingId, e);
-            final String message = "Not started. Cause: " + XnatUtils.rootCauseMessage(e);
+            final String cause = XnatUtils.rootCauseMessage(e);
             for (final TransferRequest request : requests) {
-                if (!queued.contains(request.getId())) {
-                    monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
+                if (handled.contains(request.getId())) {
+                    continue;
                 }
+                try {
+                    eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
+                            request.getId() + " was not started. Cause: " + cause));
+                } catch (RuntimeException eventFailure) {
+                    log.error("Batch {}: could not report item {} as not started", trackingId, request.getId(), eventFailure);
+                }
+                monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, "Not started. Cause: " + cause, null);
             }
         }
     }
 
     /**
      * Ends a batch whose registration failed. It has no progress row to count its items, so its run and items are
-     * failed directly.
+     * ended directly.
      */
-    private void failToStart(final String trackingId, final UserI user, final RuntimeException failure) {
+    private void failToStart(final String trackingId, final UserI user, final Throwable failure) {
         log.error("Batch {}: could not start", trackingId, failure);
         final String cause = XnatUtils.rootCauseMessage(failure);
         try {
@@ -208,7 +215,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
      */
     private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final String anonScript,
-                                final boolean anonReplacePipeline, final UserI user, final Set<String> queued) {
+                                final boolean anonReplacePipeline, final UserI user, final Set<String> handled) {
         for (final TransferRequest request : requests) {
             try {
                 // Substitute the ${csv.*} template with this item's values now, so each JMS message carries
@@ -221,7 +228,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                         request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(),
                         request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
                         compiledScript, anonReplacePipeline));
-                queued.add(request.getId());
+                handled.add(request.getId());
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -229,6 +236,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
                 monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
+                handled.add(request.getId());
             }
         }
     }
@@ -241,7 +249,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * by the caller ({@link #batchTransfer}); each item reports completion via its consumer.
      */
     private void enqueueClone(final String trackingId, final List<TransferRequest> requests, final UserI user,
-                              final Set<String> queued) {
+                              final Set<String> handled) {
         final Map<String, List<CloneSubjectRequest.CloneItem>> bySubject = new LinkedHashMap<>();
         for (final TransferRequest request : requests) {
             try {
@@ -255,6 +263,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                 eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                         request.getId() + " could not be queued. Cause: " + e.getMessage()));
                 monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
+                handled.add(request.getId());
             }
         }
 
@@ -262,7 +271,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             try {
                 XDAT.sendJmsRequest(new CloneSubjectRequest(trackingId, entry.getKey(), entry.getValue(),
                         user.getUsername(), user.getID()));
-                entry.getValue().forEach(item -> queued.add(item.getItemId()));
+                entry.getValue().forEach(item -> handled.add(item.getItemId()));
             } catch (Exception e) {
                 // Couldn't enqueue this subject's bundle — report all of its items failed.
                 log.error("Failed to queue clone bundle for subject {}", entry.getKey(), e);
@@ -271,6 +280,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                     eventService.triggerEvent(BatchTransferEvent.fail(user.getID(), 0, trackingId,
                             item.getItemId() + " could not be queued. Cause: " + e.getMessage()));
                     monitor.finishItem(trackingId, item.getItemId(), Outcome.FAILED, message, null);
+                    handled.add(item.getItemId());
                 }
             }
         }
@@ -302,9 +312,11 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * every item across all operations has finished — so this path composes with the parallel
      * Reimport/Clone queues in a mixed batch.
      */
-    private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+    private void runSequential(final String trackingId, final List<TransferRequest> requests, final UserI user,
+                               final Set<String> handled) {
         for (final TransferRequest request : requests) {
             if (!monitor.startItem(trackingId, request.getId())) {
+                handled.add(request.getId());
                 continue;   // the run was stopped before this item started
             }
             final String modeAction = request.getMode() != null ? request.getMode().getAction() : "UNKNOWN MODE";
@@ -327,6 +339,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             }
             // Report completion; the monitor emits the batch's terminal event when the last item finishes.
             monitor.finishItem(trackingId, request.getId(), outcome, message, destinationId);
+            handled.add(request.getId());
         }
     }
 

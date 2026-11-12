@@ -912,6 +912,33 @@ public class BatchTransferServiceImplTest {
         verify(monitor).finishItem(TRACKING_ID, "exp_share", Outcome.FAILED, "Not started. Cause: lost", null);
         verify(monitor, never()).finishItem(eq(TRACKING_ID), eq("exp_reimport"), any(), any(), any());
         verify(historyService, never()).failRun(anyString(), anyString());
+        final ArgumentCaptor<BatchTransferEvent> events = ArgumentCaptor.forClass(BatchTransferEvent.class);
+        verify(nrgEventService, Mockito.atLeastOnce()).triggerEvent(events.capture());
+        assertTrue("a failure event names the item", events.getAllValues().stream().anyMatch(e ->
+                e.getStatus() == BatchTransferEvent.Status.Failed && "exp_share was not started. Cause: lost".equals(e.getMessage())));
+    }
+
+    /**
+     * A JVM error (a class that fails to load, say) is caught too. Only the items not yet handled are failed: one
+     * that already finished keeps its outcome and gets no failure event.
+     */
+    @Test
+    public void batchTransfer_whenHandingOutThrowsAnError_failsOnlyTheItemsNotHandled() throws Exception {
+        final TransferRequest first  = new TransferRequest(DEST_PROJECT, "exp_first",  TransferMode.SHARE);
+        final TransferRequest second = new TransferRequest(DEST_PROJECT, "exp_second", TransferMode.SHARE);
+        Mockito.doReturn(null).when(service).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+        when(monitor.startItem(TRACKING_ID, "exp_first")).thenReturn(true);
+        when(monitor.startItem(TRACKING_ID, "exp_second")).thenThrow(new NoClassDefFoundError("org/nrg/Missing"));
+
+        service.submitTransferRequest(new BatchTransfer(new ArrayList<>(List.of(first, second)), TRACKING_ID), user);
+
+        verify(monitor).finishItem(TRACKING_ID, "exp_first", Outcome.DONE, null, null);
+        verify(monitor, never()).finishItem(eq(TRACKING_ID), eq("exp_first"), eq(Outcome.FAILED), any(), any());
+        verify(monitor).finishItem(TRACKING_ID, "exp_second", Outcome.FAILED, "Not started. Cause: org/nrg/Missing", null);
+        final ArgumentCaptor<BatchTransferEvent> events = ArgumentCaptor.forClass(BatchTransferEvent.class);
+        verify(nrgEventService, Mockito.atLeastOnce()).triggerEvent(events.capture());
+        assertTrue(events.getAllValues().stream().noneMatch(e -> e.getMessage() != null
+                && e.getMessage().startsWith("exp_first was not started")));
     }
 
     /** A Share item the run was stopped before is skipped: not processed, and not finished a second time. */

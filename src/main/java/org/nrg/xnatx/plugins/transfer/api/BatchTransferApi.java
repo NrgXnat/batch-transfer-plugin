@@ -108,9 +108,14 @@ public class BatchTransferApi extends AbstractXapiRestController {
         final UserI user = getSessionUser();
 
         final String sourceProject = batchTransferRequest.getSourceProject();
-        if (StringUtils.isNotBlank(sourceProject) && !canReadProject(sourceProject, user)) {
-            return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
-                    HttpStatus.FORBIDDEN);
+        if (StringUtils.isNotBlank(sourceProject)) {
+            final String sourceProjectId = readableProjectId(sourceProject, user);
+            if (sourceProjectId == null) {
+                return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
+                        HttpStatus.FORBIDDEN);
+            }
+            // Items record their project by ID, so an alias would never match them.
+            batchTransferRequest.setSourceProject(sourceProjectId);
         }
 
         final ResponseEntity<String> guardrail = checkAnonGuardrails(batchTransferRequest.getAnonScript(), requests, user);
@@ -335,7 +340,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
         if (StringUtils.isBlank(sourceProject)) {
             return new ResponseEntity<>("source_project is required.", HttpStatus.BAD_REQUEST);
         }
-        if (!canReadProject(sourceProject, user)) {
+        final String sourceProjectId = readableProjectId(sourceProject, user);
+        if (sourceProjectId == null) {
             return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
                     HttpStatus.FORBIDDEN);
         }
@@ -348,7 +354,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         if (result.isRequiredPresent() && !result.getRows().isEmpty()) {
-            result.setRows(preflightResolver.resolveAll(sourceProject, result.getRows(), user, includeFileCount));
+            result.setRows(preflightResolver.resolveAll(sourceProjectId, result.getRows(), user, includeFileCount));
             result.setSummary(summarize(result.getRows()));
         }
         return new ResponseEntity<>(result, HttpStatus.OK);
@@ -375,17 +381,17 @@ public class BatchTransferApi extends AbstractXapiRestController {
     // ---- helpers --------------------------------------------------------------------------------------
 
     /**
-     * True when the user can read {@code project}'s data. Every user can see a protected project, but not its
-     * data, so finding the project isn't enough. Protected seam (like the service-layer
-     * {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read check.
+     * The ID of {@code project} (named by its ID or an alias) when the user can read its data; null otherwise. Every
+     * user can see a protected project, but not its data, so finding the project isn't enough. Protected seam (like
+     * the service-layer {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read check.
      */
-    protected boolean canReadProject(final String project, final UserI user) {
+    protected String readableProjectId(final String project, final UserI user) {
         try {
             final String id = projectId(project, user);
-            return id != null && Permissions.canRead(user, "xnat:subjectData/project", id);
+            return id != null && Permissions.canRead(user, "xnat:subjectData/project", id) ? id : null;
         } catch (Exception e) {
             log.error("Could not verify read access on project {}", project, e);
-            return false;
+            return null;
         }
     }
 
