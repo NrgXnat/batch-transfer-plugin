@@ -87,7 +87,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
                     @ApiResponse(code = 400, message = "Invalid request (e.g. the same item twice, two Reimport items "
                             + "routed to one session label, an invalid routing label, or a custom anon_script on a "
                             + "non-Reimport item)"),
-                    @ApiResponse(code = 403, message = "No edit access to a destination project required by a custom anon_script"),
+                    @ApiResponse(code = 403, message = "No read access to source_project, or no edit access to a "
+                            + "destination project required by a custom anon_script"),
                     @ApiResponse(code = 409, message = "The tracking_id already has a run, or this XNAT build does "
                             + "not support per-import anonymization"),
                     @ApiResponse(code = 500, message = "An unexpected error occurred.")})
@@ -105,6 +106,12 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         final UserI user = getSessionUser();
+
+        final String sourceProject = batchTransferRequest.getSourceProject();
+        if (StringUtils.isNotBlank(sourceProject) && !canReadProject(sourceProject, user)) {
+            return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
+                    HttpStatus.FORBIDDEN);
+        }
 
         final ResponseEntity<String> guardrail = checkAnonGuardrails(batchTransferRequest.getAnonScript(), requests, user);
         if (guardrail != null) {

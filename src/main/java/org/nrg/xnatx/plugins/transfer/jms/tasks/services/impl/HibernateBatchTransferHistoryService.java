@@ -51,7 +51,7 @@ public class HibernateBatchTransferHistoryService
 
     @Override
     @Transactional
-    public void recordSubmit(final BatchTransfer batch, final UserI user) {
+    public void recordSubmit(final BatchTransfer batch, final UserI user, final Collection<String> readableProjects) {
         final String trackingId = batch.getTrackingId();
         if (getDao().findByTrackingId(trackingId) != null) {
             throw new BatchTransferRunExistsException(trackingId);
@@ -61,7 +61,15 @@ public class HibernateBatchTransferHistoryService
         for (final TransferRequest request : requests) {
             ids.add(request.getId());
         }
-        final Map<String, SourceItem> sources = xnatItems.sourceItems(ids);
+        // The run belongs to the project it was started from only when every item found is in that project, so the
+        // project's members never see labels from elsewhere. Otherwise it goes to the owning project.
+        final String startedFrom = StringUtils.trimToNull(batch.getSourceProject());
+        Map<String, SourceItem> sources = xnatItems.sourceItems(ids, startedFrom, readableProjects);
+        final boolean inStartedFrom = startedFrom != null && !sources.isEmpty()
+                && sources.values().stream().allMatch(SourceItem::isInProject);
+        if (startedFrom != null && !inStartedFrom) {
+            sources = xnatItems.sourceItems(ids, null, readableProjects);
+        }
 
         final Set<String> modes = new LinkedHashSet<>();
         final Set<String> destinations = new LinkedHashSet<>();
@@ -83,7 +91,11 @@ public class HibernateBatchTransferHistoryService
         run.setTrackingId(trackingId);
         run.setStatus(BatchTransferHistory.Status.Queued);
         run.setOperation(modes.size() == 1 ? modes.iterator().next() : "Mixed");
-        run.setSourceProject(sourceProjects.size() == 1 ? sourceProjects.iterator().next() : null);
+        if (inStartedFrom) {
+            run.setSourceProject(startedFrom);
+        } else {
+            run.setSourceProject(sourceProjects.size() == 1 ? sourceProjects.iterator().next() : null);
+        }
         run.setDestinationProject(destinations.size() == 1 ? destinations.iterator().next() : null);
         run.setItemCount(requests.size());
         run.setAnonCustomScript(StringUtils.defaultIfBlank(batch.getAnonScript(), null));
@@ -122,6 +134,17 @@ public class HibernateBatchTransferHistoryService
     public void registerRun(final String trackingId, final Integer userId, final int total) {
         progressService.register(trackingId, userId, total);
         getDao().markRunning(trackingId);
+    }
+
+    @Override
+    @Transactional
+    public void failRun(final String trackingId, final String message) {
+        final BatchTransferHistory run = getDao().findByTrackingId(trackingId);
+        if (run == null) {
+            return;
+        }
+        final int failed = itemDao.failUnfinished(run.getId(), message);
+        getDao().finish(run.getId(), BatchTransferHistory.Status.Failed, 0, failed, 0);
     }
 
     @Override

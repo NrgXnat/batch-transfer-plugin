@@ -34,11 +34,13 @@ public class BatchTransferModelTest {
 
     @Test
     public void deserializesNewFields() throws Exception {
-        final String json = "{\"tracking_id\":\"t1\",\"anon_script\":\"v6\",\"anon_replace_pipeline\":true,"
+        final String json = "{\"tracking_id\":\"t1\",\"source_project\":\"SRC\",\"anon_script\":\"v6\","
+                + "\"anon_replace_pipeline\":true,"
                 + "\"requests\":[{\"id\":\"E1\",\"mode\":\"Reimport\",\"destination_project\":\"DEST\","
                 + "\"csv_values\":{\"destination_patient_id\":\"ANON-042\"}}]}";
         final BatchTransfer back = mapper.readValue(json, BatchTransfer.class);
 
+        assertEquals("SRC", back.getSourceProject());
         assertEquals("v6", back.getAnonScript());
         assertTrue(back.isAnonReplacePipeline());
         assertEquals(TransferMode.REIMPORT, back.getRequests().get(0).getMode());
@@ -50,6 +52,7 @@ public class BatchTransferModelTest {
         final String json = "{\"requests\":[{\"id\":\"E1\",\"mode\":\"Reimport\",\"destination_project\":\"DEST\"}]}";
         final BatchTransfer back = mapper.readValue(json, BatchTransfer.class);
 
+        assertNull(back.getSourceProject());
         assertNull(back.getAnonScript());
         assertFalse(back.isAnonReplacePipeline());
         assertEquals(1, back.getRequests().size());

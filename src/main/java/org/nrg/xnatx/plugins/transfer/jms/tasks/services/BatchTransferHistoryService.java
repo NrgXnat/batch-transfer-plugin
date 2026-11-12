@@ -19,11 +19,21 @@ public interface BatchTransferHistoryService extends BaseHibernateService<BatchT
      * Inserts the run and one row per item, all {@code Queued}, in one transaction that commits before the call
      * returns, so a consumer on any node finds the rows. Throws {@link BatchTransferRunExistsException} when the
      * batch's tracking id already has a run.
+     *
+     * <p>Labels are recorded only for items the user can read: those in, or shared into, one of
+     * {@code readableProjects} (null means every project). Any other item is recorded as one XNAT doesn't know:
+     * without labels, and not counted toward the run's source project.
      */
-    void recordSubmit(BatchTransfer batch, UserI user);
+    void recordSubmit(BatchTransfer batch, UserI user, Collection<String> readableProjects);
 
     /** Registers the batch's progress row and moves its run from {@code Queued} to {@code Running}. */
     void registerRun(String trackingId, Integer userId, int total);
+
+    /**
+     * Fails a run that could not start: its unfinished items get {@code message} and become {@code Failed}, and so
+     * does the run. For a batch whose {@link #registerRun} failed, which has no progress row to count its items.
+     */
+    void failRun(String trackingId, String message);
 
     /** Moves a {@code Queued} or {@code Running} run to {@code Stopping}. */
     StopResult requestStop(String trackingId, String username);

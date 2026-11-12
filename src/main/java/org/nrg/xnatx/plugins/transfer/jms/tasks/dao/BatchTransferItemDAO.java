@@ -116,6 +116,18 @@ public class BatchTransferItemDAO extends AbstractHibernateDAO<BatchTransferItem
                 .executeUpdate();
     }
 
+    /** Every {@code Queued} or {@code Running} item of a run to {@code Failed}. Returns how many it changed. */
+    public int failUnfinished(final long historyId, final String message) {
+        return getSession().createQuery("UPDATE BatchTransferItem i SET i.status = :failed, i.message = :message, "
+                        + "i.finished = current_timestamp, i.timestamp = current_timestamp "
+                        + "WHERE i.history.id = :historyId AND i.status IN (:unfinished)")
+                .setParameter("failed", Status.Failed)
+                .setParameter("message", message)
+                .setParameter("historyId", historyId)
+                .setParameterList("unfinished", Arrays.asList(Status.Queued, Status.Running))
+                .executeUpdate();
+    }
+
     /** A run's items in manifest-row order, then by subject and label. */
     public List<BatchTransferItem> listForRun(final long historyId) {
         return getSession().createQuery("FROM BatchTransferItem i WHERE i.history.id = :historyId "

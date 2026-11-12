@@ -93,7 +93,7 @@ public class BatchTransferHistoryDbTest {
         final BatchTransfer batch = new BatchTransfer(new ArrayList<>(Arrays.asList(first, second)), trackingId("submit"));
         batch.setAnonScript("version \"6.1\"\n(0010,4000) := \"${csv.pid}\"");
 
-        history.recordSubmit(batch, alice);
+        history.recordSubmit(batch, alice, null);
 
         final Map<String, Object> run = jdbc.queryForMap("SELECT * FROM xhbm_batch_transfer_history WHERE tracking_id = ?",
                 batch.getTrackingId());
@@ -121,7 +121,7 @@ public class BatchTransferHistoryDbTest {
         assertNull(rows.get(1).get("csv_values"));
 
         assertThrows("a tracking id with a run can't be reused", BatchTransferRunExistsException.class,
-                () -> history.recordSubmit(batch, alice));
+                () -> history.recordSubmit(batch, alice, null));
 
         final long historyId = ((Number) run.get("id")).longValue();
         final List<BatchTransferItem> listed = history.items(historyId);
@@ -140,7 +140,7 @@ public class BatchTransferHistoryDbTest {
         session(id("P"), null, id("C"), "LABEL_C");
         final String trackingId = trackingId("order");
         history.recordSubmit(new BatchTransfer(new ArrayList<>(Arrays.asList(reimport(id("A"), null, null),
-                reimport(id("B"), null, null), reimport(id("C"), 5, null))), trackingId), alice);
+                reimport(id("B"), null, null), reimport(id("C"), 5, null))), trackingId), alice, null);
 
         final List<BatchTransferItem> listed = history.items(((Number) runRow(trackingId).get("id")).longValue());
 
@@ -154,12 +154,98 @@ public class BatchTransferHistoryDbTest {
         session(id("P2"), null, id("E2"), "B");
         final String trackingId = trackingId("mixed");
         history.recordSubmit(new BatchTransfer(new ArrayList<>(Arrays.asList(
-                reimport(id("E1"), null, null), share(id("E2")), share(id("MISSING")))), trackingId), alice);
+                reimport(id("E1"), null, null), share(id("E2")), share(id("MISSING")))), trackingId), alice, null);
 
         final Map<String, Object> run = runRow(trackingId);
         assertNull(run.get("source_project"));
         assertEquals("Mixed", run.get("operation"));
         assertNull("an item XNAT doesn't know keeps no labels", itemRows(trackingId).get(2).get("source_label"));
+    }
+
+    @Test
+    public void anItemTheUserCannotReadIsRecordedWithoutLabels() {
+        final String readable = id("READ");
+        final String hidden = id("HIDDEN");
+        subject(readable, id("S1"), "SUBJ_1");
+        session(readable, id("S1"), id("E1"), "SESS_1");
+        subject(hidden, id("S2"), "SECRET_SUBJ");
+        session(hidden, id("S2"), id("E2"), "SECRET_SESS");
+        final String trackingId = trackingId("unreadable");
+
+        history.recordSubmit(new BatchTransfer(new ArrayList<>(Arrays.asList(reimport(id("E1"), null, null),
+                reimport(id("E2"), null, null), share(id("S2")))), trackingId), alice, Collections.singletonList(readable));
+
+        assertEquals("the unreadable items don't count toward it", readable, runRow(trackingId).get("source_project"));
+        final List<Map<String, Object>> rows = itemRows(trackingId);
+        assertEquals("SESS_1", rows.get(0).get("source_label"));
+        for (final Map<String, Object> row : rows.subList(1, 3)) {
+            assertEquals(row.get("item_id") + " is still recorded", "Queued", row.get("status"));
+            assertNull(row.get("source_label"));
+            assertNull(row.get("source_subject_label"));
+        }
+    }
+
+    @Test
+    public void anItemSharedIntoAReadableProjectIsReadable() {
+        final String readable = id("READ");
+        final String owner = id("OWNER");
+        subject(owner, id("S1"), "SUBJ_1");
+        shareSubject(id("S1"), readable, "SUBJ_HERE");
+        session(owner, id("S1"), id("E1"), "SESS_1");
+        shareSession(id("E1"), readable, "SESS_HERE");
+        session(owner, id("S1"), id("E2"), "NOT_SHARED");
+
+        final Map<String, XnatItemQueries.SourceItem> found = xnatItems.sourceItems(
+                Arrays.asList(id("S1"), id("E1"), id("E2")), null, Collections.singletonList(readable));
+
+        assertEquals(found.keySet().toString(), 2, found.size());
+        assertEquals("SUBJ_1", found.get(id("S1")).getLabel());
+        assertEquals("SESS_1", found.get(id("E1")).getLabel());
+    }
+
+    @Test
+    public void aRunIsRecordedUnderTheProjectItWasStartedFrom() {
+        final String project = id("HERE");
+        final String owner = id("OWNER");
+        subject(project, id("S1"), "OWN_SUBJ");
+        session(project, id("S1"), id("E1"), "OWN_SESS");
+        subject(owner, id("S2"), "PRIMARY_SUBJ");
+        shareSubject(id("S2"), project, "HERE_SUBJ");
+        session(owner, id("S2"), id("E2"), "SHARED_SESS");
+        shareSession(id("E2"), project, "HERE_SESS");
+        final String trackingId = trackingId("startedFrom");
+        final BatchTransfer batch = new BatchTransfer(new ArrayList<>(Arrays.asList(
+                reimport(id("E1"), null, null), reimport(id("E2"), null, null), share(id("S2")))), trackingId);
+        batch.setSourceProject(project);
+
+        history.recordSubmit(batch, alice, null);
+
+        assertEquals(project, runRow(trackingId).get("source_project"));
+        final List<Map<String, Object>> rows = itemRows(trackingId);
+        assertEquals("OWN_SUBJ", rows.get(0).get("source_subject_label"));
+        assertEquals("a shared subject's label in the project", "HERE_SUBJ", rows.get(1).get("source_subject_label"));
+        assertEquals("a session keeps its own label, which a manifest names", "SHARED_SESS",
+                rows.get(1).get("source_label"));
+        assertEquals("HERE_SUBJ", rows.get(2).get("source_label"));
+    }
+
+    @Test
+    public void aRunWithAnItemFromOutsideTheProjectItWasStartedFromGoesToTheOwner() {
+        final String project = id("HERE");
+        final String owner = id("OWNER");
+        subject(owner, id("S1"), "PRIMARY_SUBJ");
+        shareSubject(id("S1"), project, "HERE_SUBJ");
+        session(owner, id("S1"), id("E1"), "NOT_SHARED");
+        final String trackingId = trackingId("outside");
+        final BatchTransfer batch = new BatchTransfer(new ArrayList<>(Collections.singletonList(
+                reimport(id("E1"), null, null))), trackingId);
+        batch.setSourceProject(project);
+
+        history.recordSubmit(batch, alice, null);
+
+        assertEquals(owner, runRow(trackingId).get("source_project"));
+        assertEquals("the owner's label, as the run is the owner's", "PRIMARY_SUBJ",
+                itemRows(trackingId).get(0).get("source_subject_label"));
     }
 
     @Test
@@ -173,7 +259,7 @@ public class BatchTransferHistoryDbTest {
         ids.add(id("E1"));
         ids.add(id("S1"));
 
-        final Map<String, XnatItemQueries.SourceItem> found = xnatItems.sourceItems(ids);
+        final Map<String, XnatItemQueries.SourceItem> found = xnatItems.sourceItems(ids, null, null);
 
         assertEquals(2, found.size());
         assertEquals("ONE", found.get(id("E1")).getLabel());
@@ -188,7 +274,7 @@ public class BatchTransferHistoryDbTest {
         }
         final String trackingId = trackingId("big");
         final long start = System.nanoTime();
-        history.recordSubmit(new BatchTransfer(requests, trackingId), alice);
+        history.recordSubmit(new BatchTransfer(requests, trackingId), alice, null);
         final long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
         System.out.println("Recorded a 5,000-item submit in " + millis + " ms");
 
@@ -209,7 +295,7 @@ public class BatchTransferHistoryDbTest {
         final BatchTransfer batch = new BatchTransfer(new ArrayList<>(Collections.singletonList(
                 reimport(id("E1"), null, values))), trackingId);
         batch.setAnonScript(script.toString());
-        history.recordSubmit(batch, alice);
+        history.recordSubmit(batch, alice, null);
         history.registerRun(trackingId, 7, 1);
         final StringBuilder message = new StringBuilder();
         while (message.length() < 10_000) {
@@ -229,7 +315,7 @@ public class BatchTransferHistoryDbTest {
     public void itemsBelongToTheirRun() {
         final String trackingId = trackingId("fk");
         history.recordSubmit(new BatchTransfer(new ArrayList<>(Collections.singletonList(share(id("E1")))), trackingId),
-                alice);
+                alice, null);
         final long historyId = ((Number) runRow(trackingId).get("id")).longValue();
 
         assertThrows("an item for a missing run", DataIntegrityViolationException.class, () -> jdbc.update(
@@ -263,6 +349,25 @@ public class BatchTransferHistoryDbTest {
         assertEquals("Stopping", runRow(stopping).get("status"));
         assertEquals("bob", runRow(stopping).get("stop_requested_by"));
         assertNotNull(runRow(stopping).get("stop_requested_at"));
+    }
+
+    @Test
+    public void aRunThatCouldNotStartIsFailedWithItsItems() {
+        final String trackingId = submit("noStart", 2);
+
+        history.failRun(trackingId, "Could not start. Cause: no database");
+
+        final Map<String, Object> run = runRow(trackingId);
+        assertEquals("Failed", run.get("status"));
+        assertEquals(0, run.get("passed_count"));
+        assertEquals(2, run.get("failed_count"));
+        assertNotNull(run.get("finished"));
+        for (final Map<String, Object> item : itemRows(trackingId)) {
+            assertEquals("Failed", item.get("status"));
+            assertEquals("Could not start. Cause: no database", item.get("message"));
+            assertNotNull(item.get("finished"));
+        }
+        history.failRun(trackingId("noSuchRun"), "nothing to fail");
     }
 
     @Test
@@ -495,6 +600,16 @@ public class BatchTransferHistoryDbTest {
         }
     }
 
+    private void shareSubject(final String subjectId, final String project, final String label) {
+        jdbc.update("INSERT INTO xnat_projectparticipant (subject_id, project, label) VALUES (?, ?, ?)",
+                subjectId, project, label);
+    }
+
+    private void shareSession(final String sessionId, final String project, final String label) {
+        jdbc.update("INSERT INTO xnat_experimentdata_share (sharing_share_xnat_experimentda_id, project, label) "
+                + "VALUES (?, ?, ?)", sessionId, project, label);
+    }
+
     private TransferRequest reimport(final String id, final Integer rowNumber, final Map<String, String> values) {
         final TransferRequest request = new TransferRequest(DESTINATION, id, TransferMode.REIMPORT, true, true,
                 values, null, null, null, false);
@@ -513,14 +628,14 @@ public class BatchTransferHistoryDbTest {
             requests.add(reimport(id("E" + i), null, null));
         }
         final String trackingId = trackingId(name);
-        history.recordSubmit(new BatchTransfer(requests, trackingId), alice);
+        history.recordSubmit(new BatchTransfer(requests, trackingId), alice, null);
         return trackingId;
     }
 
     private String submitOne(final String name, final String itemId, final String destination, final UserI user) {
         final String trackingId = trackingId(name);
         history.recordSubmit(new BatchTransfer(new ArrayList<>(Collections.singletonList(
-                new TransferRequest(destination, itemId, TransferMode.SHARE))), trackingId), user);
+                new TransferRequest(destination, itemId, TransferMode.SHARE))), trackingId), user, null);
         return trackingId;
     }
 

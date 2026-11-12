@@ -230,6 +230,31 @@ public class BatchTransferApiTest {
     }
 
     @Test
+    public void submit_aSourceProjectTheUserCanRead_isSubmitted() {
+        final BatchTransfer batch = batch(reimport("E1"));
+        batch.setSourceProject(SRC);
+
+        final ResponseEntity<String> resp = api.submit(batch);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(api).canReadProject(SRC, user);
+        verify(service).submitTransferRequest(batch, user);
+    }
+
+    @Test
+    public void submit_aSourceProjectTheUserCannotRead_returns403() {
+        doReturn(false).when(api).canReadProject(anyString(), any(UserI.class));
+        final BatchTransfer batch = batch(reimport("E1"));
+        batch.setSourceProject(SRC);
+
+        final ResponseEntity<String> resp = api.submit(batch);
+
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        assertEquals("You do not have read access to project " + SRC + ".", resp.getBody());
+        verify(service, never()).submitTransferRequest(any(), any());
+    }
+
+    @Test
     public void submit_theSameItemTwice_returns400NamingIt() {
         final ResponseEntity<String> resp = api.submit(batch(reimport("E1"), reimport("E2"), reimport("E1")));
 

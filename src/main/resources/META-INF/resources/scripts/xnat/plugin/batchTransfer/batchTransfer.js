@@ -261,7 +261,7 @@ var XNAT = getObject(XNAT || {});
         var src = project ? '<b>' + project + '</b>' : 'the projects in your search results';
         var to = selectedProject ? '<b>' + escapeHtml(selectedProject) + '</b>' : 'a destination project';
         $('#bt-summary').html('Transfer subjects and image sessions from ' + src + ' into ' + to + ' in one batch: ' +
-            'share them, clone them, or reimport them with anonymization. ' +
+            'share them, clone them, or reimport sessions with anonymization. ' +
             (project ? project + ' itself is' : 'The source projects are') +
             ' not changed, and once submitted the transfer runs in the background.');
     }
@@ -1958,8 +1958,13 @@ var XNAT = getObject(XNAT || {});
     function postItems(items) {
         var batchTransfer = {
             requests: items,
-            tracking_id: 'batch_transfer_' + Date.now()
+            // The random suffix keeps two submits in the same millisecond from sharing a tracking id.
+            tracking_id: 'batch_transfer_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10)
         };
+        // Records the run under the project the screen was opened from, when its items belong to that project.
+        if (config.projectContext) {
+            batchTransfer.source_project = config.projectContext;
+        }
         // Batch-level Anon-Script template (Reimport + custom script); per-item ${csv.*} values ride each
         // request's csv_values. Omitted entirely when no custom script is set.
         var anonScript = anonScriptForSubmit();

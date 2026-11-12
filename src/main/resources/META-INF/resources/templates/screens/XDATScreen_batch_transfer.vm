@@ -129,7 +129,7 @@
         <div class="bt-workspace">
             <div class="bt-work-scroll">
 
-                ## What the chosen operation does; batchTransfer.js writes it.
+                ## What Batch Transfer does, styled as the page's introduction; batchTransfer.js writes it.
                 <p class="bt-summary" id="bt-summary"></p>
 
                 <div class="bt-panel bt-setup">

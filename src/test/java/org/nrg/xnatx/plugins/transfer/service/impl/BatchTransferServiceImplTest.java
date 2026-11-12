@@ -123,6 +123,8 @@ public class BatchTransferServiceImplTest {
 
         // Default reimport destinations to auto-archive (AA=true); tests override with doReturn(false).
         doReturn(true).when(service).destinationAutoArchives(anyString());
+        // A site admin's view: every project readable, no XDAT permission lookup.
+        doReturn(null).when(service).readableProjects(any(UserI.class));
     }
 
     // -----------------------------------------------------------------
@@ -845,11 +847,12 @@ public class BatchTransferServiceImplTest {
     public void submitTransferRequest_recordsTheRunBeforeQueuing() {
         final BatchTransfer batch = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), TRACKING_ID);
         doReturn(null).when(executorService).submit(any(Runnable.class));
+        doReturn(List.of(SRC_PROJECT)).when(service).readableProjects(user);
 
         service.submitTransferRequest(batch, user);
 
         final InOrder order = Mockito.inOrder(historyService, executorService);
-        order.verify(historyService).recordSubmit(batch, user);
+        order.verify(historyService).recordSubmit(batch, user, List.of(SRC_PROJECT));
         order.verify(executorService).submit(any(Runnable.class));
     }
 
@@ -869,11 +872,46 @@ public class BatchTransferServiceImplTest {
     @Test
     public void submitTransferRequest_aRepeatedTrackingId_queuesNothing() {
         final BatchTransfer batch = new BatchTransfer(new ArrayList<>(List.of(reimport(EXP_ID))), TRACKING_ID);
-        doThrow(new BatchTransferRunExistsException(TRACKING_ID)).when(historyService).recordSubmit(batch, user);
+        doThrow(new BatchTransferRunExistsException(TRACKING_ID)).when(historyService).recordSubmit(batch, user, null);
 
         assertThrows(BatchTransferRunExistsException.class, () -> service.submitTransferRequest(batch, user));
         verify(executorService, never()).submit(any(Runnable.class));
         verifyNoInteractions(nrgEventService);
+    }
+
+    /** A batch that can't register has no progress row to count its items, so its run is failed outright. */
+    @Test
+    public void batchTransfer_whenRegisteringFails_failsTheRun() throws Exception {
+        final TransferRequest share = new TransferRequest(DEST_PROJECT, "exp_share", TransferMode.SHARE);
+        doThrow(new IllegalStateException("database unavailable")).when(monitor).register(TRACKING_ID, 42, 1);
+
+        service.submitTransferRequest(new BatchTransfer(new ArrayList<>(List.of(share)), TRACKING_ID), user);
+
+        verify(historyService).failRun(TRACKING_ID, "Could not start. Cause: database unavailable");
+        verify(service, never()).processItem(any(TransferRequest.class), any(UserI.class), any(EventInfo.class));
+        final ArgumentCaptor<BatchTransferEvent> events = ArgumentCaptor.forClass(BatchTransferEvent.class);
+        verify(nrgEventService, times(2)).triggerEvent(events.capture());
+        final BatchTransferEvent last = events.getAllValues().get(1);
+        assertEquals(BatchTransferEvent.Status.Warning, last.getStatus());
+        assertTrue("the activity tab's terminal event", last.isCompleted());
+        assertEquals("Transfer could not start. Cause: database unavailable", last.getMessage());
+    }
+
+    /** When handing out the items throws, the items not already sent to a queue are failed so the run finishes. */
+    @Test
+    public void batchTransfer_whenHandingOutThrows_failsTheItemsNotQueued() {
+        final TransferRequest reimportReq = new TransferRequest(DEST_PROJECT, "exp_reimport", TransferMode.REIMPORT);
+        final TransferRequest shareReq    = new TransferRequest(DEST_PROJECT, "exp_share",    TransferMode.SHARE);
+        when(monitor.startItem(TRACKING_ID, "exp_share")).thenThrow(new IllegalStateException("lost"));
+
+        try (MockedStatic<XDAT> ignored = mockStatic(XDAT.class)) {
+            service.submitTransferRequest(new BatchTransfer(new ArrayList<>(List.of(reimportReq, shareReq)),
+                    TRACKING_ID), user);
+        }
+
+        verify(monitor).finishItem(TRACKING_ID, "exp_share", Outcome.FAILED, "Not started. Cause: lost", null);
+        verify(monitor, never()).finishItem(eq(TRACKING_ID), eq("exp_reimport"), any(), any(), any());
+        verify(historyService, never()).failRun(anyString(), anyString());
     }
 
     /** A Share item the run was stopped before is skipped: not processed, and not finished a second time. */

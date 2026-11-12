@@ -12,9 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
  * completion check, and row removal under a single pessimistic write lock, so concurrent callers across
  * nodes serialize and exactly one is told it completed the batch.
  *
- * <p>{@link #register}'s insert relies on the {@code trackingId} unique constraint to arbitrate a
- * cross-node race; the losing insert fails at transaction commit and is caught by the producer
- * ({@code BatchTransferServiceImpl.batchTransfer}), whose peer already created the equivalent row.
+ * <p>{@link #register} runs once per tracking id: the run's own unique tracking id rejects a second submit of
+ * the same batch before it gets here. Should its insert still fail, the producer
+ * ({@code BatchTransferServiceImpl.batchTransfer}) fails the run.
  */
 @Service
 public class HibernateBatchTransferProgressService

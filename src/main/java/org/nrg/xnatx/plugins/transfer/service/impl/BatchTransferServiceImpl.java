@@ -15,6 +15,7 @@ import org.nrg.xdat.model.XnatSubjectassessordataI;
 import org.nrg.xdat.om.*;
 import org.nrg.xdat.security.helpers.Features;
 import org.nrg.xdat.security.helpers.Permissions;
+import org.nrg.xdat.security.helpers.Roles;
 import org.nrg.xft.ItemI;
 import org.nrg.xft.event.EventDetails;
 import org.nrg.xft.event.EventUtils;
@@ -108,11 +109,19 @@ public class BatchTransferServiceImpl implements BatchTransferService {
 
         // The run and its item rows commit here, before the task below can queue any item, so a consumer on any
         // node always finds its item's row.
-        historyService.recordSubmit(batchTransferRequest, user);
+        historyService.recordSubmit(batchTransferRequest, user, readableProjects(user));
 
         final String queuedMsg = String.format("Transfer Queued (%s items)", batchTransferRequest.getRequests().size());
         eventService.triggerEvent(BatchTransferEvent.waiting(user.getID(), batchTransferRequest.getTrackingId(), queuedMsg));
         executorService.submit(() -> batchTransfer(batchTransferRequest, user));
+    }
+
+    /**
+     * The projects whose data the user can read, or null for a site admin, who can read them all. Overridable so
+     * tests need no XDAT wiring.
+     */
+    protected Collection<String> readableProjects(final UserI user) {
+        return Roles.isSiteAdmin(user) ? null : Permissions.getReadableProjects(user);
     }
 
     private void batchTransfer(BatchTransfer batchTransferRequest, UserI user) {
@@ -143,17 +152,52 @@ public class BatchTransferServiceImpl implements BatchTransferService {
         // Register the whole batch once; every item — whether queued (Reimport/Clone) or processed
         // in-process (Share) — reports to the monitor, which emits the single terminal event after the
         // last one finishes. This keeps one completion signal even when operations are mixed.
-        monitor.register(trackingId, user.getID(), requests.size());
-        if (!reimportItems.isEmpty()) {
-            enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(),
-                    batchTransferRequest.isAnonReplacePipeline(), user);
+        try {
+            monitor.register(trackingId, user.getID(), requests.size());
+        } catch (RuntimeException e) {
+            failToStart(trackingId, user, e);
+            return;
         }
-        if (!cloneItems.isEmpty()) {
-            enqueueClone(trackingId, cloneItems, user);
+
+        // Items sent to a queue are their consumer's to finish. If a step throws, every other item still
+        // unfinished is failed, so the run still finishes; finishing an item that already finished does nothing.
+        final Set<String> queued = new HashSet<>();
+        try {
+            if (!reimportItems.isEmpty()) {
+                enqueueReimport(trackingId, reimportItems, batchTransferRequest.getAnonScript(),
+                        batchTransferRequest.isAnonReplacePipeline(), user, queued);
+            }
+            if (!cloneItems.isEmpty()) {
+                enqueueClone(trackingId, cloneItems, user, queued);
+            }
+            if (!sequentialItems.isEmpty()) {
+                runSequential(trackingId, sequentialItems, user);
+            }
+        } catch (RuntimeException e) {
+            log.error("Batch {}: stopped before every item was handed out", trackingId, e);
+            final String message = "Not started. Cause: " + XnatUtils.rootCauseMessage(e);
+            for (final TransferRequest request : requests) {
+                if (!queued.contains(request.getId())) {
+                    monitor.finishItem(trackingId, request.getId(), Outcome.FAILED, message, null);
+                }
+            }
         }
-        if (!sequentialItems.isEmpty()) {
-            runSequential(trackingId, sequentialItems, user);
+    }
+
+    /**
+     * Ends a batch whose registration failed. It has no progress row to count its items, so its run and items are
+     * failed directly.
+     */
+    private void failToStart(final String trackingId, final UserI user, final RuntimeException failure) {
+        log.error("Batch {}: could not start", trackingId, failure);
+        final String cause = XnatUtils.rootCauseMessage(failure);
+        try {
+            historyService.failRun(trackingId, "Could not start. Cause: " + cause);
+        } catch (RuntimeException e) {
+            log.error("Batch {}: could not record that it failed to start", trackingId, e);
         }
+        eventService.triggerEvent(BatchTransferEvent.warn(user.getID(), 100, trackingId,
+                "Transfer could not start. Cause: " + cause));
     }
 
     /**
@@ -164,7 +208,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * path. Each session's own workflow is created (and completed/failed) inside {@code importExperiment}.
      */
     private void enqueueReimport(final String trackingId, final List<TransferRequest> requests, final String anonScript,
-                                final boolean anonReplacePipeline, final UserI user) {
+                                final boolean anonReplacePipeline, final UserI user, final Set<String> queued) {
         for (final TransferRequest request : requests) {
             try {
                 // Substitute the ${csv.*} template with this item's values now, so each JMS message carries
@@ -177,6 +221,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
                         request.getPreserveSubjectLabel(), request.getPreserveSessionLabel(),
                         request.getDestinationSubjectLabel(), request.getDestinationSessionLabel(),
                         compiledScript, anonReplacePipeline));
+                queued.add(request.getId());
             } catch (Exception e) {
                 // Couldn't enqueue this item — report it as a failed completion so the batch still finishes.
                 log.error("Failed to queue reimport for {}", request.getId(), e);
@@ -195,7 +240,8 @@ public class BatchTransferServiceImpl implements BatchTransferService {
      * get-or-create race). Parallelism is across subjects. The batch is registered with the monitor once
      * by the caller ({@link #batchTransfer}); each item reports completion via its consumer.
      */
-    private void enqueueClone(final String trackingId, final List<TransferRequest> requests, final UserI user) {
+    private void enqueueClone(final String trackingId, final List<TransferRequest> requests, final UserI user,
+                              final Set<String> queued) {
         final Map<String, List<CloneSubjectRequest.CloneItem>> bySubject = new LinkedHashMap<>();
         for (final TransferRequest request : requests) {
             try {
@@ -216,6 +262,7 @@ public class BatchTransferServiceImpl implements BatchTransferService {
             try {
                 XDAT.sendJmsRequest(new CloneSubjectRequest(trackingId, entry.getKey(), entry.getValue(),
                         user.getUsername(), user.getID()));
+                entry.getValue().forEach(item -> queued.add(item.getItemId()));
             } catch (Exception e) {
                 // Couldn't enqueue this subject's bundle — report all of its items failed.
                 log.error("Failed to queue clone bundle for subject {}", entry.getKey(), e);

@@ -1629,8 +1629,20 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 }
 .bt-anon-editor.bt-drag .bt-drop-over { display: flex; }
 
-/* Summary: what the chosen operation does, above the setup card. */
-.bt-summary { margin: 0 4px 12px; max-width: 780px; font-size: 13px; line-height: 1.5; color: #3c4043; }
+/* Summary: what Batch Transfer does, above the setup card. A card with an accent edge, so it reads as the page's
+   introduction. */
+.bt-summary {
+    margin: 0 0 12px;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #e8eaed;
+    border-left: 4px solid #1a73e8;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #202124;
+}
+.bt-summary:empty { display: none; }
 
 /* Setup card: a labelled row per setting. */
 .bt-setup-row { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; padding: 12px 14px; }
