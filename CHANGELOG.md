@@ -6,18 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [2.0.0]
 
-Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Features are the same as 1.2.0.
+Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Adds transfer history with Stop, History pages that don't need a project, subject rows in manifests, and checks on the labels a Reimport will give each session. 2.0.0 also includes everything listed under 1.2.0, which was not released, so a site upgrading from 1.1.1 gets both sets of changes.
+
+### Added
+
+- **Transfer history** — every submit is recorded as a run, with one record per item: its request (manifest values and row number included), its labels, and its outcome. Two tables are created on startup: `xhbm_batch_transfer_history` and `xhbm_batch_transfer_item`.
+- **History tab** — the Batch Transfer screen has **New transfer** and **History** tabs. History lists the project's transfers as source or destination, newest first, 25 a page, with outcome counts or progress. A badge counts running transfers. Opening a transfer shows its details and custom script, and every item grouped by subject, failures first, with a filter for failed and stopped items. A submit opens History with the new transfer highlighted.
+- **Stop** — the user who started a transfer, or a site admin, can stop it while it's Queued or Running. Items that haven't started are skipped and end Stopped. Items already transferring finish, and nothing is undone. Stop works on every node.
+- **Export results and Export for rerun** — Export results writes every item and its outcome as CSV. Export for rerun writes a manifest of the failed and stopped sessions, to upload unchanged. It's offered only when nothing it needs is hidden from the viewer.
+- **History without a project** — **Tools > Batch Transfer History** shows any logged-in user their own transfers, including those started from search results; site admins can switch to every transfer. Site admins also find every transfer on a **Transfer History** tab under **Administer > Plugin Settings > Batch Transfer**, with run details, Stop and the exports. The address names the History view (`#history`, `#history/all`, `#history/run/<tracking id>`), so a list or a transfer can be linked to.
+- **Subject rows in manifests** — a row with a blank `source_session_label` covers all of the subject's image sessions. A subject with none is `no_sessions`. Rows that overlap are `duplicate_session` and block Submit. Each row carries a `row_number` as a spreadsheet numbers the file, and messages name rows by it.
+- **Destination label checks before a Reimport** — on a manifest, two source subjects sent to one destination subject block Submit. These are warnings, which don't block Submit:
+  - a source subject whose sessions would go to more than one destination subject;
+  - a blank destination label cell;
+  - a session label the destination already has.
+
+  The Destination cells are highlighted with the reason, the summary line counts each kind, and the confirmation lists them under Check. The labels chip, the confirmation and History say where each session's labels come from: the manifest, the source, or DICOM tags.
+- **Script from a file** — upload a file into the script editor, or drop it on the script panel, with Undo. An empty file, a binary file, or a file over the size limit is refused.
+- **REST**:
+  - `GET /xapi/transfer/history` (`all=true` for site admins);
+  - `GET /xapi/transfer/history/{tracking_id}`, with `changed_since` for polling;
+  - `POST /xapi/transfer/history/{tracking_id}/stop`;
+  - `POST /xapi/transfer/validate/destination_labels`.
+
+  `POST /xapi/transfer` takes an optional `source_project` and per-request `row_number`. It returns 409 for a `tracking_id` that already has a run. See [`docs/rest-api.md`](docs/rest-api.md).
+- **Quick-start guide** — [`docs/quick-start.md`](docs/quick-start.md) walks through each operation and History with screenshots.
 
 ### Changed
 
-- **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. Use 1.2.0 on XNAT 1.9.
+- **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. XNAT 1.9 sites stay on 1.1.1.
 - **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1 (6.8 and 6.9 were never script versions). An install that still has the previous default `^6\.[0-7]$` stored is updated at startup; a pattern an admin changed is kept.
+- **New transfer layout** — a column of help topics on the left, which collapses to a strip and is remembered per viewer. A setup card holds the Transfer, Operation and Anonymization rows, and the cohort mode toggle moves into the Cohort builder header. A one-sentence summary names the source and destination.
+- **Anonymization chip** — for Reimport, it lists the scripts that will run, in order: site-wide, custom, then destination. It's grey when no script is known to run, and warns when a custom script runs alongside another. The confirmation names the same scripts.
+- **`POST /xapi/transfer` checks the batch** — it returns 400 when an item has no id, the same item is listed twice, a destination label isn't a valid XNAT label, or two Reimport items are sent to the same `destination_session_label`.
+- **Default tracking IDs** have a random suffix: `batch_transfer_<millis>_<8 hex digits>`.
+- **Failure messages** report the deepest non-blank message in the error's cause chain.
 - **Build** — Gradle 9.4.1, Mockito 5, Lombok from the XNAT BOM.
-- **Plugin jar no longer bundles `commons-csv`** — XNAT already ships it (as a dependency of xdat core), so the build produces one plain `batch-transfer-<version>.jar` again, with no fat or `-thin` variant.
 
 ### Fixed
 
 - **Scripts with syntax errors are rejected** — *Validate* and submit now reject a custom script that DicomEdit can't parse, and report DicomEdit's line, column and reason (for example `Failed to parse at 2:14 due to extraneous input '='`). Before, DicomEdit only logged the parse error, so a malformed script passed validation and was submitted.
+- **Repeated manifest columns are rejected** — `validate/manifest` returns 400 naming the column. Before, the last copy was used and the others were silently ignored. Notes columns (the `_` prefix) may still repeat.
+- **Blank-looking manifest lines are skipped** — a line of only spaces or commas, as spreadsheets export for an emptied row, is skipped instead of being read as the header or as a row with no subject.
+- **Protected projects** — `validate/manifest` returns 403 for a project whose data the caller can't read, instead of `subject_not_found` on every row.
+- **Opening the screen without a project or search** shows History instead of an error page.
+
+### Security
+
+- **The screen's `destination` parameter** is used only when it names an existing project, and is passed on as that project's ID and escaped wherever the page uses it.
+
+### Reimport through XNAT's importer, compared with 1.1.1
+
+For a Reimport without a custom script or manifest labels, 2.0.0 calls XNAT's importer exactly as 1.1.1 did: the same importer, parameters, files, per-session queueing and concurrency. 2.0.0 adds two optional inputs to that call, a custom anonymization script and destination labels from a manifest, plus Stop and History tracking around it. The import itself is XNAT's, so its behaviour follows the XNAT version (1.10.2.1 rather than 1.9.3.3).
 
 ### XNAT 1.10 behavior that affects transfers
 
@@ -33,7 +73,9 @@ These come from XNAT 1.10 itself, not from the plugin.
 
 - **On XNAT 1.10.2.1, Reimports that run at the same time soon after XNAT starts can fail.** Some sessions fail with an error such as `Invalid attribute 'x' of 'xnat:mrScanData/parameters/voxelRes'` or `Invalid attribute 'manufacturer' of 'xnat:mrSessionData/scanner'` and stay in the destination project's prearchive. The cause is a race in XNAT's schema lookups, fixed in [NrgXnat/xnat#104](https://github.com/NrgXnat/xnat/pull/104) but not yet in an XNAT release. To recover, delete the failed sessions from the prearchive and run them again; once XNAT has warmed up, they succeed.
 
-## [1.2.0]
+## [1.2.0] - Unreleased
+
+**Not released.** Its changes ship in 2.0.0, which also moves the plugin to XNAT 1.10; XNAT 1.9 sites stay on 1.1.1.
 
 Custom per-session anonymization for **Reimport**, CSV manifests as an alternative way to pick a cohort, and explicit destination labels. Everything except the custom script runs on XNAT 1.9.3.3; the custom script needs **XNAT 1.9.3.7 or later**, which adds the importer's `Anon-Script` parameter (XNAT-8777). The plugin detects that parameter at runtime and hides the custom-script controls on older builds.
 
@@ -41,16 +83,11 @@ Custom per-session anonymization for **Reimport**, CSV manifests as an alternati
 
 - **Custom anonymization script for Reimport** — supply a DicomEdit 6 script that is applied to every reimported session at ingest. It runs *in addition to* the destination project's anonymization; through the REST API, `anon_replace_pipeline` makes it run *instead* (the plugin also sends `PREVENT_ANON`). Requires edit access on every destination project.
 - **`${csv.<column>}` placeholders** — a script can reference manifest columns; each session's row values are substituted before the script is applied. Values are restricted to a safe character set (default `A-Za-z0-9 ^_.-`), so a cell can't inject DicomEdit syntax.
-- **CSV manifest cohorts** — instead of ticking rows in the tree, upload a CSV with `source_subject_label` and `source_session_label` columns. Each row is resolved against the source project before submit and shown as matched, subject not found, or session not found; only matched rows are transferred. Works for all three operations. Columns prefixed with `_` are notes and are ignored.
+- **CSV manifest cohorts for Reimport** — instead of ticking rows in the tree, upload a CSV with `source_subject_label` and `source_session_label` columns. Each row is resolved against the source project before submit and shown as matched, subject not found, or session not found; only matched rows are transferred. Columns prefixed with `_` are notes and are ignored.
 - **Destination label routing** — optional `destination_subject_label` / `destination_session_label` manifest columns set where each reimported session lands. Precedence per label: manifest value, then the *preserve source label* option, then the label derived from DICOM tags.
 - **Script validation and preflight** — a *Validate* control checks the script's size, version, restricted commands, placeholder binding against the manifest columns, and parse result before submit. Submit repeats the same checks server-side, so a direct API caller can't bypass them.
 - **REST endpoints** — `GET /xapi/transfer/capabilities`, `POST /xapi/transfer/validate/script`, and `POST /xapi/transfer/validate/manifest`. `POST /xapi/transfer` accepts optional `anon_script` and `anon_replace_pipeline`, plus per-request `csv_values`, `destination_subject_label`, and `destination_session_label`; existing request bodies behave as before. See [`docs/rest-api.md`](docs/rest-api.md).
 - **Admin settings** — alongside queue concurrency: maximum script size (default 256 KB), allowed value character set, restricted DicomEdit commands (default `mapUID`, `mapReferencedUIDs`, `lookup`, `getURL`, `alterPixels`, `newUID`, which are unsafe under parallel Reimport), allowed DicomEdit version pattern (default `6.0`–`6.7`), and maximum manifest rows (default 5000).
-
-### Changed
-
-- **Transfer screen layout** — the screen is now a stack of titled panels (Project → Operation → Cohort → Anonymization → Summary). The page is the only scroller; the side rail and action bar stay pinned. The manifest table pages at 25 rows and shows resolved destination labels.
-- **Deployable jar bundles `commons-csv`** — `batch-transfer-<version>.jar` now includes `commons-csv`, which parses manifests. The build also emits a `-thin` jar without it; don't deploy that one.
 
 ---
 
