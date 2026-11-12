@@ -143,21 +143,30 @@ var XNAT = getObject(XNAT || {});
         fetchRuns(0, function(data) { setBadge(data.runs); schedulePoll(); }, function() { schedulePoll(); });
     }
 
+    // While the open run is active, a poll fetches only the items changed since the last load. Opening the run, and
+    // its finishing, load every item.
     function loadDetail() {
         var seq = ++detailSeq;
         var id = runId;
+        var prev = detailData && detailData.run && detailData.run.tracking_id === id ? detailData : null;
+        var partial = !!prev && isActive(prev.run) && prev.items_as_of != null;
         $.ajax({
             type: 'GET',
-            url: XNAT.url.rootUrl('/xapi/transfer/history/' + encodeURIComponent(id)),
+            url: XNAT.url.rootUrl('/xapi/transfer/history/' + encodeURIComponent(id) +
+                (partial ? '?changed_since=' + encodeURIComponent(prev.items_as_of) : '')),
             dataType: 'json',
             cache: false,
             success: function(data) {
                 if (seq !== detailSeq || id !== runId) { return; }
                 var wasActive = !!detailData && isActive(detailData.run);
-                detailData = data;
+                detailData = partial ? mergeDetail(prev, data) : data;
                 detailError = null;
                 if (view === 'history') { render(); }
-                if (wasActive && !isActive(data.run)) { loadBadge(); }
+                if (wasActive && !isActive(detailData.run)) { loadBadge(); }
+                if (partial && !isActive(detailData.run)) {
+                    loadDetail();
+                    return;
+                }
                 schedulePoll();
             },
             error: function(xhr) {
@@ -169,6 +178,15 @@ var XNAT = getObject(XNAT || {});
                 schedulePoll();
             }
         });
+    }
+
+    // A partial load's items replace their earlier copies, in place; the run, its counts and Stop come from it too.
+    // It carries no script, so the earlier one is kept.
+    function mergeDetail(prev, data) {
+        var changed = {};
+        (data.items || []).forEach(function(it) { changed[it.item_id] = it; });
+        var items = (prev.items || []).map(function(it) { return changed[it.item_id] || it; });
+        return $.extend({}, data, { items: items, anon_script: prev.anon_script });
     }
 
     // Polls while something shown is unfinished: fast while History shows, slower for the badge otherwise.

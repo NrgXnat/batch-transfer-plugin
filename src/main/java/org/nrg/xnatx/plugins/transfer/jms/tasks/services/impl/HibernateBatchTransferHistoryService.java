@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -192,6 +193,12 @@ public class HibernateBatchTransferHistoryService
     @Transactional
     public List<BatchTransferItem> items(final long historyId) {
         return itemDao.listForRun(historyId);
+    }
+
+    @Override
+    @Transactional
+    public List<BatchTransferItem> itemsChangedSince(final long historyId, final Date since) {
+        return itemDao.listChangedSince(historyId, since);
     }
 
     @Override

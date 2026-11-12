@@ -38,6 +38,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,6 +65,10 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
 
     private static final int DEFAULT_PAGE_SIZE = 25;
     private static final int MAX_PAGE_SIZE     = 200;
+
+    // An item's timestamp is when its database transaction started, so a change can commit after a poll that already
+    // passed that time. Each changed_since poll also returns the changes from this long before it.
+    static final long CHANGE_OVERLAP_MS = 30_000L;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -120,14 +125,16 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         return new ResponseEntity<>(new TransferRunPage(runs, total, pageNumber, pageSize), HttpStatus.OK);
     }
 
-    @ApiOperation(value = "A transfer run with its items")
+    @ApiOperation(value = "A transfer run with its items. With changed_since (a previous response's items_as_of), only "
+            + "the items changed since then, and no anon_script")
     @ApiResponses({@ApiResponse(code = 200, message = "The run"),
                    @ApiResponse(code = 403, message = "The caller can't see this run"),
                    @ApiResponse(code = 404, message = "No run has this tracking id")})
     @XapiRequestMapping(value = {"{trackingId:.+}"}, produces = APPLICATION_JSON_VALUE, method = GET,
             restrictTo = AccessLevel.Authenticated)
     @ResponseBody
-    public ResponseEntity<?> detail(@PathVariable("trackingId") final String trackingId) {
+    public ResponseEntity<?> detail(@PathVariable("trackingId") final String trackingId,
+                                    @RequestParam(value = "changed_since", required = false) final Long changedSince) {
         final BatchTransferHistory run = historyService.findByTrackingId(trackingId);
         if (run == null) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
@@ -139,7 +146,8 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
             return new ResponseEntity<>(HttpStatus.FORBIDDEN);
         }
         final boolean showValues = canSeeValues(user, run);
-        final List<BatchTransferItem> items = historyService.items(run.getId());
+        final List<BatchTransferItem> items = changedSince == null ? historyService.items(run.getId())
+                : historyService.itemsChangedSince(run.getId(), new Date(changedSince - CHANGE_OVERLAP_MS));
         final Set<String> destinationIds = new LinkedHashSet<>();
         for (final BatchTransferItem item : items) {
             if (item.getDestinationId() != null && canRead(readable, item.getDestinationProject())) {
@@ -152,14 +160,19 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
         detail.setRun(toView(run));
         detail.setCanStop(canStop(user, run) && (run.getStatus() == BatchTransferHistory.Status.Queued
                 || run.getStatus() == BatchTransferHistory.Status.Running));
-        if (showValues) {
+        if (showValues && changedSince == null) {
             detail.setAnonScript(run.getAnonCustomScript());
         }
+        long asOf = changedSince == null ? 0 : changedSince;
         final List<TransferRunItem> views = new ArrayList<>(items.size());
         for (final BatchTransferItem item : items) {
             views.add(toView(item, showValues, canRead(readable, item.getDestinationProject()), destinationLabels));
+            if (item.getTimestamp() != null) {
+                asOf = Math.max(asOf, item.getTimestamp().getTime());
+            }
         }
         detail.setItems(views);
+        detail.setItemsAsOf(asOf);
         return new ResponseEntity<>(detail, HttpStatus.OK);
     }
 

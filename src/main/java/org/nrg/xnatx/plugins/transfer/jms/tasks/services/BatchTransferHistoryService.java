@@ -7,6 +7,7 @@ import org.nrg.xnatx.plugins.transfer.jms.tasks.entities.BatchTransferItem;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
 
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +50,9 @@ public interface BatchTransferHistoryService extends BaseHibernateService<BatchT
                Collection<String> readableProjects);
 
     List<BatchTransferItem> items(long historyId);
+
+    /** A run's items whose status changed at or after {@code since}, in the same order as {@link #items}. */
+    List<BatchTransferItem> itemsChangedSince(long historyId, Date since);
 
     /** The current labels of the given subjects and experiments, by ID. */
     Map<String, String> itemLabels(Collection<String> ids);

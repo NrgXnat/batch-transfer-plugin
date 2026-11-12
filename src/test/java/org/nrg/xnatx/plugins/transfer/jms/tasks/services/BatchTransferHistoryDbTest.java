@@ -26,6 +26,7 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -131,6 +132,23 @@ public class BatchTransferHistoryDbTest {
         assertEquals("SESS_2", labels.get(id("E2")));
         assertEquals("a subject's label too", "SUBJ_1", labels.get(id("S1")));
         assertEquals(2, labels.size());
+    }
+
+    @Test
+    public void itemsChangedSinceListsOnlyTheItemsChangedSinceThen() {
+        final String trackingId = submit("changed", 3);
+        history.registerRun(trackingId, 7, 3);
+        final Date cutoff = jdbc.queryForObject("SELECT clock_timestamp()", Date.class);
+        items.start(trackingId, id("E1"));
+        items.finish(trackingId, id("E2"), Outcome.FAILED, "broke", null);
+        final long historyId = ((Number) runRow(trackingId).get("id")).longValue();
+
+        final List<BatchTransferItem> changed = history.itemsChangedSince(historyId, cutoff);
+
+        assertEquals("started or finished since the cutoff, in the run's order", Arrays.asList(id("E1"), id("E2")),
+                Arrays.asList(changed.get(0).getItemId(), changed.get(1).getItemId()));
+        assertEquals(2, changed.size());
+        assertEquals("every item has changed since the epoch", 3, history.itemsChangedSince(historyId, new Date(0)).size());
     }
 
     @Test
