@@ -24,7 +24,7 @@ New to Batch Transfer? The [quick start](docs/quick-start.md) walks through each
 
 ### Cohort and anonymization options
 
-- **CSV manifest** — select sessions by uploading a CSV (`source_subject_label`, `source_session_label`) instead of ticking rows. For Reimport, other columns can set destination labels (`destination_subject_label`, `destination_session_label`) or feed `${csv.<column>}` placeholders in the script.
+- **CSV manifest** — select sessions by uploading a CSV (`source_subject_label`, `source_session_label`) instead of ticking rows. For Reimport, other columns can set destination labels (`destination_subject_label`, `destination_session_label`) or feed `${csv.<column>}` placeholders in the script. A destination label in the manifest is used even when *Preserve source labels* is ticked; a blank cell falls back to that setting.
 - **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the destination project's anonymization (the REST API can also make it replace that anonymization). Needs the importer's `Anon-Script` parameter (XNAT 1.10.1 and later, or 1.9.3.7 and later on the 1.9 line); on builds without it the option is hidden. Requires edit access on the destination project.
 
 REST details: [`docs/rest-api.md`](docs/rest-api.md).

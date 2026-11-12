@@ -172,6 +172,15 @@ If no script is enabled and you don't add one, the sessions are not anonymized, 
 **Preserve source labels** keeps the source's subject and session labels in the destination. Anonymization never
 changes XNAT labels, only DICOM tags. For a release you'll usually set new labels in the manifest instead, as below.
 
+Each session's two labels are chosen separately, in this order:
+
+1. The manifest's `destination_subject_label` or `destination_session_label`, if the row has one.
+2. The source's label, if its **Preserve source labels** box is ticked.
+3. A label XNAT derives from the session's DICOM tags.
+
+So a label in the manifest is used even when its Preserve box is ticked. The Preserve boxes only matter for labels
+the manifest leaves blank.
+
 ### Choose the sessions with a manifest
 
 A manifest is a CSV file with one row per session. Click **Upload manifest CSV** in the cohort builder and drop the
@@ -202,22 +211,40 @@ DICOM files and to see the script with that row's values filled in.
 ![The manifest's seven sessions grouped by subject, with the first row expanded to show 24 DICOM files and its compiled script](quick-start/images/reimport-manifest.png)
 
 Rows that match nothing are listed and skipped. Some problems block Submit until you fix the file and click
-**Replace file**: the same session listed twice, a value with characters that aren't allowed, or two sessions that
-would get the same label.
+**Replace file**:
+
+- the same session listed twice;
+- a value with characters that aren't allowed;
+- two sessions that would get the same label;
+- two source subjects sent to the same destination subject, which would put two people's sessions in one subject.
+
+Others are highlighted in the Destination columns and counted above the list, but don't block Submit. Hover over a
+highlighted cell for the reason:
+
+- a blank destination label, which falls back to Preserve source labels;
+- a source subject whose sessions would go to more than one destination subject;
+- a session label the destination project already has. That session would fail, or merge into the existing session
+  if it holds the same study.
+
+The confirmation lists the warnings again under **Check**.
 
 The chips in this example:
 
 - **site-wide + custom + destination scripts** is red because more than one script will change the data. Hover over
   it for the order. Check that the scripts don't undo each other; here, HA_OPEN's script only adds to what the
   custom script does.
-- **subject + session labels not anonymized** is red because both Preserve source labels boxes are ticked. Every row
-  in this manifest sets both destination labels, and those take precedence, so no source label reaches HA_OPEN.
 - **duplicates storage** is amber because Reimport writes new copies of the files.
+
+There's no labels chip here, because every row sets both destination labels. If some sessions would keep a source
+label, a red chip such as **session label not anonymized** names it, and hovering over it shows how many sessions
+keep it.
 
 ### Submit
 
-Click **Reimport 7 sessions**. The confirmation lists the manifest, the scripts in the order they'll run, and how
-the labels are chosen. Click **OK**.
+Click **Reimport 7 sessions**. The confirmation lists the manifest, the scripts in the order they'll run, and where
+the labels come from. Click **OK**.
+
+![The confirmation for release 1: the manifest, the three scripts in order, and labels from the manifest](quick-start/images/reimport-confirm.png)
 
 When the transfer finishes, the released sessions carry the release IDs. For example, `HA0003_MR01` in HA_MRI
 became `HAOPEN001_MR1` in HA_OPEN:
@@ -241,8 +268,8 @@ page. The list updates while a transfer is running.
 
 Click a transfer to see its details:
 
-- When it started and finished, who started it, its source, destination and tracking ID, and how its sessions were
-  anonymized and labelled.
+- When it started and finished, who started it, its source, destination and tracking ID, how its sessions were
+  anonymized, and where their labels came from.
 - The custom script, if one was used.
 - Every item, grouped by subject, with its destination and outcome. Failed items come first, with the reason.
   Expand a session to see its manifest values.
@@ -316,11 +343,14 @@ see the transfer.
 - **Which files Reimport sends.** Reimport sends the files in each scan's DICOM resource. A session whose images are
   stored in a resource with another name, such as the `secondary` resource XNAT uses for Secondary Capture images,
   fails with "No DICOM files found".
-- **Manifest limits.** Up to 5,000 rows. Values used by a script may contain only letters, digits, spaces and
-  `^ _ . -`.
-- **Script rules.** Custom scripts are DicomEdit 6 (versions 6.0 to 6.7 and 6.10 by default). Commands that are
+- **Manifest limits.** By default a manifest can have up to 5,000 rows, and values used by a script may contain only
+  letters, digits, spaces and `^ _ . -`.
+- **Script rules.** By default custom scripts are DicomEdit 6.0 to 6.7 or 6.10, up to 256 KB. Commands that are
   unsafe when sessions are reimported in parallel, such as `mapUID` and `newUID`, aren't allowed; use `hashUID` to
-  remap UIDs. Your administrator can change these settings.
+  remap UIDs.
+- **Adjusting the limits.** A site administrator can change the manifest limits and script rules above on the
+  **Anonymization & Cohort Limits** tab in Site Administration: the maximum number of manifest rows, the characters
+  allowed in values, the maximum script size, the restricted commands, and the allowed DicomEdit versions.
 - **XNAT 1.10.2.1.** Reimports that run at the same time soon after XNAT starts can fail with `Invalid attribute`
   and stay in the prearchive. This is an XNAT bug; Export for rerun transfers them once XNAT has warmed up.
 

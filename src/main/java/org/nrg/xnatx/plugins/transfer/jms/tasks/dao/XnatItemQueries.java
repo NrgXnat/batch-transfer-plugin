@@ -9,7 +9,9 @@ import java.sql.Array;
 import java.sql.PreparedStatement;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Read-only lookups on XNAT's own tables, by ID. The IDs go in as one array parameter, so a run of any size is one
@@ -48,6 +50,13 @@ public class XnatItemQueries {
             "SELECT id, label FROM xnat_experimentdata WHERE id = ANY(?) "
                     + "UNION ALL "
                     + "SELECT id, label FROM xnat_subjectdata WHERE id = ANY(?)";
+
+    // An experiment label is taken in a project when an experiment there has it, or an experiment shared into the
+    // project has it as its label there: the two places XNAT looks a label up (GetExptByProjectIdentifier).
+    private static final String TAKEN_LABELS_SQL =
+            "SELECT label FROM xnat_experimentdata WHERE project = ? AND label = ANY(?) "
+                    + "UNION "
+                    + "SELECT label FROM xnat_experimentdata_share WHERE project = ? AND label = ANY(?)";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -96,6 +105,29 @@ public class XnatItemQueries {
                     row.getString("subject_label_in_project")));
         });
         return found;
+    }
+
+    /**
+     * The {@code labels} that an experiment in {@code project} already has, owned or shared in. Matching is exact,
+     * as XNAT's own lookup is.
+     */
+    public Set<String> takenExperimentLabels(final String project, final Collection<String> labels) {
+        final Set<String> taken = new HashSet<>();
+        if (labels.isEmpty()) {
+            return taken;
+        }
+        jdbcTemplate.query(connection -> {
+            final PreparedStatement statement = connection.prepareStatement(TAKEN_LABELS_SQL);
+            final Array array = connection.createArrayOf("varchar", labels.toArray());
+            statement.setString(1, project);
+            statement.setArray(2, array);
+            statement.setString(3, project);
+            statement.setArray(4, array);
+            return statement;
+        }, row -> {
+            taken.add(row.getString("label"));
+        });
+        return taken;
     }
 
     /** The current labels of the subjects and experiments among {@code ids}, by ID. */

@@ -130,7 +130,7 @@
                             <p>If no script is configured and you don't add one, the sessions are not anonymized. The action bar lists the scripts that will run, in order.</p>
                             <h5>Preserve source labels</h5>
                             <p>Use the source's XNAT subject and session labels instead of deriving them from DICOM tags. Anonymization does not change XNAT labels, so a preserved label is kept as it is.</p>
-                            <p>A manifest's <code>destination_subject_label</code> and <code>destination_session_label</code> override this per row; sessions from a subject row always take their session label from this setting.</p>
+                            <p>With a manifest, a label in its <code>destination_subject_label</code> or <code>destination_session_label</code> column is used for that session even when the box is ticked. The boxes decide only the labels the manifest leaves blank, including the session labels of a subject row's sessions.</p>
                         </div>
                     </section>
                     <section class="bt-help-note" data-help="script">
@@ -147,7 +147,9 @@
                         <h5>Upload manifest CSV</h5>
                         <p>For Reimport only: Share and Clone use the selection tree, so the button is disabled for them. A manifest needs a source project, so it is also disabled from search results.</p>
                         <p>One row per session, with columns <code>source_subject_label</code> and <code>source_session_label</code>. Leave the session blank to cover a whole subject: all of its image sessions.</p>
-                        <p>Rows that match nothing are listed and skipped. The same session listed twice blocks Submit. Optional <code>destination_subject_label</code> and <code>destination_session_label</code> columns set a session's labels in the destination; any other column is a value for the custom script's placeholders.</p>
+                        <p>Rows that match nothing are listed and skipped. The same session listed twice blocks Submit.</p>
+                        <p>Optional <code>destination_subject_label</code> and <code>destination_session_label</code> columns set each session's labels in the destination, and are used even when Preserve source labels is ticked. Where a cell is blank, the label follows Preserve source labels: the source's label if ticked, otherwise one derived from DICOM tags. The Destination columns show the label each session will get. Any other column is a value for the custom script's placeholders.</p>
+                        <p>The Destination columns are highlighted where a label needs a look: a blank cell, a source subject whose sessions would go to more than one destination subject, and a session label the destination already has. Two source subjects sent to the same destination subject block Submit.</p>
                         <p class="bt-help-muted">The chips beside Submit show anonymization and storage; hover one for the full explanation.</p>
                     </section>
                 </div>
@@ -219,10 +221,10 @@
                                     </div>
                                 </div>
                                 <div id="bt-reimport-label-option">
-                                    <div class="bt-opt-cap">Preserve source labels</div>
+                                    <div class="bt-opt-cap" title="Keep the source's XNAT labels instead of deriving them from DICOM tags. A label in the manifest is used instead where it is filled in.">Preserve source labels</div>
                                     <div class="bt-label-checks">
-                                        <label><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
-                                        <label><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
+                                        <label title="Keep each session's source subject label. A destination_subject_label in the manifest is used instead where it is filled in."><input type="checkbox" id="bt-preserve-subject-label" checked /> Subject</label>
+                                        <label title="Keep each session's source session label. A destination_session_label in the manifest is used instead where it is filled in."><input type="checkbox" id="bt-preserve-session-label" checked /> Session</label>
                                     </div>
                                 </div>
                             </div>

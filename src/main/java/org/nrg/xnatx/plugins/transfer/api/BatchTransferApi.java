@@ -1,7 +1,10 @@
 package org.nrg.xnatx.plugins.transfer.api;
 
+import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.XnatItemQueries;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferRunExistsException;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
+import org.nrg.xnatx.plugins.transfer.model.DestinationLabelsRequest;
+import org.nrg.xnatx.plugins.transfer.model.DestinationLabelsResult;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestSummary;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
@@ -46,6 +49,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -69,17 +73,22 @@ public class BatchTransferApi extends AbstractXapiRestController {
     private final ScriptCompiler scriptCompiler;
     private final ManifestService manifestService;
     private final PreflightResolver preflightResolver;
+    private final XnatItemQueries xnatItems;
+
+    /** The most session labels one destination-label check takes: a manifest's sessions, with room to spare. */
+    static final int MAX_DESTINATION_LABELS = 50_000;
 
     protected BatchTransferApi(UserManagementServiceI userManagementService, RoleHolder roleHolder,
                                BatchTransferService batchTransferService, TransferCapabilitiesService capabilitiesService,
                                ScriptCompiler scriptCompiler, ManifestService manifestService,
-                               PreflightResolver preflightResolver) {
+                               PreflightResolver preflightResolver, XnatItemQueries xnatItems) {
         super(userManagementService, roleHolder);
         this.batchTransferService = batchTransferService;
         this.capabilitiesService = capabilitiesService;
         this.scriptCompiler = scriptCompiler;
         this.manifestService = manifestService;
         this.preflightResolver = preflightResolver;
+        this.xnatItems = xnatItems;
     }
 
     @ApiOperation(value = "Submits an async batch transfer request")
@@ -358,6 +367,41 @@ public class BatchTransferApi extends AbstractXapiRestController {
             result.setSummary(summarize(result.getRows()));
         }
         return new ResponseEntity<>(result, HttpStatus.OK);
+    }
+
+    // ---- Destination labels (advisory) ----------------------------------------------------------------------
+
+    @ApiOperation(value = "Of the given session labels, lists those an experiment in the destination project already "
+            + "has (owned or shared in), so a Reimport can be checked before submit for sessions that would fail or "
+            + "merge; advisory, nothing is changed")
+    @ApiResponses({ @ApiResponse(code = 200, message = "The labels already taken"),
+                    @ApiResponse(code = 400, message = "Missing destination_project"),
+                    @ApiResponse(code = 403, message = "No read access to the destination project"),
+                    @ApiResponse(code = 413, message = "More than " + MAX_DESTINATION_LABELS + " labels")})
+    @XapiRequestMapping(value = {"validate/destination_labels"}, consumes = APPLICATION_JSON_VALUE,
+            produces = APPLICATION_JSON_VALUE, method = POST)
+    @ResponseBody
+    public ResponseEntity<?> validateDestinationLabels(@RequestBody final DestinationLabelsRequest request) {
+        if (request == null || StringUtils.isBlank(request.getDestinationProject())) {
+            return new ResponseEntity<>("destination_project is required.", HttpStatus.BAD_REQUEST);
+        }
+        final Set<String> labels = new LinkedHashSet<>();
+        if (request.getSessionLabels() != null) {
+            request.getSessionLabels().stream().filter(StringUtils::isNotBlank).forEach(labels::add);
+        }
+        if (labels.size() > MAX_DESTINATION_LABELS) {
+            return new ResponseEntity<>("At most " + MAX_DESTINATION_LABELS + " labels can be checked at once.",
+                    HttpStatus.PAYLOAD_TOO_LARGE);
+        }
+        // Which labels a project uses is its data, so the caller must be able to read it.
+        final String destinationId = readableProjectId(request.getDestinationProject(), getSessionUser());
+        if (destinationId == null) {
+            return new ResponseEntity<>("You do not have read access to project " + request.getDestinationProject()
+                    + ".", HttpStatus.FORBIDDEN);
+        }
+        final List<String> taken = new ArrayList<>(xnatItems.takenExperimentLabels(destinationId, labels));
+        Collections.sort(taken);
+        return new ResponseEntity<>(new DestinationLabelsResult(destinationId, taken), HttpStatus.OK);
     }
 
     /** Tally resolved entries: matched sessions, and rows by each non-matched status. */

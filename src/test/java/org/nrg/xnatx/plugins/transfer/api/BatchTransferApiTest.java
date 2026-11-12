@@ -9,7 +9,10 @@ import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferRunExistsException;
+import org.nrg.xnatx.plugins.transfer.jms.tasks.dao.XnatItemQueries;
 import org.nrg.xnatx.plugins.transfer.model.BatchTransfer;
+import org.nrg.xnatx.plugins.transfer.model.DestinationLabelsRequest;
+import org.nrg.xnatx.plugins.transfer.model.DestinationLabelsResult;
 import org.nrg.xnatx.plugins.transfer.model.ManifestRow;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationRequest;
 import org.nrg.xnatx.plugins.transfer.model.ManifestValidationResult;
@@ -36,6 +39,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -82,6 +87,7 @@ public class BatchTransferApiTest {
     private ScriptCompiler               scriptCompiler;
     private ManifestService              manifestService;
     private PreflightResolver            preflightResolver;
+    private XnatItemQueries              xnatItems;
     private UserI                        user;
     private BatchTransferApi             api;
 
@@ -92,10 +98,11 @@ public class BatchTransferApiTest {
         scriptCompiler    = mock(ScriptCompiler.class);
         manifestService   = mock(ManifestService.class);
         preflightResolver = mock(PreflightResolver.class);
+        xnatItems         = mock(XnatItemQueries.class);
         user              = mock(UserI.class);
 
         api = spy(new BatchTransferApi(mock(UserManagementServiceI.class), mock(RoleHolder.class),
-                service, capabilities, scriptCompiler, manifestService, preflightResolver));
+                service, capabilities, scriptCompiler, manifestService, preflightResolver, xnatItems));
 
         final Authentication auth = mock(Authentication.class);
         when(auth.getPrincipal()).thenReturn(user);
@@ -485,5 +492,56 @@ public class BatchTransferApiTest {
         final Map<String, String> m = new HashMap<>();
         m.put(key, value);
         return m;
+    }
+
+    // ---- validate/destination_labels ------------------------------------------------------------------------
+
+    @Test
+    public void destinationLabels_listsTheTakenLabelsSorted_andSkipsBlanksAndRepeats() {
+        doReturn(DEST).when(api).readableProjectId("dest-alias", user);
+        when(xnatItems.takenExperimentLabels(eq(DEST), any())).thenReturn(new HashSet<>(Arrays.asList("S_2", "S_1")));
+
+        final ResponseEntity<?> resp = api.validateDestinationLabels(
+                new DestinationLabelsRequest("dest-alias", Arrays.asList("S_1", "", "S_2", "S_1", null, "S_3")));
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        final DestinationLabelsResult result = (DestinationLabelsResult) resp.getBody();
+        assertEquals("the alias resolves to the project's ID", DEST, result.getDestinationProject());
+        assertEquals(Arrays.asList("S_1", "S_2"), result.getExistingSessionLabels());
+        verify(xnatItems).takenExperimentLabels(DEST, new LinkedHashSet<>(Arrays.asList("S_1", "S_2", "S_3")));
+    }
+
+    @Test
+    public void destinationLabels_withoutADestination_is400() {
+        assertEquals(HttpStatus.BAD_REQUEST, api.validateDestinationLabels(
+                new DestinationLabelsRequest(" ", Collections.singletonList("S_1"))).getStatusCode());
+        verify(xnatItems, never()).takenExperimentLabels(any(), any());
+    }
+
+    @Test
+    public void destinationLabels_forAProjectTheCallerCantRead_is403() {
+        doReturn(null).when(api).readableProjectId(anyString(), any(UserI.class));
+        assertEquals(HttpStatus.FORBIDDEN, api.validateDestinationLabels(
+                new DestinationLabelsRequest(DEST, Collections.singletonList("S_1"))).getStatusCode());
+        verify(xnatItems, never()).takenExperimentLabels(any(), any());
+    }
+
+    @Test
+    public void destinationLabels_overTheLimit_is413() {
+        final List<String> labels = new ArrayList<>();
+        for (int i = 0; i <= BatchTransferApi.MAX_DESTINATION_LABELS; i++) {
+            labels.add("S_" + i);
+        }
+        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE,
+                api.validateDestinationLabels(new DestinationLabelsRequest(DEST, labels)).getStatusCode());
+        verify(xnatItems, never()).takenExperimentLabels(any(), any());
+    }
+
+    @Test
+    public void destinationLabels_withNoLabels_isAnEmptyList() {
+        when(xnatItems.takenExperimentLabels(eq(DEST), any())).thenReturn(new HashSet<>());
+        final ResponseEntity<?> resp = api.validateDestinationLabels(new DestinationLabelsRequest(DEST, null));
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertTrue(((DestinationLabelsResult) resp.getBody()).getExistingSessionLabels().isEmpty());
     }
 }

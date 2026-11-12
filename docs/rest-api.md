@@ -23,6 +23,7 @@ submission. Applies to plugin **1.2.0**.
 | `GET /xapi/transfer/capabilities` | Whether per-import anonymization is available, plus limits |
 | `POST /xapi/transfer/validate/script` | Check a DicomEdit script (advisory) |
 | `POST /xapi/transfer/validate/manifest` | Parse a manifest CSV and resolve each row to a source session (advisory) |
+| `POST /xapi/transfer/validate/destination_labels` | List which session labels a destination project already has (advisory) |
 | `POST /xapi/transfer` | Submit a batch of explicit requests |
 | `POST /xapi/transfer/manifest` | Resolve a manifest and submit its matched rows in one call |
 
@@ -132,7 +133,7 @@ nothing is stored.
 | Column | Kind | Meaning |
 |---|---|---|
 | `source_subject_label`, `source_session_label` | Required | Identify the source session |
-| `destination_subject_label`, `destination_session_label` | Routing (optional, Reimport only) | Labels to use in the destination. Must be valid XNAT labels. Also available to the script as `${csv.destination_subject_label}` / `${csv.destination_session_label}`. |
+| `destination_subject_label`, `destination_session_label` | Routing (optional, Reimport only) | Labels to use in the destination. Must be valid XNAT labels. They take precedence over `preserve_subject_label` / `preserve_session_label` for that session; a blank cell falls back to those options, and then to labels derived from DICOM tags. A subject row can't set `destination_session_label`. Also available to the script as `${csv.destination_subject_label}` / `${csv.destination_session_label}`. |
 | Columns starting with `_` | Reserved | Notes; ignored and not available to the script |
 | Any other column | Value | Available to the script as `${csv.<column>}` |
 
@@ -215,6 +216,37 @@ nothing is stored.
 
 **Status codes:** 400 for an empty or unparseable CSV, a repeated column, a missing `source_project`, or an invalid `mode`;
 403 without read access to `source_project`; 413 when the manifest exceeds `manifest_max_rows`.
+
+---
+
+## `POST /xapi/transfer/validate/destination_labels`
+
+Of the session labels given, lists those an experiment in the destination project already has, owned by it or
+shared into it with that label. A Reimport session given one of these labels fails, or merges into the existing
+session when it holds the same study. Nothing is changed.
+
+**Request**
+
+```json
+{ "destination_project": "HA_OPEN", "session_labels": ["HAOPEN001_MR1", "HAOPEN020_MR1"] }
+```
+
+`destination_project` is an ID or alias. Blank and repeated labels are ignored. Matching is exact, as XNAT's own
+label lookup is.
+
+**Response 200**
+
+```json
+{ "destination_project": "HA_OPEN", "existing_session_labels": ["HAOPEN001_MR1"] }
+```
+
+`destination_project` is the project's ID. `existing_session_labels` is sorted.
+
+**Status codes:** 400 without `destination_project`; 403 without read access to the destination project's data;
+413 for more than 50,000 labels.
+
+The screen sends each manifest session's `destination_session_label` and its source session label, and flags
+the sessions whose label (the manifest's, or the source's when Preserve session labels is on) is already taken.
 
 ---
 

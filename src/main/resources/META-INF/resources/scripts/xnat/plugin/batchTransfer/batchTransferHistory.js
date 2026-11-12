@@ -402,7 +402,7 @@ var XNAT = getObject(XNAT || {});
         return back +
                '<div class="bt-h-detailhead"><h2>' + esc(r.operation) + ' &rarr; ' + esc(r.destination_project || 'several projects') + '</h2>' +
                pill(r.status) + '<div class="bt-h-actions">' + actionsHtml(d) + '</div></div>' +
-               '<div class="bt-panel">' + factsHtml(r) + '</div>' +
+               '<div class="bt-panel">' + factsHtml(d) + '</div>' +
                (d.anon_script ? scriptPanelHtml(d.anon_script) : '') +
                '<div class="bt-panel bt-h-panel">' + itemsPanelHtml(d) + '</div>';
     }
@@ -420,7 +420,8 @@ var XNAT = getObject(XNAT || {});
                    'message and destination, for your records">Export results</button>';
     }
 
-    function factsHtml(r) {
+    function factsHtml(d) {
+        var r = d.run;
         var f = [
             ['Started', esc(when(r.created)) + ' &middot; ' + esc(r.created_by)],
             ['Finished', r.finished ? esc(when(r.finished)) : r.status === 'Queued' ? 'Not started' : 'In progress'],
@@ -429,7 +430,7 @@ var XNAT = getObject(XNAT || {});
             ['Items', countText(r.item_count, unitNoun(r))],
             ['Anonymization', anonFact(r)]
         ];
-        if (r.operation === 'Reimport') { f.push(['Labels', labelsFact(r)]); }
+        if (r.operation === 'Reimport') { f.push(['Labels', esc(labelsFact(d))]); }
         if (r.stop_requested_by) { f.push(['Stopped by', esc(r.stop_requested_by) + ' &middot; ' + esc(when(r.stop_requested_at))]); }
         f.push(['Tracking id', '<span class="bt-h-mono">' + esc(r.tracking_id) + '</span>']);
         return '<div class="bt-h-facts">' + f.map(function(x) {
@@ -447,13 +448,30 @@ var XNAT = getObject(XNAT || {});
         return '-';
     }
 
-    function labelsFact(r) {
-        var subject = r.preserve_subject_label === true;
-        var session = r.preserve_session_label === true;
-        if (subject && session) { return 'Source subject and session labels kept'; }
-        if (subject) { return 'Source subject label kept; session label from DICOM'; }
-        if (session) { return 'Source session label kept; subject label from DICOM'; }
-        return 'From DICOM';
+    // Where the run's sessions got their destination labels: each item's manifest destination_*_label, else its
+    // preserved source label, else DICOM tags. A viewer who can't read the destination doesn't get the items'
+    // labels, so for them it falls back to the run's Preserve settings, which a manifest may have overridden.
+    function labelsFact(d) {
+        var r = d.run;
+        var items = (d.items || []).filter(function(it) { return it.mode === 'Reimport'; });
+        var counts = function() { return { manifest: 0, source: 0, dicom: 0 }; };
+        var subject = counts(), session = counts();
+        var hidden = !items.length || items.some(function(it) { return it.destination_hidden; });
+        var add = function(c, explicit, preserved) {
+            c[explicit ? 'manifest' : preserved ? 'source' : 'dicom']++;
+        };
+        if (hidden) {
+            add(subject, false, r.preserve_subject_label === true);
+            add(session, false, r.preserve_session_label === true);
+        } else {
+            items.forEach(function(it) {
+                add(subject, it.destination_subject_label, it.preserve_subject_label === true);
+                add(session, it.destination_session_label, it.preserve_session_label === true);
+            });
+        }
+        var text = XNAT.plugin.batchtransfer.labelSourcesText(subject, session);
+        var fromManifest = items.some(function(it) { return it.row_number != null; });
+        return hidden && fromManifest ? text + ', unless the manifest set them' : text;
     }
 
     function scriptPanelHtml(script) {
@@ -626,8 +644,9 @@ var XNAT = getObject(XNAT || {});
             '<li>' + units + ' not started yet will be skipped.</li>' +
             '<li>Nothing already transferred is undone.</li>' +
             '</ul></div>';
-        xModalConfirm({
+        XNAT.plugin.batchtransfer.confirm({
             title: 'Stop this transfer?',
+            width: 520,
             content: content,
             okLabel: 'Stop transfer',
             cancelLabel: 'Keep running',
