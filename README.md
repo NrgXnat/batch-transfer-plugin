@@ -35,7 +35,8 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 1. **Project Actions menu** — the *Batch Transfer* item appears for project owners, edit-members, and admins.
 2. **Search results bulk action** — legacy entry; selects items from a saved search and routes them into the same screen.
-3. **Tools > Batch Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get **Administer > Batch Transfers**, which can list every transfer.
+3. **Tools > Batch Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get a switch there to list every transfer.
+4. **Administer > Plugin Settings > Batch Transfer > Transfer History** — every transfer on the site, for site admins.
 
 ---
 

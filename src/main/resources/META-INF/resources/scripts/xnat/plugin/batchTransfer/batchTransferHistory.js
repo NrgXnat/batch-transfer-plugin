@@ -19,6 +19,56 @@ var XNAT = getObject(XNAT || {});
     XNAT.plugin.batchtransfer = getObject(XNAT.plugin.batchtransfer || {});
     var api = XNAT.plugin.batchtransfer.history = getObject(XNAT.plugin.batchtransfer.history || {});
 
+    // -- Shared with batchTransfer.js, which loads alongside this file on the Batch Transfer screen. The plugin
+    // settings page's Transfer History tab loads only this file. --
+
+    // One sentence on where the labels come from, for the confirmation and for History's run detail. subject and
+    // session are { manifest, source, dicom } session counts, as labelSources() in batchTransfer.js returns them.
+    XNAT.plugin.batchtransfer.labelSourcesText = function(subject, session) {
+        var kinds = function(c) { return ['manifest', 'source', 'dicom'].filter(function(k) { return c[k] > 0; }); };
+        var a = kinds(subject), b = kinds(session);
+        if (!a.length && !b.length) { return '-'; }
+        if (a.length === 1 && b.length === 1 && a[0] === b[0]) {
+            return { manifest: 'Subject and session labels from the manifest',
+                     source: 'Source subject and session labels kept',
+                     dicom: 'Subject and session labels from DICOM tags' }[a[0]];
+        }
+        var one = function(kind, c) {
+            var parts = kinds(c);
+            if (parts.length === 1) {
+                return { manifest: kind + ' label from the manifest', source: 'source ' + kind + ' label kept',
+                         dicom: kind + ' label from DICOM tags' }[parts[0]];
+            }
+            return kind + ' label ' + parts.map(function(k) {
+                return { manifest: 'from the manifest', source: 'kept from the source', dicom: 'from DICOM tags' }[k] +
+                       ' for ' + countText(c[k], 'session');
+            }).join(', ');
+        };
+        var text = one('subject', subject) + '; ' + one('session', session);
+        return text.charAt(0).toUpperCase() + text.slice(1);
+    };
+
+    // A confirmation dialog sized to its content. xModalConfirm opens every dialog at 400 x 200 and scrolls what
+    // doesn't fit. It takes width and height, but the height has to be known up front, so the dialog opens
+    // without its fade and grows to fit before it is first drawn, up to the window's height (beyond that the body
+    // scrolls). opts are xModalConfirm's; width defaults to 580.
+    XNAT.plugin.batchtransfer.confirm = function(opts) {
+        var afterShow = opts.afterShow;
+        return xModalConfirm($.extend({ width: 580, height: 200 }, opts, {
+            animation: false,
+            afterShow: function(modal) {
+                var $modal = $(modal.$modal), body = $modal.find('> .body')[0];
+                var overflow = body ? body.scrollHeight - body.clientHeight : 0;
+                if (overflow > 0) {
+                    var top = parseInt($modal.css('top'), 10) || 0;
+                    $modal.css('height', Math.min($modal.height() + overflow, window.innerHeight - 2 * top - 2));
+                    xmodal.resize($modal, modal);
+                }
+                if ($.isFunction(afterShow)) { afterShow(modal); }
+            }
+        }));
+    };
+
     var PAGE_SIZE = 25;
     var POLL_MS = 4000;          // while History shows something unfinished
     var BADGE_POLL_MS = 15000;   // while New transfer shows and a run is unfinished, for the tab's badge
@@ -43,14 +93,23 @@ var XNAT = getObject(XNAT || {});
     var showAllGroups = false;
     var expanded = {};               // item id -> its values row is open
     var pollTimer = null;
-    var scope = 'mine';              // History-only page: 'mine', or 'all' for a site admin
+    var scope = 'mine';              // 'mine', or 'all' for a site admin (History-only page, plugin settings page)
 
     // config: projectContext (the screen's project, or null), historyOnly (no project and no search, so History is
-    // the whole page), siteAdmin (on that page, whether the viewer may list every transfer).
+    // the whole page), siteAdmin (on that page, whether the viewer may list every transfer), settingsPage (the
+    // Transfer History tab of the plugin settings page: every transfer, for site admins).
     api.init = function(cfg) {
         config = cfg || {};
-        bindTabs();
         bindHistory();
+        if (config.settingsPage) {
+            // The settings page's hash belongs to its own tabs, so the address bar is left alone there.
+            view = 'history';
+            scope = 'all';
+            render();
+            loadList();
+            return;
+        }
+        bindTabs();
         $(window).on('hashchange', function() { applyHash(false); });
         if (config.historyOnly) { view = 'history'; }
         if (!applyHash(true)) {
@@ -116,7 +175,7 @@ var XNAT = getObject(XNAT || {});
     // (and the screen's Cancel) still leave the page. --
 
     function canSeeAll() {
-        return !!(config.historyOnly && config.siteAdmin);
+        return !!(config.settingsPage || (config.historyOnly && config.siteAdmin));
     }
 
     // Shows what the URL's hash names. Returns whether it named a History view.
@@ -146,6 +205,7 @@ var XNAT = getObject(XNAT || {});
     }
 
     function syncHash() {
+        if (config.settingsPage) { return; }
         var hash = view !== 'history' ? '' : runId ? '#history/run/' + encodeURIComponent(runId)
                  : scope === 'all' ? '#history/all' : '#history';
         if (hash === (window.location.hash || '') || !window.history || !window.history.replaceState) { return; }
@@ -259,6 +319,8 @@ var XNAT = getObject(XNAT || {});
     }
 
     function poll() {
+        // On the settings page another tab may be showing; look again later instead of loading.
+        if (config.settingsPage && !$('#bt-history').is(':visible')) { pollTimer = setTimeout(poll, POLL_MS); return; }
         if (view !== 'history') { loadBadge(); }
         else if (runId) { loadDetail(); }
         else { loadList(); }
@@ -323,7 +385,7 @@ var XNAT = getObject(XNAT || {});
 
     // On the History-only page, a site admin chooses between their own transfers and everyone's.
     function scopeHtml() {
-        if (!canSeeAll()) { return ''; }
+        if (!config.historyOnly || !config.siteAdmin) { return ''; }
         var option = function(value, label) {
             var on = scope === value;
             return '<button type="button" class="bt-h-scope-btn' + (on ? ' selected' : '') + '" data-act="scope" ' +
@@ -892,7 +954,7 @@ var XNAT = getObject(XNAT || {});
     }
 
     function route(r) {
-        return '<span class="bt-h-route">' + projectName(r.source_project) + '<span class="arr">&rarr;</span>' +
+        return '<span class="bt-h-route">' + projectName(r.source_project) + '<span class="arr">&rarr;</span><wbr>' +
                projectName(r.destination_project) + '</span>';
     }
 
@@ -951,4 +1013,20 @@ var XNAT = getObject(XNAT || {});
     function cssEscape(s) {
         return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&');
     }
+
+    // The plugin settings page's Transfer History tab (site-settings.yaml) has a #bt-history marked data-bt-settings
+    // and nothing that calls init, so History starts itself there. The Batch Transfer screen calls init itself.
+    function startOnSettingsPage(tries) {
+        var host = document.getElementById('bt-history');
+        if (host) {
+            if (host.hasAttribute('data-bt-settings') && !host.hasAttribute('data-bt-started')) {
+                host.setAttribute('data-bt-started', '');
+                api.init({ settingsPage: true });
+            }
+            return;
+        }
+        // The settings page builds its tabs after the page loads; wait a little for the container.
+        if (tries < 30) { setTimeout(function() { startOnSettingsPage(tries + 1); }, 200); }
+    }
+    $(function() { startOnSettingsPage(0); });
 }));

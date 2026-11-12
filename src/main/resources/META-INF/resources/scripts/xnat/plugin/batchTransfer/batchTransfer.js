@@ -1190,32 +1190,6 @@ var XNAT = getObject(XNAT || {});
         return out;
     }
 
-    // One sentence on where the labels come from, for the confirmation and for History's run detail. subject and
-    // session are { manifest, source, dicom } session counts, as labelSources() returns them.
-    XNAT.plugin.batchtransfer.labelSourcesText = function(subject, session) {
-        var kinds = function(c) { return ['manifest', 'source', 'dicom'].filter(function(k) { return c[k] > 0; }); };
-        var a = kinds(subject), b = kinds(session);
-        if (!a.length && !b.length) { return '-'; }
-        if (a.length === 1 && b.length === 1 && a[0] === b[0]) {
-            return { manifest: 'Subject and session labels from the manifest',
-                     source: 'Source subject and session labels kept',
-                     dicom: 'Subject and session labels from DICOM tags' }[a[0]];
-        }
-        var one = function(kind, c) {
-            var parts = kinds(c);
-            if (parts.length === 1) {
-                return { manifest: kind + ' label from the manifest', source: 'source ' + kind + ' label kept',
-                         dicom: kind + ' label from DICOM tags' }[parts[0]];
-            }
-            return kind + ' label ' + parts.map(function(k) {
-                return { manifest: 'from the manifest', source: 'kept from the source', dicom: 'from DICOM tags' }[k] +
-                       ' for ' + countText(c[k], 'session');
-            }).join(', ');
-        };
-        var text = one('subject', subject) + '; ' + one('session', session);
-        return text.charAt(0).toUpperCase() + text.slice(1);
-    };
-
     // Anonymization-status chips for the action bar. Reimport lists the anonymization scripts that will run;
     // Clone advertises hard-linking; Share shows none. These are the only place Reimport's anonymization
     // status and storage cost appear, so each chip's title carries the full explanation.
@@ -2125,27 +2099,6 @@ var XNAT = getObject(XNAT || {});
         });
         return items;
     }
-
-    // A confirmation dialog sized to its content. xModalConfirm opens every dialog at 400 x 200 and scrolls what
-    // doesn't fit. It takes width and height, but the height has to be known up front, so the dialog opens
-    // without its fade and grows to fit before it is first drawn, up to the window's height (beyond that the body
-    // scrolls). opts are xModalConfirm's; width defaults to 580.
-    XNAT.plugin.batchtransfer.confirm = function(opts) {
-        var afterShow = opts.afterShow;
-        return xModalConfirm($.extend({ width: 580, height: 200 }, opts, {
-            animation: false,
-            afterShow: function(modal) {
-                var $modal = $(modal.$modal), body = $modal.find('> .body')[0];
-                var overflow = body ? body.scrollHeight - body.clientHeight : 0;
-                if (overflow > 0) {
-                    var top = parseInt($modal.css('top'), 10) || 0;
-                    $modal.css('height', Math.min($modal.height() + overflow, window.innerHeight - 2 * top - 2));
-                    xmodal.resize($modal, modal);
-                }
-                if ($.isFunction(afterShow)) { afterShow(modal); }
-            }
-        }));
-    };
 
     // Inline-styled confirmation body: plugin CSS may not load inside the modal, so every element is inline-styled.
     // It restates the irreversible facts (cohort + exclusions, operation, anonymization, labels) with a

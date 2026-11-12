@@ -310,12 +310,16 @@ from search results. Any logged-in user can open it.
 
 ![Your transfers on the History page](quick-start/images/history-only.png)
 
-Site administrators also get **Administer > Batch Transfers**. It opens the same page, with a switch between **Your
-transfers** and **All transfers** (every transfer on the site).
-
-![The Administer menu, with Batch Transfers](quick-start/images/administer-menu.png)
+On this page, site administrators also get a switch between **Your transfers** and **All transfers** (every transfer
+on the site).
 
 ![The All transfers view, with the Your transfers / All transfers switch](quick-start/images/all-transfers.png)
+
+Site administrators can also see every transfer under **Administer > Plugin Settings**, on the **Transfer History**
+tab of the Batch Transfer group. It works like History: open a transfer to see each item's outcome, stop one that's
+still running, or export its results.
+
+![The Transfer History tab in Plugin Settings, listing every transfer on the site](quick-start/images/plugin-settings-history.png)
 
 ### Links
 
@@ -327,6 +331,7 @@ The address bar always names the History view that's showing, so you can bookmar
 | `XDATScreen_batch_transfer.vm#history/all` | All transfers (site administrators; anyone else sees their own) |
 | `XDATScreen_batch_transfer.vm#history/run/<tracking ID>` | One transfer |
 | `XDATScreen_batch_transfer.vm?sourceProject=HA_MRI#history` | HA_MRI's History tab |
+| `Page.vm?view=admin/plugins#tab=batch-transfer-history-tab` | Transfer History in Plugin Settings (site administrators) |
 
 The full address starts with your site's URL and `/app/template/`. Someone who opens a link still needs permission to
 see the transfer.

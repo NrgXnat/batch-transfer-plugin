@@ -1816,7 +1816,7 @@ a.bt-h-mono { color: #1a73e8; }
 .bt-h-runs td { vertical-align: middle; }
 .bt-h-col-status { width: 108px; }
 .bt-h-col-started { width: 150px; }
-.bt-h-col-outcome { width: 200px; }
+.bt-h-col-outcome { width: 150px; }
 .bt-h-col-chev { width: 24px; }
 .bt-h-row { cursor: pointer; }
 .bt-h-row:hover { background: #f8f9fa; }
@@ -1825,7 +1825,8 @@ a.bt-h-mono { color: #1a73e8; }
 .bt-h-what { display: flex; align-items: center; gap: 9px; font-size: 13.5px; min-width: 0; }
 .bt-h-what .bt-opb { flex-shrink: 0; }
 .bt-h-what + .bt-h-sub { margin-top: 4px; }
-.bt-h-route { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Wraps after the arrow in a narrow list (the plugin settings tab); a name breaks only if it can't fit alone. */
+.bt-h-route { min-width: 0; overflow-wrap: anywhere; }
 .bt-h-route .here { font-weight: 700; }
 .bt-h-route .arr { color: #9aa0a6; margin: 0 4px; }
 .bt-h-chev { color: #9aa0a6; font-size: 16px; text-align: right; }
