@@ -19,11 +19,15 @@
     </script>
 #else
 
-## Determine source project context
-#set($projectContext = false)
-#if($items && $items.size() == 1)
-    #foreach($proj in $items)
-        #set($projectContext = $proj.getId())
+## The source project: the one the screen was opened from, which the screen class sets. From search results, the
+## project that owns every listed item, if one does. Items are grouped by owning project, so a project's own screen
+## can list several groups when subjects are shared into it.
+#if(!$projectContext)
+    #set($projectContext = false)
+    #if($items && $items.size() == 1)
+        #foreach($proj in $items)
+            #set($projectContext = $proj.getId())
+        #end
     #end
 #end
 
