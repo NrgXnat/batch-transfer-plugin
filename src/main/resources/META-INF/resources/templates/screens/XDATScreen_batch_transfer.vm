@@ -11,7 +11,9 @@
 #end
 
 #if(!$items || $items.size() == 0)
-    <div class="info">$sharingMsg</div>
+    #if($sharingMsg)
+        <div class="info">$sharingMsg</div>
+    #end
     <br>
     <input type="button" name="ok" value="Ok" onclick="goHome()"/>
     <script type="text/javascript">
@@ -19,11 +21,15 @@
     </script>
 #else
 
-## Determine source project context
-#set($projectContext = false)
-#if($items && $items.size() == 1)
-    #foreach($proj in $items)
-        #set($projectContext = $proj.getId())
+## The source project: the one the screen was opened from, which the screen class sets. From search results, the
+## project that owns every listed item, if one does. Items are grouped by owning project, so a project's own screen
+## can list several groups when subjects are shared into it.
+#if(!$projectContext)
+    #set($projectContext = false)
+    #if($items && $items.size() == 1)
+        #foreach($proj in $items)
+            #set($projectContext = $proj.getId())
+        #end
     #end
 #end
 
@@ -129,7 +135,7 @@
         <div class="bt-workspace">
             <div class="bt-work-scroll">
 
-                ## What the chosen operation does; batchTransfer.js writes it.
+                ## What Batch Transfer does, styled as the page's introduction; batchTransfer.js writes it.
                 <p class="bt-summary" id="bt-summary"></p>
 
                 <div class="bt-panel bt-setup">
@@ -144,7 +150,7 @@
                             <div class="bt-proj-btn #if($hasPresetDest)frozen#{else}select#end">
                                 <span class="bt-proj-lbl">Destination $displayManager.getSingularDisplayNameForProject()</span>
                                 #if($hasPresetDest)
-                                    <span class="bt-proj-name">$!presetDestination <span class="bt-proj-ic">&#128274;</span></span>
+                                    <span class="bt-proj-name">$!turbineUtils.escapeHTML($presetDestination) <span class="bt-proj-ic">&#128274;</span></span>
                                 #else
                                     <select class="bt-proj-select" id="bt-project-select" disabled="disabled" aria-label="Destination ${displayManager.getSingularDisplayNameForProject().toLowerCase()}">
                                         <option value="">Select a ${displayManager.getSingularDisplayNameForProject().toLowerCase()}...</option>
@@ -379,7 +385,7 @@
         XNAT.plugin.batchtransfer.help.init();
         XNAT.plugin.batchtransfer.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end,
-            presetDestination: #if($hasPresetDest) '$!presetDestination' #else null #end
+            presetDestination: #if($hasPresetDest) '$!turbineUtils.escapeJS($presetDestination)' #else null #end
         });
         XNAT.plugin.batchtransfer.history.init({
             projectContext: #if($projectContext) '$!projectContext' #else null #end

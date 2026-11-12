@@ -87,7 +87,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
                     @ApiResponse(code = 400, message = "Invalid request (e.g. the same item twice, two Reimport items "
                             + "routed to one session label, an invalid routing label, or a custom anon_script on a "
                             + "non-Reimport item)"),
-                    @ApiResponse(code = 403, message = "No edit access to a destination project required by a custom anon_script"),
+                    @ApiResponse(code = 403, message = "No read access to source_project, or no edit access to a "
+                            + "destination project required by a custom anon_script"),
                     @ApiResponse(code = 409, message = "The tracking_id already has a run, or this XNAT build does "
                             + "not support per-import anonymization"),
                     @ApiResponse(code = 500, message = "An unexpected error occurred.")})
@@ -105,6 +106,17 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         final UserI user = getSessionUser();
+
+        final String sourceProject = batchTransferRequest.getSourceProject();
+        if (StringUtils.isNotBlank(sourceProject)) {
+            final String sourceProjectId = readableProjectId(sourceProject, user);
+            if (sourceProjectId == null) {
+                return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
+                        HttpStatus.FORBIDDEN);
+            }
+            // Items record their project by ID, so an alias would never match them.
+            batchTransferRequest.setSourceProject(sourceProjectId);
+        }
 
         final ResponseEntity<String> guardrail = checkAnonGuardrails(batchTransferRequest.getAnonScript(), requests, user);
         if (guardrail != null) {
@@ -328,7 +340,8 @@ public class BatchTransferApi extends AbstractXapiRestController {
         if (StringUtils.isBlank(sourceProject)) {
             return new ResponseEntity<>("source_project is required.", HttpStatus.BAD_REQUEST);
         }
-        if (!canReadProject(sourceProject, user)) {
+        final String sourceProjectId = readableProjectId(sourceProject, user);
+        if (sourceProjectId == null) {
             return new ResponseEntity<>("You do not have read access to project " + sourceProject + ".",
                     HttpStatus.FORBIDDEN);
         }
@@ -341,7 +354,7 @@ public class BatchTransferApi extends AbstractXapiRestController {
         }
 
         if (result.isRequiredPresent() && !result.getRows().isEmpty()) {
-            result.setRows(preflightResolver.resolveAll(sourceProject, result.getRows(), user, includeFileCount));
+            result.setRows(preflightResolver.resolveAll(sourceProjectId, result.getRows(), user, includeFileCount));
             result.setSummary(summarize(result.getRows()));
         }
         return new ResponseEntity<>(result, HttpStatus.OK);
@@ -368,17 +381,27 @@ public class BatchTransferApi extends AbstractXapiRestController {
     // ---- helpers --------------------------------------------------------------------------------------
 
     /**
-     * True when the user can read (or the project is otherwise resolvable to) {@code project}. Protected seam
-     * (like the service-layer {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read
-     * check without mocking the {@code XnatProjectdata} static.
+     * The ID of {@code project} (named by its ID or an alias) when the user can read its data; null otherwise. Every
+     * user can see a protected project, but not its data, so finding the project isn't enough. Protected seam (like
+     * the service-layer {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read check.
      */
-    protected boolean canReadProject(final String project, final UserI user) {
+    protected String readableProjectId(final String project, final UserI user) {
         try {
-            return XnatProjectdata.getProjectByIDorAlias(project, user, false) != null;
+            final String id = projectId(project, user);
+            return id != null && Permissions.canRead(user, "xnat:subjectData/project", id) ? id : null;
         } catch (Exception e) {
             log.error("Could not verify read access on project {}", project, e);
-            return false;
+            return null;
         }
+    }
+
+    /**
+     * The ID of the project named by its ID or an alias, or null when there is no such project. A seam, since the
+     * {@code XnatProjectdata} static is declared on a non-public parent and can't be mocked.
+     */
+    protected String projectId(final String project, final UserI user) {
+        final XnatProjectdata found = XnatProjectdata.getProjectByIDorAlias(project, user, false);
+        return found == null ? null : found.getId();
     }
 
     /** Blank → the default Reimport; a known value → its mode; anything else → null (an invalid mode). */

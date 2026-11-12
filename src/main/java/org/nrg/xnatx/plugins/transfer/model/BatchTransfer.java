@@ -19,6 +19,13 @@ public class BatchTransfer {
     String trackingId;
 
     /**
+     * Optional. The project the transfer was started from, by ID or alias. When every item belongs to it or is shared
+     * into it, the run is recorded under it, with subject labels as that project has them; otherwise under the
+     * project that owns the items. Wire name: {@code source_project}.
+     */
+    String sourceProject;
+
+    /**
      * Optional, REIMPORT-only. A DicomEdit script applied per session at ingest (xnat-web's
      * {@code Anon-Script} importer param). When it carries {@code ${csv.*}} placeholders, each request's
      * {@code csvValues} are substituted in. Null = no custom anonymization (current behavior).

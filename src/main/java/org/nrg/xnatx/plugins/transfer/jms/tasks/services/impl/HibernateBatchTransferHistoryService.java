@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -51,7 +52,7 @@ public class HibernateBatchTransferHistoryService
 
     @Override
     @Transactional
-    public void recordSubmit(final BatchTransfer batch, final UserI user) {
+    public void recordSubmit(final BatchTransfer batch, final UserI user, final Collection<String> readableProjects) {
         final String trackingId = batch.getTrackingId();
         if (getDao().findByTrackingId(trackingId) != null) {
             throw new BatchTransferRunExistsException(trackingId);
@@ -61,7 +62,13 @@ public class HibernateBatchTransferHistoryService
         for (final TransferRequest request : requests) {
             ids.add(request.getId());
         }
-        final Map<String, SourceItem> sources = xnatItems.sourceItems(ids);
+        // The run belongs to the project it was started from only when every requested item was found there, so the
+        // project's members never see a run with items from elsewhere. Otherwise it goes to the owning project, with
+        // the items' own labels.
+        final String startedFrom = StringUtils.trimToNull(batch.getSourceProject());
+        final Map<String, SourceItem> sources = xnatItems.sourceItems(ids, startedFrom, readableProjects);
+        final boolean inStartedFrom = startedFrom != null && sources.size() == ids.size()
+                && sources.values().stream().allMatch(SourceItem::isInProject);
 
         final Set<String> modes = new LinkedHashSet<>();
         final Set<String> destinations = new LinkedHashSet<>();
@@ -83,7 +90,11 @@ public class HibernateBatchTransferHistoryService
         run.setTrackingId(trackingId);
         run.setStatus(BatchTransferHistory.Status.Queued);
         run.setOperation(modes.size() == 1 ? modes.iterator().next() : "Mixed");
-        run.setSourceProject(sourceProjects.size() == 1 ? sourceProjects.iterator().next() : null);
+        if (inStartedFrom) {
+            run.setSourceProject(startedFrom);
+        } else {
+            run.setSourceProject(sourceProjects.size() == 1 ? sourceProjects.iterator().next() : null);
+        }
         run.setDestinationProject(destinations.size() == 1 ? destinations.iterator().next() : null);
         run.setItemCount(requests.size());
         run.setAnonCustomScript(StringUtils.defaultIfBlank(batch.getAnonScript(), null));
@@ -109,8 +120,10 @@ public class HibernateBatchTransferHistoryService
             item.setDestinationSessionLabel(request.getDestinationSessionLabel());
             item.setCsvValues(toJson(request.getCsvValues()));
             item.setRowNumber(request.getRowNumber());
-            item.setSourceSubjectLabel(source == null ? null : source.getSubjectLabel());
-            item.setSourceLabel(source == null ? null : source.getLabel());
+            if (source != null) {
+                item.setSourceSubjectLabel(inStartedFrom ? source.getSubjectLabelInProject() : source.getSubjectLabel());
+                item.setSourceLabel(inStartedFrom ? source.getLabelInProject() : source.getLabel());
+            }
             item.setStatus(BatchTransferItem.Status.Queued);
             items.add(item);
         }
@@ -122,6 +135,23 @@ public class HibernateBatchTransferHistoryService
     public void registerRun(final String trackingId, final Integer userId, final int total) {
         progressService.register(trackingId, userId, total);
         getDao().markRunning(trackingId);
+    }
+
+    @Override
+    @Transactional
+    public void failRun(final String trackingId, final String message) {
+        final BatchTransferHistory run = getDao().findByTrackingId(trackingId);
+        if (run == null) {
+            return;
+        }
+        // A Stop requested before the run could start still ends it as stopped: none of its items ran.
+        if (run.getStatus() == BatchTransferHistory.Status.Stopping) {
+            final int stopped = itemDao.finishUnfinished(run.getId(), BatchTransferItem.Status.Stopped, null);
+            getDao().finish(run.getId(), BatchTransferHistory.Status.Stopped, 0, 0, stopped);
+        } else {
+            final int failed = itemDao.finishUnfinished(run.getId(), BatchTransferItem.Status.Failed, message);
+            getDao().finish(run.getId(), BatchTransferHistory.Status.Failed, 0, failed, 0);
+        }
     }
 
     @Override
@@ -163,6 +193,12 @@ public class HibernateBatchTransferHistoryService
     @Transactional
     public List<BatchTransferItem> items(final long historyId) {
         return itemDao.listForRun(historyId);
+    }
+
+    @Override
+    @Transactional
+    public List<BatchTransferItem> itemsChangedSince(final long historyId, final Date since) {
+        return itemDao.listChangedSince(historyId, since);
     }
 
     @Override

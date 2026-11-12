@@ -25,6 +25,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -34,6 +35,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -89,13 +91,55 @@ public class BatchTransferHistoryApiTest {
 
     @Test
     public void detail_unknownRun_is404() {
-        assertEquals(HttpStatus.NOT_FOUND, api.detail(TRACKING_ID).getStatusCode());
+        assertEquals(HttpStatus.NOT_FOUND, api.detail(TRACKING_ID, null).getStatusCode());
     }
 
     @Test
     public void detail_aRunTheCallerCantSee_is403() {
         stubRun("alice", BatchTransferHistory.Status.Running);
-        assertEquals(HttpStatus.FORBIDDEN, api.detail(TRACKING_ID).getStatusCode());
+        assertEquals(HttpStatus.FORBIDDEN, api.detail(TRACKING_ID, null).getStatusCode());
+    }
+
+    /** A full load reports the latest item change, which the next poll passes back as changed_since. */
+    @Test
+    public void detail_reportsTheLatestItemChange() {
+        stubRun("carol", BatchTransferHistory.Status.Running);
+        final BatchTransferItem older = item("XNAT_E1", 1_000_000L);
+        final BatchTransferItem newer = item("XNAT_E2", 2_000_000L);
+        when(historyService.items(5L)).thenReturn(Arrays.asList(newer, older));
+
+        final TransferRunDetail detail = body(api.detail(TRACKING_ID, null));
+
+        assertEquals(2, detail.getItems().size());
+        assertEquals(Long.valueOf(2_000_000L), detail.getItemsAsOf());
+        assertEquals("the script", detail.getAnonScript());
+    }
+
+    /** A poll gets only the items changed since its cursor, less the overlap, and not the script again. */
+    @Test
+    public void detail_changedSince_returnsOnlyTheChangedItems() {
+        stubRun("carol", BatchTransferHistory.Status.Running);
+        final Date since = new Date(4_000_000L - BatchTransferHistoryApi.CHANGE_OVERLAP_MS);
+        when(historyService.itemsChangedSince(5L, since)).thenReturn(Collections.singletonList(item("XNAT_E2", 5_000_000L)));
+
+        final TransferRunDetail detail = body(api.detail(TRACKING_ID, 4_000_000L));
+
+        assertEquals(1, detail.getItems().size());
+        assertEquals("XNAT_E2", detail.getItems().get(0).getItemId());
+        assertEquals(Long.valueOf(5_000_000L), detail.getItemsAsOf());
+        assertNull("the script isn't sent again", detail.getAnonScript());
+        verify(historyService, never()).items(anyLong());
+    }
+
+    @Test
+    public void detail_changedSince_withNothingNew_keepsTheCursor() {
+        stubRun("carol", BatchTransferHistory.Status.Running);
+        when(historyService.itemsChangedSince(eq(5L), any(Date.class))).thenReturn(Collections.emptyList());
+
+        final TransferRunDetail detail = body(api.detail(TRACKING_ID, 4_000_000L));
+
+        assertTrue(detail.getItems().isEmpty());
+        assertEquals(Long.valueOf(4_000_000L), detail.getItemsAsOf());
     }
 
     @Test
@@ -103,7 +147,7 @@ public class BatchTransferHistoryApiTest {
         stubRun("alice", BatchTransferHistory.Status.Completed);
         doReturn(Arrays.asList(SOURCE, DESTINATION)).when(api).readableProjects(any());
 
-        final TransferRunDetail detail = body(api.detail(TRACKING_ID));
+        final TransferRunDetail detail = body(api.detail(TRACKING_ID, null));
 
         assertEquals(TRACKING_ID, detail.getRun().getTrackingId());
         assertNull(detail.getAnonScript());
@@ -120,7 +164,7 @@ public class BatchTransferHistoryApiTest {
         stubRun("alice", BatchTransferHistory.Status.Completed);
         doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
 
-        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID)).getItems().get(0);
+        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID, null)).getItems().get(0);
 
         assertEquals("XNAT_E1", item.getItemId());
         assertEquals(DESTINATION, item.getDestinationProject());
@@ -135,7 +179,7 @@ public class BatchTransferHistoryApiTest {
     public void detail_theCreatorSeesDestinationsWithoutReadingTheDestination() {
         stubRun("carol", BatchTransferHistory.Status.Completed);
 
-        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID)).getItems().get(0);
+        final TransferRunItem item = this.<TransferRunDetail>body(api.detail(TRACKING_ID, null)).getItems().get(0);
 
         assertEquals("XNAT_E9", item.getDestinationId());
         assertEquals("THE_LABEL", item.getDestinationLabel());
@@ -147,14 +191,14 @@ public class BatchTransferHistoryApiTest {
         stubRun("alice", BatchTransferHistory.Status.Running);
         doReturn(Collections.singletonList(SOURCE)).when(api).readableProjects(any());
         doReturn(true).when(api).canEditProject(any(), eq(SOURCE));
-        TransferRunDetail detail = body(api.detail(TRACKING_ID));
+        TransferRunDetail detail = body(api.detail(TRACKING_ID, null));
         assertEquals("the script", detail.getAnonScript());
         assertEquals("ANON_1", detail.getItems().get(0).getCsvValues().get("pid"));
         assertFalse("only the creator or an admin can stop", detail.isCanStop());
 
         when(user.getUsername()).thenReturn("alice");
         doReturn(false).when(api).canEditProject(any(), anyString());
-        detail = body(api.detail(TRACKING_ID));
+        detail = body(api.detail(TRACKING_ID, null));
         assertEquals("the script", detail.getAnonScript());
         assertTrue(detail.isCanStop());
     }
@@ -168,7 +212,7 @@ public class BatchTransferHistoryApiTest {
         progress.setStopped(2);
         when(progressService.findByTrackingId(TRACKING_ID)).thenReturn(progress);
 
-        final TransferRun run = this.<TransferRunDetail>body(api.detail(TRACKING_ID)).getRun();
+        final TransferRun run = this.<TransferRunDetail>body(api.detail(TRACKING_ID, null)).getRun();
 
         assertEquals(3, run.getPassedCount());
         assertEquals(1, run.getFailedCount());
@@ -285,6 +329,14 @@ public class BatchTransferHistoryApiTest {
         final List<BatchTransferItem> items = Collections.singletonList(item);
         when(historyService.items(run.getId())).thenReturn(items);
         when(historyService.itemLabels(any())).thenReturn(Collections.singletonMap("XNAT_E9", "THE_LABEL"));
+    }
+
+    private static BatchTransferItem item(final String itemId, final long changedAt) {
+        final BatchTransferItem item = new BatchTransferItem();
+        item.setItemId(itemId);
+        item.setStatus(BatchTransferItem.Status.Done);
+        item.setTimestamp(new Date(changedAt));
+        return item;
     }
 
     private static BatchTransferHistory run(final String createdBy, final BatchTransferHistory.Status status) {

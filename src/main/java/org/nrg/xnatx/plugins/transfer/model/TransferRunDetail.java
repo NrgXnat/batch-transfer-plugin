@@ -9,7 +9,8 @@ import java.util.List;
 
 /**
  * A run with its items, as {@code GET /xapi/transfer/history/{tracking_id}} returns it. {@code anonScript} is present
- * only for users allowed to see a run's script and values.
+ * only for users allowed to see a run's script and values. {@code itemsAsOf} is the latest item change the response
+ * reflects, in epoch milliseconds: pass it as {@code changed_since} to get only the items changed since.
  */
 @Data
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -19,4 +20,5 @@ public class TransferRunDetail {
     private boolean               canStop;
     private String                anonScript;
     private List<TransferRunItem> items;
+    private Long                  itemsAsOf;
 }

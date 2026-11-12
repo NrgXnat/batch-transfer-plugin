@@ -3,6 +3,8 @@ package org.nrg.xnatx.plugins.transfer.api;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.MockedStatic;
+import org.nrg.xdat.security.helpers.Permissions;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
@@ -38,15 +40,19 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -62,7 +68,7 @@ import static org.mockito.Mockito.when;
  *
  * <p>{@code getSessionUser()} reads the Spring {@code SecurityContextHolder}; a mock {@link UserI} is set as
  * the authentication principal ({@code Users.getUserPrincipal} returns a {@code UserI} principal verbatim), so
- * no security wiring is stubbed. The controller is a spy so the {@code canReadProject} seam can be stubbed for
+ * no security wiring is stubbed. The controller is a spy so the {@code readableProjectId} seam can be stubbed for
  * the read gate (its underlying {@code XnatProjectdata} static is declared on a non-public parent and can't be
  * mocked directly).
  */
@@ -95,8 +101,8 @@ public class BatchTransferApiTest {
         when(auth.getPrincipal()).thenReturn(user);
         SecurityContextHolder.getContext().setAuthentication(auth);
 
-        // Default: the source project is readable. Individual tests override to false for the 403 case.
-        doReturn(true).when(api).canReadProject(anyString(), any(UserI.class));
+        // Default: the source project is readable and named by its ID. Individual tests override to null for the 403.
+        doAnswer(invocation -> invocation.getArgument(0)).when(api).readableProjectId(anyString(), any(UserI.class));
         // The resolver is mocked: fixture rows already carry their statuses, so it hands them back unchanged.
         when(preflightResolver.resolveAll(any(), any(), any(), anyBoolean()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
@@ -117,9 +123,40 @@ public class BatchTransferApiTest {
 
     @Test
     public void validateManifest_noReadAccess_returns403() {
-        doReturn(false).when(api).canReadProject(anyString(), any(UserI.class));
+        doReturn(null).when(api).readableProjectId(anyString(), any(UserI.class));
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+    }
+
+    /** Rows resolve against the project's ID, so a project named by an alias still finds its subjects. */
+    @Test
+    public void validateManifest_anAlias_resolvesAgainstTheProjectsId() throws Exception {
+        when(manifestService.parse(any(), any())).thenReturn(result(true,
+                matchedRow("S1", "SESS1", "E1", Collections.<String, String>emptyMap())));
+        doReturn(SRC).when(api).readableProjectId("src-alias", user);
+
+        final ResponseEntity<?> resp = api.validateManifest(validationRequest("src-alias", null));
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(preflightResolver).resolveAll(eq(SRC), any(List.class), eq(user), eq(false));
+    }
+
+    /** A protected project is visible to everyone, but only a user who can read its data passes. */
+    @Test
+    public void readableProjectId_needsReadAccessToTheProjectsData() {
+        doCallRealMethod().when(api).readableProjectId(anyString(), any(UserI.class));
+        doReturn(SRC).when(api).projectId("an-alias", user);
+        doReturn(null).when(api).projectId("NO_SUCH_PROJECT", user);
+        try (MockedStatic<Permissions> permissions = mockStatic(Permissions.class)) {
+            permissions.when(() -> Permissions.canRead(user, "xnat:subjectData/project", SRC)).thenReturn(false);
+            assertNull("a protected project without data access", api.readableProjectId("an-alias", user));
+
+            permissions.when(() -> Permissions.canRead(user, "xnat:subjectData/project", SRC)).thenReturn(true);
+            assertEquals("the project's ID, not the alias", SRC, api.readableProjectId("an-alias", user));
+
+            assertNull("a project that doesn't exist", api.readableProjectId("NO_SUCH_PROJECT", user));
+            permissions.verify(() -> Permissions.canRead(any(UserI.class), anyString(), eq("NO_SUCH_PROJECT")), never());
+        }
     }
 
     @Test
@@ -227,6 +264,45 @@ public class BatchTransferApiTest {
 
         assertEquals(HttpStatus.OK, resp.getStatusCode());
         verify(service).submitTransferRequest(any(BatchTransfer.class), eq(user));
+    }
+
+    @Test
+    public void submit_aSourceProjectTheUserCanRead_isSubmitted() {
+        final BatchTransfer batch = batch(reimport("E1"));
+        batch.setSourceProject(SRC);
+
+        final ResponseEntity<String> resp = api.submit(batch);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        verify(api).readableProjectId(SRC, user);
+        verify(service).submitTransferRequest(batch, user);
+    }
+
+    /** The submit carries the project's ID: items record their project by ID, so an alias would match none. */
+    @Test
+    public void submit_aSourceProjectAlias_isPassedOnAsTheProjectsId() {
+        doReturn(SRC).when(api).readableProjectId("src-alias", user);
+        final BatchTransfer batch = batch(reimport("E1"));
+        batch.setSourceProject("src-alias");
+
+        final ResponseEntity<String> resp = api.submit(batch);
+
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals(SRC, batch.getSourceProject());
+        verify(service).submitTransferRequest(batch, user);
+    }
+
+    @Test
+    public void submit_aSourceProjectTheUserCannotRead_returns403() {
+        doReturn(null).when(api).readableProjectId(anyString(), any(UserI.class));
+        final BatchTransfer batch = batch(reimport("E1"));
+        batch.setSourceProject(SRC);
+
+        final ResponseEntity<String> resp = api.submit(batch);
+
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        assertEquals("You do not have read access to project " + SRC + ".", resp.getBody());
+        verify(service, never()).submitTransferRequest(any(), any());
     }
 
     @Test

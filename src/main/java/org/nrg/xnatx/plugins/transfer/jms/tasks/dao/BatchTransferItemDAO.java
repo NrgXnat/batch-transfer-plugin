@@ -10,6 +10,7 @@ import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -25,6 +26,9 @@ public class BatchTransferItemDAO extends AbstractHibernateDAO<BatchTransferItem
             + "source_label, status) VALUES (now(), now(), ?, true, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     private static final int INSERT_BATCH_SIZE = 500;
+
+    private static final String ITEM_ORDER =
+            "ORDER BY i.rowNumber ASC NULLS LAST, i.sourceSubjectLabel, i.sourceLabel, i.itemId";
 
     /**
      * Inserts a run's items as JDBC batches on the session's own connection, so they share the transaction that
@@ -116,12 +120,32 @@ public class BatchTransferItemDAO extends AbstractHibernateDAO<BatchTransferItem
                 .executeUpdate();
     }
 
+    /** Every {@code Queued} or {@code Running} item of a run to {@code status}. Returns how many it changed. */
+    public int finishUnfinished(final long historyId, final Status status, final String message) {
+        return getSession().createQuery("UPDATE BatchTransferItem i SET i.status = :status, i.message = :message, "
+                        + "i.finished = current_timestamp, i.timestamp = current_timestamp "
+                        + "WHERE i.history.id = :historyId AND i.status IN (:unfinished)")
+                .setParameter("status", status)
+                .setParameter("message", message)
+                .setParameter("historyId", historyId)
+                .setParameterList("unfinished", Arrays.asList(Status.Queued, Status.Running))
+                .executeUpdate();
+    }
+
     /** A run's items in manifest-row order, then by subject and label. */
     public List<BatchTransferItem> listForRun(final long historyId) {
-        return getSession().createQuery("FROM BatchTransferItem i WHERE i.history.id = :historyId "
-                        + "ORDER BY i.rowNumber ASC NULLS LAST, i.sourceSubjectLabel, i.sourceLabel, i.itemId",
+        return getSession().createQuery("FROM BatchTransferItem i WHERE i.history.id = :historyId " + ITEM_ORDER,
                         BatchTransferItem.class)
                 .setParameter("historyId", historyId)
+                .list();
+    }
+
+    /** A run's items whose status changed at or after {@code since}, in {@link #listForRun}'s order. */
+    public List<BatchTransferItem> listChangedSince(final long historyId, final Date since) {
+        return getSession().createQuery("FROM BatchTransferItem i WHERE i.history.id = :historyId "
+                        + "AND i.timestamp >= :since " + ITEM_ORDER, BatchTransferItem.class)
+                .setParameter("historyId", historyId)
+                .setParameter("since", since)
                 .list();
     }
 }
