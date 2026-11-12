@@ -375,17 +375,27 @@ public class BatchTransferApi extends AbstractXapiRestController {
     // ---- helpers --------------------------------------------------------------------------------------
 
     /**
-     * True when the user can read (or the project is otherwise resolvable to) {@code project}. Protected seam
-     * (like the service-layer {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read
-     * check without mocking the {@code XnatProjectdata} static.
+     * True when the user can read {@code project}'s data. Every user can see a protected project, but not its
+     * data, so finding the project isn't enough. Protected seam (like the service-layer
+     * {@code runImporter}/{@code destinationAutoArchives}) so tests can stub the read check.
      */
     protected boolean canReadProject(final String project, final UserI user) {
         try {
-            return XnatProjectdata.getProjectByIDorAlias(project, user, false) != null;
+            final String id = projectId(project, user);
+            return id != null && Permissions.canRead(user, "xnat:subjectData/project", id);
         } catch (Exception e) {
             log.error("Could not verify read access on project {}", project, e);
             return false;
         }
+    }
+
+    /**
+     * The ID of the project named by its ID or an alias, or null when there is no such project. A seam, since the
+     * {@code XnatProjectdata} static is declared on a non-public parent and can't be mocked.
+     */
+    protected String projectId(final String project, final UserI user) {
+        final XnatProjectdata found = XnatProjectdata.getProjectByIDorAlias(project, user, false);
+        return found == null ? null : found.getId();
     }
 
     /** Blank → the default Reimport; a known value → its mode; anything else → null (an invalid mode). */

@@ -104,6 +104,12 @@ tasks.register("dbTest", Test) {
     shouldRunAfter test
 }
 
+// Gradle 9 stamps every archive entry with a fixed 1980 date by default. XNAT serves the plugin's scripts and
+// styles with the entry's date as Last-Modified, so browsers kept cached copies across upgrades. Keep real dates.
+tasks.named("jar") {
+    preserveFileTimestamps = true
+}
+
 task sourceJar(type: Jar, dependsOn: classes) {
     archiveClassifier.set("sources")
     from sourceSets.main.allSource

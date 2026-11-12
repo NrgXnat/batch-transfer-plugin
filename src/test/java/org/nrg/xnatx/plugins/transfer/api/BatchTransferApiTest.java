@@ -3,6 +3,8 @@ package org.nrg.xnatx.plugins.transfer.api;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.MockedStatic;
+import org.nrg.xdat.security.helpers.Permissions;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
@@ -38,15 +40,18 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -120,6 +125,24 @@ public class BatchTransferApiTest {
         doReturn(false).when(api).canReadProject(anyString(), any(UserI.class));
         final ResponseEntity<?> resp = api.validateManifest(validationRequest(SRC, null));
         assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+    }
+
+    /** A protected project is visible to everyone, but only a user who can read its data passes. */
+    @Test
+    public void canReadProject_needsReadAccessToTheProjectsData() {
+        doCallRealMethod().when(api).canReadProject(anyString(), any(UserI.class));
+        doReturn(SRC).when(api).projectId("an-alias", user);
+        doReturn(null).when(api).projectId("NO_SUCH_PROJECT", user);
+        try (MockedStatic<Permissions> permissions = mockStatic(Permissions.class)) {
+            permissions.when(() -> Permissions.canRead(user, "xnat:subjectData/project", SRC)).thenReturn(false);
+            assertFalse("a protected project without data access", api.canReadProject("an-alias", user));
+
+            permissions.when(() -> Permissions.canRead(user, "xnat:subjectData/project", SRC)).thenReturn(true);
+            assertTrue("checked against the project's ID, not the alias", api.canReadProject("an-alias", user));
+
+            assertFalse("a project that doesn't exist", api.canReadProject("NO_SUCH_PROJECT", user));
+            permissions.verify(() -> Permissions.canRead(any(UserI.class), anyString(), eq("NO_SUCH_PROJECT")), never());
+        }
     }
 
     @Test

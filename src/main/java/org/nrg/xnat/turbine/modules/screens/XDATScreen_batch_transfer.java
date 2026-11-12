@@ -86,6 +86,12 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         } else {
             // retrieve passed search object
             search = TurbineUtils.getSearch(data);
+            if (search == null) {
+                // No project and no search in the session: opened directly, or reloaded after the search is gone.
+                context.put("msg", "Batch Transfer has nothing to transfer. Open it from a project's Actions menu, "
+                        + "or from search results.");
+                return;
+            }
             SchemaElement rootElement = search.getRootElement();
             String xsiType = rootElement.getFullXMLName();
             addShareIdDisplayField(rootElement, search);

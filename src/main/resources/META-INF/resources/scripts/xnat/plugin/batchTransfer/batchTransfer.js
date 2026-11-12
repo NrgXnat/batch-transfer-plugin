@@ -1138,10 +1138,10 @@ var XNAT = getObject(XNAT || {});
 
     function actionCountInfo() {
         if (cohortMode === 'csv') {
-            return { count: manifestCurrent() ? manifestMatchedCount() : 0, noun: 'sessions' };
+            return { count: manifestCurrent() ? manifestMatchedCount() : 0, noun: 'session' };
         }
-        if (selectedOp === 'Reimport') { return { count: lastTreeCount.sessions, noun: 'sessions' }; }
-        return { count: lastTreeCount.selectedCount, noun: 'items' };
+        if (selectedOp === 'Reimport') { return { count: lastTreeCount.sessions, noun: 'session' }; }
+        return { count: lastTreeCount.selectedCount, noun: 'item' };
     }
 
     // A status chip. The optional title is the full sentence behind the short chip text.
@@ -1248,9 +1248,9 @@ var XNAT = getObject(XNAT || {});
             ? '<span class="bt-submit-note">Blocked: ' + escapeHtml(reasons.join('; ')) + '</span>'
             : '';
         $('#bt-action-summary').html(
-            '<span><strong>' + selectedOp + ' ' + info.count + ' ' + info.noun + '</strong> &middot; ' +
+            '<span><strong>' + selectedOp + ' ' + countText(info.count, info.noun) + '</strong> &middot; ' +
             escapeHtml(src) + ' &#10142; ' + escapeHtml(dest) + '</span>' + anonChipsHtml() + note);
-        $('#bt-submit-btn').text(selectedOp + ' ' + info.count + ' ' + info.noun);
+        $('#bt-submit-btn').text(selectedOp + ' ' + countText(info.count, info.noun));
         $('#bt-submit-btn').prop('disabled', submitInFlight || reasons.length > 0);
     }
 

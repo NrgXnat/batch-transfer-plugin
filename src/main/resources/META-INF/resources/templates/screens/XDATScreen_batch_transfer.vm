@@ -11,7 +11,9 @@
 #end
 
 #if(!$items || $items.size() == 0)
-    <div class="info">$sharingMsg</div>
+    #if($sharingMsg)
+        <div class="info">$sharingMsg</div>
+    #end
     <br>
     <input type="button" name="ok" value="Ok" onclick="goHome()"/>
     <script type="text/javascript">
