@@ -1,8 +1,9 @@
 /*
  * Batch Transfer screen: the New transfer / History tabs, and the History panel. History lists the runs that
- * involve the screen's project (or, from search results, the user's own runs), opens a run's per-item outcomes,
- * stops a running run, and exports a run's results or its failed and stopped sessions as a manifest for a rerun.
- * Reads /xapi/transfer/history. batchTransfer.js drives New transfer.
+ * involve the screen's project (or, from search results or the History-only page, the user's own runs; a site admin
+ * can list everyone's there), opens a run's per-item outcomes, stops a running run, and exports a run's results or
+ * its failed and stopped sessions as a manifest for a rerun. The URL's hash names the view shown. Reads
+ * /xapi/transfer/history. batchTransfer.js drives New transfer.
  */
 var XNAT = getObject(XNAT || {});
 (function(factory) {
@@ -42,12 +43,20 @@ var XNAT = getObject(XNAT || {});
     var showAllGroups = false;
     var expanded = {};               // item id -> its values row is open
     var pollTimer = null;
+    var scope = 'mine';              // History-only page: 'mine', or 'all' for a site admin
 
+    // config: projectContext (the screen's project, or null), historyOnly (no project and no search, so History is
+    // the whole page), siteAdmin (on that page, whether the viewer may list every transfer).
     api.init = function(cfg) {
         config = cfg || {};
         bindTabs();
         bindHistory();
-        loadList();
+        $(window).on('hashchange', function() { applyHash(false); });
+        if (config.historyOnly) { view = 'history'; }
+        if (!applyHash(true)) {
+            if (config.historyOnly) { render(); }
+            loadList();
+        }
     };
 
     // After a submit: History, the runs list, the new run highlighted.
@@ -99,6 +108,48 @@ var XNAT = getObject(XNAT || {});
             if (runId) { loadDetail(); } else { loadList(); }
         }
         if (changed || reload) { revealHeader(); }
+        syncHash();
+    }
+
+    // -- Links: #history, #history/all and #history/run/<tracking id> open that view, and the address bar follows
+    // what's shown, so it can be copied or bookmarked. replaceState adds no history entries, so the browser's Back
+    // (and the screen's Cancel) still leave the page. --
+
+    function canSeeAll() {
+        return !!(config.historyOnly && config.siteAdmin);
+    }
+
+    // Shows what the URL's hash names. Returns whether it named a History view.
+    function applyHash(initial) {
+        var m = /^#history(?:\/(all)|\/run\/(.+))?$/.exec(window.location.hash || '');
+        if (!m) {
+            if (!initial && !config.historyOnly && view !== 'transfer') { showView('transfer'); }
+            return false;
+        }
+        if (m[1] === 'all' && canSeeAll()) {
+            scope = 'all';
+        } else if (!m[2]) {
+            scope = 'mine';
+        }
+        var id = m[2] ? decodeURIComponent(m[2]) : null;
+        if (id !== runId) {
+            runId = id;
+            detailData = null;
+            detailError = null;
+            problemsOnly = false;
+            showAllGroups = false;
+            expanded = {};
+        }
+        if (!id) { page = 0; listData = null; }
+        showView('history', true);
+        return true;
+    }
+
+    function syncHash() {
+        var hash = view !== 'history' ? '' : runId ? '#history/run/' + encodeURIComponent(runId)
+                 : scope === 'all' ? '#history/all' : '#history';
+        if (hash === (window.location.hash || '') || !window.history || !window.history.replaceState) { return; }
+        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hash);
     }
 
     function revealHeader() {
@@ -111,6 +162,7 @@ var XNAT = getObject(XNAT || {});
     function fetchRuns(p, done, fail) {
         var params = { page: p, size: PAGE_SIZE };
         if (config.projectContext) { params.project = config.projectContext; }
+        if (scope === 'all' && canSeeAll()) { params.all = true; }
         $.ajax({
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/transfer/history?' + $.param(params)),
@@ -248,7 +300,8 @@ var XNAT = getObject(XNAT || {});
     // -- Runs list --
 
     function listHtml() {
-        var heading = config.projectContext ? 'Transfers involving ' + esc(config.projectContext) : 'Your transfers';
+        var heading = config.projectContext ? 'Transfers involving ' + esc(config.projectContext)
+                    : scope === 'all' ? 'All transfers' : 'Your transfers';
         var meta = '';
         var body;
         if (!listData) {
@@ -257,6 +310,7 @@ var XNAT = getObject(XNAT || {});
         } else if (!(listData.runs || []).length) {
             body = '<div class="bt-h-empty">' + (listData.total ? 'No transfers on this page.'
                  : config.projectContext ? 'No transfers involve ' + esc(config.projectContext) + ' yet.'
+                 : scope === 'all' ? 'No transfers yet.'
                  : 'You have not started any transfers yet.') + '</div>';
         } else {
             meta = '<span>' + countText(listData.total || 0, 'transfer') + ', newest first</span>';
@@ -264,7 +318,19 @@ var XNAT = getObject(XNAT || {});
         }
         return '<div class="bt-panel bt-h-panel">' +
                '<div class="bt-panel-head"><div class="bt-panel-title">' + heading + '</div>' +
-               '<div class="bt-panel-meta">' + meta + '</div></div>' + body + '</div>';
+               '<div class="bt-panel-meta">' + meta + '</div>' + scopeHtml() + '</div>' + body + '</div>';
+    }
+
+    // On the History-only page, a site admin chooses between their own transfers and everyone's.
+    function scopeHtml() {
+        if (!canSeeAll()) { return ''; }
+        var option = function(value, label) {
+            var on = scope === value;
+            return '<button type="button" class="bt-h-scope-btn' + (on ? ' selected' : '') + '" data-act="scope" ' +
+                   'data-scope="' + value + '" aria-pressed="' + on + '">' + label + '</button>';
+        };
+        return '<div class="bt-h-scope" role="group" aria-label="Transfers to list">' +
+               option('mine', 'Your transfers') + option('all', 'All transfers') + '</div>';
     }
 
     function runsTable(runs) {
@@ -732,6 +798,17 @@ var XNAT = getObject(XNAT || {});
                 var id = this.getAttribute('data-id');
                 expanded[id] = !expanded[id];
                 render();
+            } else if (act === 'scope') {
+                var chosen = this.getAttribute('data-scope') === 'all' ? 'all' : 'mine';
+                if (chosen !== scope) {
+                    scope = chosen;
+                    page = 0;
+                    listData = null;
+                    listError = null;
+                    render();
+                    loadList();
+                    syncHash();
+                }
             }
         });
         $(document).on('click', '#bt-history tr.bt-h-row', function(e) {
@@ -756,6 +833,7 @@ var XNAT = getObject(XNAT || {});
         render();
         loadDetail();
         revealHeader();
+        syncHash();
         var back = document.querySelector('#bt-history [data-act="back"]');
         if (back) { back.focus(); }
     }
@@ -767,6 +845,7 @@ var XNAT = getObject(XNAT || {});
         detailError = null;
         render();
         loadList();
+        syncHash();
         var row = from && document.querySelector('#bt-history tr[data-run="' + cssEscape(from) + '"]');
         if (row) { row.focus(); }
     }

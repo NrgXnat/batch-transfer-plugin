@@ -10,7 +10,29 @@
     <div class="info">$msg</div>
 #end
 
-#if(!$items || $items.size() == 0)
+#if($historyOnly)
+## History only: opened with no project and no search (the Tools menu, a link, or a reload once the session's search
+## is gone), so there is nothing to transfer. batchTransferHistory.js renders the runs; site admins can list them all.
+<div class="bt-pagehead">
+    <div class="bt-pagehead-title">
+        <h1>Batch Transfer</h1>
+        <span class="bt-pagehead-ctx">History</span>
+    </div>
+</div>
+<p class="bt-summary bt-h-only-note">To start a transfer, open Batch Transfer from a project's Actions menu, or from search results.</p>
+<div class="bt-view" id="bt-view-history">
+    <div class="bt-h-screen" id="bt-history"></div>
+</div>
+<script type="text/javascript">
+    $(function() {
+        XNAT.plugin.batchtransfer.history.init({
+            projectContext: null,
+            historyOnly: true,
+            siteAdmin: #if($siteAdmin) true #else false #end
+        });
+    });
+</script>
+#elseif(!$items || $items.size() == 0)
     #if($sharingMsg)
         <div class="info">$sharingMsg</div>
     #end

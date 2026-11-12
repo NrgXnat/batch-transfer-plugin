@@ -88,16 +88,18 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
     }
 
     @ApiOperation(value = "Lists transfer runs, newest first: a project's runs (as source or destination), or the "
-            + "caller's own runs when no project is given")
+            + "caller's own runs when no project is given. A site admin can ask for every run with all=true")
     @ApiResponses({@ApiResponse(code = 200, message = "A page of runs"),
-                   @ApiResponse(code = 400, message = "Unknown status")})
+                   @ApiResponse(code = 400, message = "Unknown status"),
+                   @ApiResponse(code = 403, message = "all=true from a caller who isn't a site admin")})
     @XapiRequestMapping(value = {""}, produces = APPLICATION_JSON_VALUE, method = GET,
             restrictTo = AccessLevel.Authenticated)
     @ResponseBody
     public ResponseEntity<?> list(@RequestParam(value = "project", required = false) final String project,
                                   @RequestParam(value = "status", required = false) final String status,
                                   @RequestParam(value = "page", required = false, defaultValue = "0") final int page,
-                                  @RequestParam(value = "size", required = false, defaultValue = "25") final int size) {
+                                  @RequestParam(value = "size", required = false, defaultValue = "25") final int size,
+                                  @RequestParam(value = "all", required = false, defaultValue = "false") final boolean all) {
         final BatchTransferHistory.Status statusFilter;
         try {
             statusFilter = status == null ? null : BatchTransferHistory.Status.valueOf(status);
@@ -109,7 +111,10 @@ public class BatchTransferHistoryApi extends AbstractXapiRestController {
 
         final UserI user = getSessionUser();
         final boolean admin = isSiteAdmin(user);
-        final String createdBy = project == null ? user.getUsername() : null;
+        if (all && !admin) {
+            return new ResponseEntity<>("Only a site admin can list every transfer.", HttpStatus.FORBIDDEN);
+        }
+        final String createdBy = project == null && !all ? user.getUsername() : null;
         final String visibleTo = admin ? null : user.getUsername();
         final Collection<String> readable = admin ? null : readableProjects(user);
 

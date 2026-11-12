@@ -1761,6 +1761,20 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-h-panel .bt-pager { padding: 10px 14px; border-top: 1px solid #f1f3f4; }
 .bt-h-empty { text-align: center; padding: 34px 16px; color: #5f6368; font-size: 13px; }
 .bt-h-error { padding: 14px; color: #c5221f; font-size: 13px; }
+
+/* History-only page (no project, no search): where to start a transfer, and a site admin's choice of whose
+   transfers to list. The choice sits at the right of the list's header. */
+.bt-h-only-note { margin: 4px 0 14px; }
+.bt-h-scope { display: inline-flex; flex-shrink: 0; border: 2px solid #e8eaed; border-radius: 8px; overflow: hidden; }
+.bt-h-scope-btn {
+    -webkit-appearance: none; appearance: none; margin: 0; padding: 6px 12px; border: 0; border-right: 1px solid #e8eaed;
+    border-radius: 0; background: #fff; box-shadow: none; color: #5f6368; font-family: inherit; font-size: 12px;
+    font-weight: 500; line-height: 16px; cursor: pointer;
+}
+.bt-h-scope-btn:last-child { border-right: 0; }
+.bt-h-scope-btn:hover { background: #f8f9fa; }
+.bt-h-scope-btn.selected { background: #e8f0fe; color: #1a73e8; }
+.bt-h-scope-btn:focus-visible { box-shadow: inset 0 0 0 2px #1a73e8; }
 .bt-h-linkbtn, .bt-h-back, .bt-h-more button {
     -webkit-appearance: none; appearance: none; border: 0; background: none; padding: 0; cursor: pointer;
     font-family: inherit; color: #1a73e8; font-weight: 600;

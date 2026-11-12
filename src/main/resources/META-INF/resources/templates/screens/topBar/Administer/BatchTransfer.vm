@@ -1,0 +1,7 @@
+<!-- Sequence: 90 -->
+## Administer > Batch Transfers: every transfer on the site, for site admins. The hash part comes from a variable so
+## Velocity doesn't read it as a directive.
+#if($user.isSiteAdmin())
+    #set($btAllHash = '#history/all')
+<li><a href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm${btAllHash}">Batch Transfers</a></li>
+#end

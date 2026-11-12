@@ -17,6 +17,7 @@ import org.nrg.xdat.schema.SchemaElement;
 import org.nrg.xdat.search.DisplaySearch;
 import org.nrg.xdat.security.XDATUser;
 import org.nrg.xdat.security.helpers.Features;
+import org.nrg.xdat.security.helpers.Roles;
 import org.nrg.xdat.turbine.modules.screens.SecureScreen;
 import org.nrg.xdat.turbine.utils.TurbineUtils;
 import org.nrg.xft.XFTTable;
@@ -88,9 +89,10 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             // retrieve passed search object
             search = TurbineUtils.getSearch(data);
             if (search == null) {
-                // No project and no search in the session: opened directly, or reloaded after the search is gone.
-                context.put("msg", "Batch Transfer has nothing to transfer. Open it from a project's Actions menu, "
-                        + "or from search results.");
+                // No project and no search in the session: opened from the Tools menu or a link, or reloaded after
+                // the search is gone. There is nothing to transfer, so the screen shows History only.
+                context.put("historyOnly", true);
+                context.put("siteAdmin", isSiteAdmin(user));
                 return;
             }
             SchemaElement rootElement = search.getRootElement();
@@ -232,6 +234,11 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         context.put("shareableProjects", shareableProjects);
         context.put("cloneableProjects", cloneableProjects);
         context.put("turbineUtils", TurbineUtils.GetInstance());
+    }
+
+    /** Whether the user is a site admin, who can list every transfer. Overridable so tests need no XDAT wiring. */
+    protected boolean isSiteAdmin(final UserI user) {
+        return Roles.isSiteAdmin(user);
     }
 
     /**

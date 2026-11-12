@@ -1,0 +1,7 @@
+<!-- Sequence: 20 -->
+## Tools > Batch Transfer History: the user's transfers, with no project or search needed. The hash part comes from a
+## variable so Velocity doesn't read it as a directive.
+#if($user && !$user.isGuest())
+    #set($btHistoryHash = '#history')
+<li><a href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm${btHistoryHash}">Batch Transfer History</a></li>
+#end
