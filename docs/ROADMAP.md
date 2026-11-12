@@ -2,7 +2,7 @@
 
 **Plugin Version**: 2.0.0
 **Target XNAT**: 1.10.2.1 (JDK 21)
-**Last Updated**: 2026-11-05
+**Last Updated**: 2026-11-12
 
 The Batch Transfer Plugin enables bulk data operations across XNAT projects. Users can Share, Clone, or Reimport subjects, sessions, and assessors in batch from a single interface. **Share** adds data into a destination project without copying (XNAT's standard sharing relationship); **Clone** duplicates data into the destination, producing an independent editable copy; **Reimport** re-ingests image sessions through the destination project's anonymization pipeline.
 
@@ -101,6 +101,11 @@ Follows the 1.2.0 cohort-building and custom-anonymization work. Deliberately do
 - Computed size estimate in the operation-detail panel — replace the static duplication warning with a real byte count for the current selection (e.g. "≈ 4.2 GB will be duplicated to *DestProject*"). Requires either a new XAPI endpoint that walks the archive, or per-row `data-size` attributes emitted by `XDATScreen_batch_transfer.java`, plus rollup logic in `batchTransfer.js`.
 
 ### Backend & API
+- **Reimport every DICOM scan resource, not only folders named `DICOM`.** Reimport sends a session's files only from scan folders named `DICOM` (`StreamingZipFileWriter` in `BatchTransferServiceImpl`), and the manifest's file count (`PreflightResolver`) uses the same rule. XNAT stores Secondary Capture images in a scan resource labelled `secondary`, with format `DICOM`, so Reimport leaves them out. A session made only of them, such as a PET saved as Secondary Capture, fails with "No DICOM files found". A session that also has them, such as an MR with a dose-report image, arrives without those scans and nothing reports it. Present since 1.0.0.
+  - **Fix:** choose files by each scan resource's format, not its folder name. Read the session's scan resources (`XnatImagescandata.getFile()`), keep those whose `format` is `DICOM`, and walk each one's catalog directory. Keep the folder-name rule as a fallback for resources with no format recorded. Session-level resources and assessors stay out, as now.
+  - Use one helper for both the Reimport zip and the manifest file count, so the count shown before submit matches what is sent.
+  - Decide what to do when two DICOM-format resources in one session hold the same instances: send both and let the importer resolve them, or skip repeats by SOP Instance UID.
+  - **Tests:** a unit test on a session folder with `DICOM`, `secondary` (format `DICOM`) and `NIFTI` scan resources that expects files from the first two only. Live: reimport an xnat-synth-dicom PET session (Secondary Capture) and an MR session with a Secondary Capture scan, and check that every scan arrives.
 - BatchTransferEvent refactor to limit event/DB traffic (partially addressed in 1.0.1-RC: in-memory `BatchTransferMonitor` fan-in collapses per-batch terminal events to one)
 - Rethink BatchTransferEvent status to reflect import process as reflected in prearch import.
   - "Transfer Queued (%s items)" and "Transfer Complete" do not yet reflect true Share/Clone/Reimport status nuance
