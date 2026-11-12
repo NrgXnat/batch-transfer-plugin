@@ -2,6 +2,8 @@
 
 Bulk data operations across XNAT projects — **Share**, **Clone**, or **Reimport** subjects, sessions, and assessors in a single batch from one screen.
 
+New to Batch Transfer? The [quick start](docs/quick-start.md) walks through each operation and History with screenshots.
+
 | Plugin Version                  | Target XNAT | JDK |
 |---------------------------------|---|---|
 | `2.0.0` | 1.10.2.1 | 21 |
@@ -33,6 +35,7 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 1. **Project Actions menu** — the *Batch Transfer* item appears for project owners, edit-members, and admins.
 2. **Search results bulk action** — legacy entry; selects items from a saved search and routes them into the same screen.
+3. **Tools > Batch Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get **Administer > Batch Transfers**, which can list every transfer.
 
 ---
 
