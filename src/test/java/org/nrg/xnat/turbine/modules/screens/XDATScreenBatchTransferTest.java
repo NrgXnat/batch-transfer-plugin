@@ -7,6 +7,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.nrg.xdat.XDAT;
+import org.nrg.xdat.search.DisplaySearch;
 import org.nrg.xdat.turbine.utils.TurbineUtils;
 import org.nrg.xft.security.UserI;
 
@@ -18,6 +19,7 @@ import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** The screen's entry points that need no XNAT data: no source, and the preset destination. */
@@ -60,6 +62,25 @@ public class XDATScreenBatchTransferTest {
         build();
 
         verify(context).put("siteAdmin", true);
+    }
+
+    /** Tools > Batch Transfer History: a search another XNAT page left in the session is never looked up or run. */
+    @Test
+    public void historyOnlyAskedFor_ignoresASearchInTheSession() throws Exception {
+        when(params.getBoolean(XDATScreen_batch_transfer.HISTORY_ONLY_PARAM)).thenReturn(true);
+        final DisplaySearch leftOver = mock(DisplaySearch.class);
+
+        try (MockedStatic<XDAT> xdat = mockStatic(XDAT.class);
+             MockedStatic<TurbineUtils> turbine = mockStatic(TurbineUtils.class)) {
+            xdat.when(XDAT::getUserDetails).thenReturn(user);
+            turbine.when(() -> TurbineUtils.getSearch(data)).thenReturn(leftOver);
+            screen.doBuildTemplate(data, context);
+            turbine.verify(() -> TurbineUtils.getSearch(data), never());
+        }
+
+        verify(context).put("historyOnly", true);
+        verify(context, never()).put(eq("items"), any());
+        verifyNoInteractions(leftOver);
     }
 
     /** The destination parameter never reaches the page unless it names a project. */

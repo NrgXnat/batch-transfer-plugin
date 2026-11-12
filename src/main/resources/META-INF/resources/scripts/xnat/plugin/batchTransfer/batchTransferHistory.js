@@ -110,9 +110,9 @@ var XNAT = getObject(XNAT || {});
             return;
         }
         bindTabs();
-        $(window).on('hashchange', function() { applyHash(false); });
+        $(window).on('hashchange', function(e) { hashChanged(e.originalEvent && e.originalEvent.newURL); });
         if (config.historyOnly) { view = 'history'; }
-        if (!applyHash(true)) {
+        if (!applyHash()) {
             if (config.historyOnly) { render(); }
             loadList();
         }
@@ -178,13 +178,22 @@ var XNAT = getObject(XNAT || {});
         return !!(config.settingsPage || (config.historyOnly && config.siteAdmin));
     }
 
-    // Shows what the URL's hash names. Returns whether it named a History view.
-    function applyHash(initial) {
-        var m = /^#history(?:\/(all)|\/run\/(.+))?$/.exec(window.location.hash || '');
-        if (!m) {
-            if (!initial && !config.historyOnly && view !== 'transfer') { showView('transfer'); }
-            return false;
+    // A hash naming a History view opens it, and no hash at all (Back to the page's own address) returns to New
+    // transfer. Any other hash comes from a link elsewhere on the page, such as the "#!" headings in XNAT's menus:
+    // the view stays and the address bar is put back.
+    function hashChanged(newUrl) {
+        if (applyHash()) { return; }
+        if (newUrl && newUrl.indexOf('#') < 0 && !config.historyOnly && view !== 'transfer') {
+            showView('transfer');
+        } else {
+            syncHash();
         }
+    }
+
+    // Shows what the URL's hash names. Returns whether it named a History view.
+    function applyHash() {
+        var m = /^#history(?:\/(all)|\/run\/(.+))?$/.exec(window.location.hash || '');
+        if (!m) { return false; }
         if (m[1] === 'all' && canSeeAll()) {
             scope = 'all';
         } else if (!m[2]) {

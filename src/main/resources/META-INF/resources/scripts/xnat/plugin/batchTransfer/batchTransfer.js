@@ -1403,7 +1403,7 @@ var XNAT = getObject(XNAT || {});
         manifestPending = false; manifestError = null; manifestGroupsCache = null;
         manifestExpanded = {}; manifestFileCounts = {}; manifestFileCountErr = {};
         manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
-        destLabelSeq++; destLabels = null; labelIssues = null;
+        destLabelSeq++; destLabels = null; destLabelsAsked = null; labelIssues = null;
         $('#bt-csv-file').val('');
         $('#bt-csv-results').empty();
         $('#bt-dropzone').show();
@@ -1493,11 +1493,18 @@ var XNAT = getObject(XNAT || {});
 
     // The distinct row numbers of the entries pred accepts, ascending. A subject row's sessions share one.
     function manifestRowNumbers(pred) {
-        var seen = {}, out = [];
-        ((manifestResult && manifestResult.rows) || []).forEach(function(e) {
-            if (pred(e) && !seen[e.row_number]) { seen[e.row_number] = true; out.push(e.row_number); }
-        });
-        return out.sort(function(a, b) { return a - b; });
+        return rowNumbersOf(((manifestResult && manifestResult.rows) || []).filter(pred));
+    }
+
+    // The entries' row numbers, each once, ascending.
+    function rowNumbersOf(entries) {
+        return distinct(entries.map(function(e) { return e.row_number; })).sort(function(a, b) { return a - b; });
+    }
+
+    // The values in first-seen order, each once. Every call passes values of one type.
+    function distinct(values) {
+        var seen = Object.create(null);
+        return values.filter(function(v) { return seen[v] ? false : (seen[v] = true); });
     }
 
     function statusRows(code) {
@@ -1539,13 +1546,16 @@ var XNAT = getObject(XNAT || {});
     // about are every explicit destination_session_label and every source session label, since Preserve can be
     // switched without asking again. Advisory: until it answers, or if it fails, nothing is flagged.
     var destLabels = null;         // { project, result, taken: { label: true } }
+    var destLabelsAsked = null;    // { project, result } of the request in flight
     var destLabelSeq = 0;
     var labelIssues = null;        // manifestLabelIssues() as of the last render of the manifest table
 
     function checkDestinationLabels() {
         if (cohortMode !== 'csv' || selectedOp !== 'Reimport' || !selectedProject || !manifestCurrent()) { return; }
-        if (destLabels && destLabels.project === selectedProject && destLabels.result === manifestResult) { return; }
+        var current = function(x) { return x && x.project === selectedProject && x.result === manifestResult; };
+        if (current(destLabels) || current(destLabelsAsked)) { return; }
         var seq = ++destLabelSeq, project = selectedProject, result = manifestResult, labels = {};
+        var asked = destLabelsAsked = { project: project, result: result };
         (result.rows || []).forEach(function(e) {
             if (e.status !== 'matched') { return; }
             if (e.destination_session_label) { labels[e.destination_session_label] = true; }
@@ -1563,6 +1573,9 @@ var XNAT = getObject(XNAT || {});
                 destLabels = { project: project, result: result, taken: taken };
                 if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }
                 updateSummary();
+            },
+            complete: function() {
+                if (destLabelsAsked === asked) { destLabelsAsked = null; }
             }
         });
     }
@@ -1572,7 +1585,8 @@ var XNAT = getObject(XNAT || {});
     // unknown until XNAT derives it from DICOM tags (and the same for session labels).
     //   merges: two or more source subjects sent to one destination subject. Blocks submit.
     //   splits: one source subject's sessions sent to more than one destination subject. A warning.
-    //   blank:  sessions with a blank cell in a destination column the manifest has. A warning.
+    //   blank:  sessions with a blank cell in a destination column the manifest has (a subject row has no
+    //           destination_session_label cell to fill, so its sessions aren't counted for that one). A warning.
     //   taken:  sessions whose session label the destination already has, so they'd fail or merge. A warning.
     // byId indexes the sessions involved by resolved ID, for the table's cells.
     function manifestLabelIssues() {
@@ -1595,7 +1609,7 @@ var XNAT = getObject(XNAT || {});
             if (!e.destination_subject_label && cols.indexOf('destination_subject_label') >= 0) {
                 out.blank.subject.push(e); out.byId.blankSubject[id] = true;
             }
-            if (!e.destination_session_label && cols.indexOf('destination_session_label') >= 0) {
+            if (!e.destination_session_label && !e.subject_row && cols.indexOf('destination_session_label') >= 0) {
                 out.blank.session.push(e); out.byId.blankSession[id] = true;
             }
             if (session && taken && taken[session]) { out.taken.push({ e: e, label: session }); out.byId.taken[id] = session; }
@@ -1617,14 +1631,6 @@ var XNAT = getObject(XNAT || {});
             entries.forEach(function(x) { out.byId.split[x.e.resolved_id] = split; });
         });
         return out;
-    }
-
-    function distinct(values) {
-        return values.filter(function(v, i) { return values.indexOf(v) === i; });
-    }
-
-    function rowNumbersOf(entries) {
-        return distinct(entries.map(function(e) { return e.row_number; })).sort(function(a, b) { return a - b; });
     }
 
     // The rows of a list of merges or splits, ascending.

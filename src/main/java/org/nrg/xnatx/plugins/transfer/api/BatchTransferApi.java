@@ -385,6 +385,12 @@ public class BatchTransferApi extends AbstractXapiRestController {
         if (request == null || StringUtils.isBlank(request.getDestinationProject())) {
             return new ResponseEntity<>("destination_project is required.", HttpStatus.BAD_REQUEST);
         }
+        // Which labels a project uses is its data, so the caller must be able to read it.
+        final String destinationId = readableProjectId(request.getDestinationProject(), getSessionUser());
+        if (destinationId == null) {
+            return new ResponseEntity<>("You do not have read access to project " + request.getDestinationProject()
+                    + ".", HttpStatus.FORBIDDEN);
+        }
         final Set<String> labels = new LinkedHashSet<>();
         if (request.getSessionLabels() != null) {
             request.getSessionLabels().stream().filter(StringUtils::isNotBlank).forEach(labels::add);
@@ -392,12 +398,6 @@ public class BatchTransferApi extends AbstractXapiRestController {
         if (labels.size() > MAX_DESTINATION_LABELS) {
             return new ResponseEntity<>("At most " + MAX_DESTINATION_LABELS + " labels can be checked at once.",
                     HttpStatus.PAYLOAD_TOO_LARGE);
-        }
-        // Which labels a project uses is its data, so the caller must be able to read it.
-        final String destinationId = readableProjectId(request.getDestinationProject(), getSessionUser());
-        if (destinationId == null) {
-            return new ResponseEntity<>("You do not have read access to project " + request.getDestinationProject()
-                    + ".", HttpStatus.FORBIDDEN);
         }
         final List<String> taken = new ArrayList<>(xnatItems.takenExperimentLabels(destinationId, labels));
         Collections.sort(taken);

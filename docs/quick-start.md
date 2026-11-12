@@ -327,9 +327,9 @@ The address bar always names the History view that's showing, so you can bookmar
 
 | Address ends with | Opens |
 |---|---|
-| `XDATScreen_batch_transfer.vm#history` | Your transfers |
-| `XDATScreen_batch_transfer.vm#history/all` | All transfers (site administrators; anyone else sees their own) |
-| `XDATScreen_batch_transfer.vm#history/run/<tracking ID>` | One transfer |
+| `XDATScreen_batch_transfer.vm?historyOnly=true#history` | Your transfers |
+| `XDATScreen_batch_transfer.vm?historyOnly=true#history/all` | All transfers (site administrators; anyone else sees their own) |
+| `XDATScreen_batch_transfer.vm?historyOnly=true#history/run/<tracking ID>` | One transfer |
 | `XDATScreen_batch_transfer.vm?sourceProject=HA_MRI#history` | HA_MRI's History tab |
 | `Page.vm?view=admin/plugins#tab=batch-transfer-history-tab` | Transfer History in Plugin Settings (site administrators) |
 

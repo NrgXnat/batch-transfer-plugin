@@ -538,6 +538,17 @@ public class BatchTransferApiTest {
     }
 
     @Test
+    public void destinationLabels_overTheLimitForAProjectTheCallerCantRead_is403() {
+        doReturn(null).when(api).readableProjectId(anyString(), any(UserI.class));
+        final List<String> labels = new ArrayList<>();
+        for (int i = 0; i <= BatchTransferApi.MAX_DESTINATION_LABELS; i++) {
+            labels.add("S_" + i);
+        }
+        assertEquals(HttpStatus.FORBIDDEN,
+                api.validateDestinationLabels(new DestinationLabelsRequest(DEST, labels)).getStatusCode());
+    }
+
+    @Test
     public void destinationLabels_withNoLabels_isAnEmptyList() {
         when(xnatItems.takenExperimentLabels(eq(DEST), any())).thenReturn(new HashSet<>());
         final ResponseEntity<?> resp = api.validateDestinationLabels(new DestinationLabelsRequest(DEST, null));
