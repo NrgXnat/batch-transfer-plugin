@@ -1651,7 +1651,7 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-summary:empty { display: none; }
 
 /* Setup card: a labelled row per setting. */
-.bt-setup-row { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; padding: 12px 14px; }
+.bt-setup-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: center; padding: 12px 14px; }
 .bt-setup-row + .bt-setup-row { border-top: 1px solid #f1f3f4; }
 .bt-setup-lbl {
     display: flex;
@@ -1708,15 +1708,6 @@ tr.bt-import-disabled[data-type="subject"]:hover {
 .bt-builder .bt-warning { margin: 14px 14px 0; }
 .bt-builder .bt-csv-loading,
 .bt-builder .bt-csv-error { margin: 14px; }
-
-/* Narrow viewports: the help column stacks above the workspace at full width and stops sticking. */
-@media (max-width: 820px) {
-    .bt-body { flex-direction: column; }
-    .bt-help, .bt-screen.bt-help-hidden .bt-help { width: 100%; border-right: 0; border-bottom: 1px solid #e8eaed; }
-    .bt-help-in { position: static; width: auto; }
-    .bt-setup-row { grid-template-columns: 1fr; gap: 8px; }
-    .bt-setup-route { flex-wrap: wrap; }
-}
 
 /* ===================================================================== */
 /* Page header with the New transfer / History tabs, and the History     */
