@@ -17,6 +17,7 @@ import org.nrg.xdat.schema.SchemaElement;
 import org.nrg.xdat.search.DisplaySearch;
 import org.nrg.xdat.security.XDATUser;
 import org.nrg.xdat.security.helpers.Features;
+import org.nrg.xdat.security.helpers.Roles;
 import org.nrg.xdat.turbine.modules.screens.SecureScreen;
 import org.nrg.xdat.turbine.utils.TurbineUtils;
 import org.nrg.xft.XFTTable;
@@ -31,6 +32,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class XDATScreen_batch_transfer extends SecureScreen {
     private static final String FIELD_ID = "BATCH_TRANSFER_ID";
+    /** Asks for History only (Tools > Batch Transfer History), whatever search the session holds. */
+    static final String HISTORY_ONLY_PARAM = "historyOnly";
 
     private static final String READABLE_SUBJECTS = "SELECT field_value,read_element,field,element_name,grp.tag, xdat_user_id\n" +
             "FROM xdat_field_mapping xfm\n" +
@@ -64,9 +67,10 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             context.put("presetDestination", presetDestination);
         }
 
-        // Two entry points:
+        // Two entry points, and History only:
         //  (1) sourceProject param — launched from a project's Actions menu; all of the project's data is the source.
         //  (2) default — DisplaySearch in the session from a bulk action on a search results table.
+        //  (3) historyOnly param, or neither of the above — no source; the screen shows History only.
         String sourceProject = data.getParameters().getString("sourceProject");
         String column;
         List<String> itemIds = null;     // search-results entry point only
@@ -85,12 +89,14 @@ public class XDATScreen_batch_transfer extends SecureScreen {
             context.put("projectContext", sourceProjectId);
             column = "subj.id";
         } else {
-            // retrieve passed search object
-            search = TurbineUtils.getSearch(data);
+            // The search comes from the request or, failing that, the session, which keeps the last search other
+            // XNAT pages ran. So History only, when asked for, doesn't look for one.
+            search = data.getParameters().getBoolean(HISTORY_ONLY_PARAM) ? null : TurbineUtils.getSearch(data);
             if (search == null) {
-                // No project and no search in the session: opened directly, or reloaded after the search is gone.
-                context.put("msg", "Batch Transfer has nothing to transfer. Open it from a project's Actions menu, "
-                        + "or from search results.");
+                // No project and no search: opened from the Tools menu or a link, or reloaded after the search is
+                // gone. There is nothing to transfer, so the screen shows History only.
+                context.put("historyOnly", true);
+                context.put("siteAdmin", isSiteAdmin(user));
                 return;
             }
             SchemaElement rootElement = search.getRootElement();
@@ -232,6 +238,11 @@ public class XDATScreen_batch_transfer extends SecureScreen {
         context.put("shareableProjects", shareableProjects);
         context.put("cloneableProjects", cloneableProjects);
         context.put("turbineUtils", TurbineUtils.GetInstance());
+    }
+
+    /** Whether the user is a site admin, who can list every transfer. Overridable so tests need no XDAT wiring. */
+    protected boolean isSiteAdmin(final UserI user) {
+        return Roles.isSiteAdmin(user);
     }
 
     /**
