@@ -107,6 +107,9 @@ var XNAT = getObject(XNAT || {});
                 projects = projects.filter(function(p) { return p.id !== config.projectContext; });
             }
             renderProjects(document.getElementById('bt-project-select'), projects);
+            // XNAT stores a running title HTML-escaped ("Brain Aging &amp; Memory"), and renderProjects puts it
+            // into the option as text, so the entity would show. Decode it once; option text is never parsed as HTML.
+            $('#bt-project-select option').each(function() { this.text = decodeEntities(this.text); });
             $('#bt-project-select').prop('disabled', false);
         });
         window.projectLoader.init();
@@ -2061,6 +2064,14 @@ var XNAT = getObject(XNAT || {});
     function escapeHtml(s) {
         if (s == null) return '';
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // The text an HTML-escaped value stands for: "Brain Aging &amp; Memory" -> "Brain Aging & Memory". A textarea's
+    // content is raw text, so no markup in the value is parsed or run.
+    function decodeEntities(s) {
+        var t = document.createElement('textarea');
+        t.innerHTML = s == null ? '' : String(s);
+        return t.value;
     }
 
     // -- Submit --
