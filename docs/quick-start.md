@@ -79,8 +79,8 @@ The chips in the action bar summarize anonymization and storage. Hover over a ch
 | Chip colour | Meaning |
 |---|---|
 | Green | Anonymization will run, or the transfer uses no extra storage |
-| Amber | The transfer duplicates files and uses more storage |
-| Red | Check this: anonymization will be skipped, or more than one script will change the data |
+| Amber | Worth a look: the transfer duplicates files and uses more storage, or more than one script will change the data |
+| Red | Check this: anonymization will be skipped, or a source label will be kept that anonymization doesn't change |
 | Grey | Batch Transfer couldn't tell, for example because it couldn't check the destination's settings |
 
 If something blocks the transfer, the action bar says what (for example "Blocked: select a destination") and
@@ -231,7 +231,7 @@ The confirmation lists the warnings again under **Check**.
 
 The chips in this example:
 
-- **site-wide + custom + destination scripts** is red because more than one script will change the data. Hover over
+- **site-wide + custom + destination scripts** is amber because more than one script will change the data. Hover over
   it for the order. Check that the scripts don't undo each other; here, HA_OPEN's script only adds to what the
   custom script does.
 - **duplicates storage** is amber because Reimport writes new copies of the files.
