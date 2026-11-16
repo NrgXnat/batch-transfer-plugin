@@ -107,6 +107,9 @@ var XNAT = getObject(XNAT || {});
                 projects = projects.filter(function(p) { return p.id !== config.projectContext; });
             }
             renderProjects(document.getElementById('bt-project-select'), projects);
+            // XNAT stores a running title HTML-escaped ("Brain Aging &amp; Memory"), and renderProjects puts it
+            // into the option as text, so the entity would show. Decode it once; option text is never parsed as HTML.
+            $('#bt-project-select option').each(function() { this.text = decodeEntities(this.text); });
             $('#bt-project-select').prop('disabled', false);
         });
         window.projectLoader.init();
@@ -319,6 +322,7 @@ var XNAT = getObject(XNAT || {});
         // The columns placeholders can bind to depend on the mode, so the verdict has to be redone.
         revalidateScript();
         updateSummary();
+        checkDestinationLabels();
     }
 
     function bindCohortToggle() {
@@ -683,6 +687,7 @@ var XNAT = getObject(XNAT || {});
 
         // The CSV mode is offered for Reimport only.
         configureCohortModes();
+        checkDestinationLabels();
     }
 
     // Hide+disable rows not eligible for the chosen operation (excluded from counts/submission
@@ -777,6 +782,9 @@ var XNAT = getObject(XNAT || {});
             }
             renderSummary();
             updateSummary();
+            // Labels already in the old destination no longer apply; ask about the new one.
+            if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }
+            checkDestinationLabels();
         });
     }
 
@@ -1158,6 +1166,33 @@ var XNAT = getObject(XNAT || {});
         return out;
     }
 
+    // Where the sessions about to be reimported get their destination labels, counted per session for each label:
+    // { subject: { manifest, source, dicom }, session: { ... }, total }. A manifest's destination_*_label wins,
+    // else the preserved source label, else the label is derived from DICOM tags, as the server applies them.
+    function labelSources() {
+        var preserved = preservedLabels();
+        var out = { subject: { manifest: 0, source: 0, dicom: 0 }, session: { manifest: 0, source: 0, dicom: 0 }, total: 0 };
+        var add = function(kind, explicit) {
+            out[kind][explicit ? 'manifest' : preserved.indexOf(kind) >= 0 ? 'source' : 'dicom']++;
+        };
+        if (cohortMode === 'csv') {
+            var rows = manifestCurrent() ? ((manifestResult && manifestResult.rows) || []) : [];
+            rows.forEach(function(e) {
+                if (e.status !== 'matched') { return; }
+                add('subject', e.destination_subject_label);
+                add('session', e.destination_session_label);
+                out.total++;
+            });
+        } else {
+            // Every session in the tree follows the Preserve checkboxes.
+            out.total = lastTreeCount.sessions;
+            ['subject', 'session'].forEach(function(kind) {
+                out[kind][preserved.indexOf(kind) >= 0 ? 'source' : 'dicom'] = out.total;
+            });
+        }
+        return out;
+    }
+
     // Anonymization-status chips for the action bar. Reimport lists the anonymization scripts that will run;
     // Clone advertises hard-linking; Share shows none. These are the only place Reimport's anonymization
     // status and storage cost appear, so each chip's title carries the full explanation.
@@ -1177,10 +1212,10 @@ var XNAT = getObject(XNAT || {});
                     'Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.');
             } else {
                 // The scripts that run, in order; one whose check failed is marked "?". A custom script that isn't
-                // the only one is double anonymization.
+                // the only one is double anonymization: worth a look (amber), not an error.
                 var double = hasCustomScript() && on.length > 1;
                 var listed = scripts.filter(function(s) { return s.state !== 'off'; });
-                out = chip(double ? 'warn' : 'good', (double ? '&#9888; ' : '&#10003; ') +
+                out = chip(double ? 'caution' : 'good', (double ? '&#9888; ' : '&#10003; ') +
                     listed.map(function(s) { return s.key + (s.state === 'unknown' ? '?' : ''); }).join(' + ') +
                     ' script' + (listed.length > 1 ? 's' : ''),
                     'Each session is anonymized by ' + scriptNames(on, ', then ') + '.' +
@@ -1188,16 +1223,23 @@ var XNAT = getObject(XNAT || {});
                               ' earlier one set.' : '') +
                     (unknown.length ? ' Could not check whether ' + scriptNames(unknown, ' or ') + ' is enabled.' : ''));
             }
-            // Anonymization is in effect, but preserving the source XNAT labels re-introduces the original
-            // subject/session labels - which may carry identifiers and are not touched by anonymization. Warn
-            // when both are set.
-            var preserved = preservedLabels();
-            if (on.length && preserved.length) {
+            // Anonymization is in effect, but a preserved source XNAT label re-introduces the original subject or
+            // session label, which may carry identifiers and is not touched by anonymization. Warn about each label
+            // that at least one session keeps: a manifest's destination_*_label replaces it for that session. Until
+            // there are sessions to count, the checkboxes alone decide.
+            var labelSrc = labelSources();
+            var kept = preservedLabels().filter(function(kind) { return !labelSrc.total || labelSrc[kind].source > 0; });
+            if (on.length && kept.length) {
+                var partial = kept.filter(function(kind) { return labelSrc.total && labelSrc[kind].source < labelSrc.total; });
                 // Kept short: this is the longest chip, and the action bar is a single row. The
                 // reason behind it is in its title and in the Anonymization help topic.
-                out += chip('warn', '&#9888; ' + preserved.join(' + ') + ' label'
-                    + (preserved.length > 1 ? 's' : '') + ' not anonymized',
-                    'Preserved source labels are kept as they are; anonymization does not change XNAT labels.');
+                out += chip('warn', '&#9888; ' + kept.join(' + ') + ' label'
+                    + (kept.length > 1 ? 's' : '') + ' not anonymized',
+                    'Preserved source labels are kept as they are; anonymization does not change XNAT labels.' +
+                    partial.map(function(kind) {
+                        return ' ' + labelSrc[kind].source + ' of ' + countText(labelSrc.total, 'session') + ' keep their source ' +
+                               kind + ' label; the manifest sets the rest.';
+                    }).join(''));
             }
             return out + chip('caution', '&#9888; duplicates storage',
                 'Reimported data can take up significant storage in the destination project, and reimporting may take some time.');
@@ -1224,6 +1266,8 @@ var XNAT = getObject(XNAT || {});
             if (errors.length) { reasons.push('value errors in ' + rowList(errors)); }
             var clashes = preservedLabelClashRows();
             if (clashes.length) { reasons.push('two sessions would get the same session label in ' + rowList(clashes)); }
+            var merges = manifestLabelIssues().merges;
+            if (merges.length) { reasons.push('two source subjects would share a destination subject in ' + rowList(issueRows(merges))); }
             if (anonBlocks()) { reasons.push('fix the anonymization script'); }
             return reasons;
         }
@@ -1345,10 +1389,15 @@ var XNAT = getObject(XNAT || {});
     // The dropzone's column hint, including what a blank source_session_label means.
     function refreshCsvRequiredHint() {
         $('#bt-csv-required').html('Required: <span class="bt-mono">source_subject_label</span>, ' +
-            '<span class="bt-mono">source_session_label</span> &middot; optional routing: ' +
+            '<span class="bt-mono">source_session_label</span> &middot; optional labels in the destination: ' +
             '<span class="bt-mono">destination_subject_label</span>, <span class="bt-mono">destination_session_label</span>' +
+            ', used even when Preserve source labels is ticked' +
             '<br>Leave <span class="bt-mono">source_session_label</span> blank to include all of a subject\'s image sessions.');
     }
+
+    // The Destination columns' header tooltip; LABEL is subject or session.
+    var DEST_HEAD_TITLE = 'The LABEL label each session gets in the destination: the manifest\'s destination_LABEL_label, ' +
+        'else the source label when Preserve source labels is ticked, else a label XNAT derives from DICOM tags.';
 
     function resetManifest() {
         manifestSeq++;                 // a response still in flight no longer applies
@@ -1357,6 +1406,7 @@ var XNAT = getObject(XNAT || {});
         manifestPending = false; manifestError = null; manifestGroupsCache = null;
         manifestExpanded = {}; manifestFileCounts = {}; manifestFileCountErr = {};
         manifestStart = 0; manifestPageStack = []; manifestShowAll = false;
+        destLabelSeq++; destLabels = null; destLabelsAsked = null; labelIssues = null;
         $('#bt-csv-file').val('');
         $('#bt-csv-results').empty();
         $('#bt-dropzone').show();
@@ -1412,6 +1462,7 @@ var XNAT = getObject(XNAT || {});
                 renderCsvResults();
                 revalidateScript();   // binding, against the manifest's columns
                 updateSummary();
+                checkDestinationLabels();
             },
             error: function(xhr) {
                 if (seq !== manifestSeq) { return; }
@@ -1445,11 +1496,18 @@ var XNAT = getObject(XNAT || {});
 
     // The distinct row numbers of the entries pred accepts, ascending. A subject row's sessions share one.
     function manifestRowNumbers(pred) {
-        var seen = {}, out = [];
-        ((manifestResult && manifestResult.rows) || []).forEach(function(e) {
-            if (pred(e) && !seen[e.row_number]) { seen[e.row_number] = true; out.push(e.row_number); }
-        });
-        return out.sort(function(a, b) { return a - b; });
+        return rowNumbersOf(((manifestResult && manifestResult.rows) || []).filter(pred));
+    }
+
+    // The entries' row numbers, each once, ascending.
+    function rowNumbersOf(entries) {
+        return distinct(entries.map(function(e) { return e.row_number; })).sort(function(a, b) { return a - b; });
+    }
+
+    // The values in first-seen order, each once. Every call passes values of one type.
+    function distinct(values) {
+        var seen = Object.create(null);
+        return values.filter(function(v) { return seen[v] ? false : (seen[v] = true); });
     }
 
     function statusRows(code) {
@@ -1483,6 +1541,132 @@ var XNAT = getObject(XNAT || {});
             });
         });
         return out.sort(function(a, b) { return a - b; });
+    }
+
+    // -- Destination labels in a manifest --
+
+    // Which of the session labels the manifest's sessions could get the destination already has. The labels asked
+    // about are every explicit destination_session_label and every source session label, since Preserve can be
+    // switched without asking again. Advisory: until it answers, or if it fails, nothing is flagged.
+    var destLabels = null;         // { project, result, taken: { label: true } }
+    var destLabelsAsked = null;    // { project, result } of the request in flight
+    var destLabelSeq = 0;
+    var labelIssues = null;        // manifestLabelIssues() as of the last render of the manifest table
+
+    function checkDestinationLabels() {
+        if (cohortMode !== 'csv' || selectedOp !== 'Reimport' || !selectedProject || !manifestCurrent()) { return; }
+        var current = function(x) { return x && x.project === selectedProject && x.result === manifestResult; };
+        if (current(destLabels) || current(destLabelsAsked)) { return; }
+        var seq = ++destLabelSeq, project = selectedProject, result = manifestResult, labels = {};
+        var asked = destLabelsAsked = { project: project, result: result };
+        (result.rows || []).forEach(function(e) {
+            if (e.status !== 'matched') { return; }
+            if (e.destination_session_label) { labels[e.destination_session_label] = true; }
+            if (e.source_session_label) { labels[e.source_session_label] = true; }
+        });
+        $.ajax({
+            type: 'POST',
+            url: XNAT.url.rootUrl('/xapi/transfer/validate/destination_labels'),
+            contentType: 'application/json',
+            data: JSON.stringify({ destination_project: project, session_labels: Object.keys(labels) }),
+            success: function(data) {
+                if (seq !== destLabelSeq) { return; }
+                var taken = {};
+                ((data && data.existing_session_labels) || []).forEach(function(l) { taken[l] = true; });
+                destLabels = { project: project, result: result, taken: taken };
+                if (cohortMode === 'csv' && manifestResult) { renderCsvResults(); }
+                updateSummary();
+            },
+            complete: function() {
+                if (destLabelsAsked === asked) { destLabelsAsked = null; }
+            }
+        });
+    }
+
+    // Problems with the labels the manifest's sessions will get, which the server doesn't check: each session's
+    // subject label is its destination_subject_label, else its source subject label when Preserve is ticked, else
+    // unknown until XNAT derives it from DICOM tags (and the same for session labels).
+    //   merges: two or more source subjects sent to one destination subject. Blocks submit.
+    //   splits: one source subject's sessions sent to more than one destination subject. A warning.
+    //   blank:  sessions with a blank cell in a destination column the manifest has (a subject row has no
+    //           destination_session_label cell to fill, so its sessions aren't counted for that one). A warning.
+    //   taken:  sessions whose session label the destination already has, so they'd fail or merge. A warning.
+    // byId indexes the sessions involved by resolved ID, for the table's cells.
+    function manifestLabelIssues() {
+        var out = { merges: [], splits: [], blank: { subject: [], session: [] }, taken: [],
+                    byId: { merge: {}, split: {}, blankSubject: {}, blankSession: {}, taken: {} } };
+        if (!manifestCurrent() || selectedOp !== 'Reimport') { return out; }
+        var cols = manifestResult.routing_columns || [];
+        var keepSubject = $('#bt-preserve-subject-label').is(':checked');
+        var keepSession = $('#bt-preserve-session-label').is(':checked');
+        var taken = destLabels && destLabels.project === selectedProject && destLabels.result === manifestResult
+            ? destLabels.taken : null;
+        var byDestSubject = Object.create(null), bySource = Object.create(null);
+        (manifestResult.rows || []).forEach(function(e) {
+            if (e.status !== 'matched') { return; }
+            var id = e.resolved_id;
+            var subject = e.destination_subject_label || (keepSubject ? e.source_subject_label : '');
+            var session = e.destination_session_label || (keepSession ? e.source_session_label : '');
+            if (subject) { (byDestSubject[subject] = byDestSubject[subject] || []).push(e); }
+            (bySource[e.source_subject_label] = bySource[e.source_subject_label] || []).push({ e: e, dest: subject });
+            if (!e.destination_subject_label && cols.indexOf('destination_subject_label') >= 0) {
+                out.blank.subject.push(e); out.byId.blankSubject[id] = true;
+            }
+            if (!e.destination_session_label && !e.subject_row && cols.indexOf('destination_session_label') >= 0) {
+                out.blank.session.push(e); out.byId.blankSession[id] = true;
+            }
+            if (session && taken && taken[session]) { out.taken.push({ e: e, label: session }); out.byId.taken[id] = session; }
+        });
+        Object.keys(byDestSubject).forEach(function(label) {
+            var entries = byDestSubject[label];
+            var sources = distinct(entries.map(function(e) { return e.source_subject_label; }));
+            if (sources.length < 2) { return; }
+            var merge = { label: label, sources: sources, rows: rowNumbersOf(entries) };
+            out.merges.push(merge);
+            entries.forEach(function(e) { out.byId.merge[e.resolved_id] = merge; });
+        });
+        Object.keys(bySource).forEach(function(source) {
+            var entries = bySource[source];
+            var dests = distinct(entries.map(function(x) { return x.dest; }));
+            if (dests.length < 2) { return; }
+            var split = { source: source, dests: dests, rows: rowNumbersOf(entries.map(function(x) { return x.e; })) };
+            out.splits.push(split);
+            entries.forEach(function(x) { out.byId.split[x.e.resolved_id] = split; });
+        });
+        return out;
+    }
+
+    // The rows of a list of merges or splits, ascending.
+    function issueRows(list) {
+        var rows = [];
+        list.forEach(function(x) { rows = rows.concat(x.rows); });
+        return distinct(rows).sort(function(a, b) { return a - b; });
+    }
+
+    // A destination subject as a message names it: its label, or what it is when XNAT will derive it.
+    function subjectName(label) {
+        return label ? label : 'a subject named from DICOM tags';
+    }
+
+    // Plain-text warnings about the labels, for the confirmation dialog. Merges block submit, so aren't listed.
+    function labelWarnings(issues) {
+        var out = [];
+        var blankText = function(kind, n) {
+            var keep = $('#bt-preserve-' + kind + '-label').is(':checked');
+            return countText(n, 'session') + ' with a blank destination_' + kind + '_label ' +
+                   (keep ? (n === 1 ? 'keeps its' : 'keep their') + ' source ' + kind + ' label'
+                         : (n === 1 ? 'gets' : 'get') + ' a ' + kind + ' label from DICOM tags');
+        };
+        if (issues.blank.subject.length) { out.push(blankText('subject', issues.blank.subject.length)); }
+        if (issues.blank.session.length) { out.push(blankText('session', issues.blank.session.length)); }
+        if (issues.splits.length) {
+            out.push(countText(issues.splits.length, 'source subject') + ' split across destination subjects');
+        }
+        if (issues.taken.length) {
+            out.push(countText(issues.taken.length, 'session label') + ' already in ' + selectedProject +
+                     ': those sessions will fail, or merge into the existing session if it is the same study');
+        }
+        return out;
     }
 
     // "row 9", or "rows 3, 4, 7, 9, 12 and 4 more".
@@ -1560,6 +1744,7 @@ var XNAT = getObject(XNAT || {});
                 escapeHtml((r.missing_columns || []).join(', ')) + '.</div>');
             return;
         }
+        labelIssues = manifestLabelIssues();
         var html = bar + manifestSummaryHtml();
 
         // Fixed column set: where each session comes from and what it becomes. Value columns are not shown as
@@ -1568,7 +1753,8 @@ var XNAT = getObject(XNAT || {});
         var rowHead = '<th class="bt-csv-rown" title="The row in the file, numbered as a spreadsheet shows it (the header is row 1)">Row</th>';
         // The destination headers always take two lines, so their width follows the labels under them.
         var cols = '<th class="bt-csv-caret-col"></th>' + rowHead + '<th>Source</th>' +
-            '<th class="bt-route-head">Destination<br>subject</th><th class="bt-route-head">Destination<br>session</th>' +
+            '<th class="bt-route-head" title="' + DEST_HEAD_TITLE.replace(/LABEL/g, 'subject') + '">Destination<br>subject</th>' +
+            '<th class="bt-route-head" title="' + DEST_HEAD_TITLE.replace(/LABEL/g, 'session') + '">Destination<br>session</th>' +
             '<th>Files</th>';
 
         // Render the current page: MANIFEST_PAGE_SIZE subjects from manifestStart (or every subject on Show all).
@@ -1605,6 +1791,22 @@ var XNAT = getObject(XNAT || {});
         if (errors) {
             parts.push('<span class="bt-csv-miss"><strong>' + errors + '</strong> ' + plural(errors, 'row') + ' with value errors</span>');
         }
+        // The label checks: a merge blocks submit (red); the rest are warnings (amber). Each title names the rows.
+        var issues = labelIssues || manifestLabelIssues();
+        var part = function(cls, n, text, rows) {
+            return n ? '<span class="' + cls + '" title="' + escapeHtml(rowList(rows)) + '"><strong>' + n + '</strong> ' +
+                       text + '</span>' : '';
+        };
+        parts.push(part('bt-csv-miss', issues.merges.length,
+            plural(issues.merges.length, 'destination subject') + ' given two source subjects', issueRows(issues.merges)));
+        parts.push(part('bt-csv-warn', issues.splits.length,
+            plural(issues.splits.length, 'source subject') + ' split across destination subjects', issueRows(issues.splits)));
+        ['subject', 'session'].forEach(function(kind) {
+            var blank = issues.blank[kind];
+            parts.push(part('bt-csv-warn', blank.length, 'blank destination_' + kind + '_label', rowNumbersOf(blank)));
+        });
+        parts.push(part('bt-csv-warn', issues.taken.length, plural(issues.taken.length, 'session label') + ' already in ' +
+            escapeHtml(selectedProject || ''), rowNumbersOf(issues.taken.map(function(t) { return t.e; }))));
         return '<div class="bt-csv-head"><span class="bt-csv-ok">' + lead + '</span>' + parts.join('') + '</div>';
     }
 
@@ -1629,6 +1831,7 @@ var XNAT = getObject(XNAT || {});
                 (scope ? '<span class="bt-csv-scope">' + scope + '</span>' : '') +
                 '</td>' + statusCells(problem) + '</tr>';
         if (head) { h += noteRow(head); }
+        h += labelNoteRows(g);
         if (headMatched) {
             g.headEntries.forEach(function(e) { h += sessionLine(e, false); });
         }
@@ -1677,6 +1880,28 @@ var XNAT = getObject(XNAT || {});
         return '<span class="bt-csv-label">' + escapeHtml(label) + '</span>';
     }
 
+    // A subject's label problems, once under its header line: red when it shares a destination subject with another
+    // source subject (blocks submit), amber when its sessions would go to more than one destination subject.
+    function labelNoteRows(g) {
+        if (!labelIssues) { return ''; }
+        var found = [];
+        g.entries.forEach(function(e) {
+            [labelIssues.byId.merge[e.resolved_id], labelIssues.byId.split[e.resolved_id]].forEach(function(x) {
+                if (x && found.indexOf(x) < 0) { found.push(x); }
+            });
+        });
+        return found.map(function(x) {
+            var merge = !!x.sources;
+            var text = merge
+                ? 'Source subjects ' + x.sources.join(' and ') + ' would both go to destination subject ' + x.label +
+                  ' (' + rowList(x.rows) + '). Give each source subject its own destination_subject_label.'
+                : x.source + '\'s sessions would go to ' + x.dests.map(subjectName).join(' and ') + ' (' +
+                  rowList(x.rows) + '). Give every row of a subject the same destination_subject_label.';
+            return '<tr class="bt-csv-noterow ' + (merge ? 'bt-csv-errrow' : 'bt-csv-warnrow') + '">' +
+                   '<td colspan="2"></td><td colspan="4">' + escapeHtml(text) + '</td></tr>';
+        }).join('');
+    }
+
     // A row's value errors (or, when it has none, its warnings), shown once under the row's line.
     function noteRow(e) {
         var errors = e.value_errors || [], warnings = e.value_warnings || [];
@@ -1714,22 +1939,58 @@ var XNAT = getObject(XNAT || {});
     // applies at import: an explicit manifest destination_*_label wins, else the preserved source label,
     // else the label is derived from DICOM tags during import and cannot be known here. Showing the
     // resolved value (not just the manifest column) is the point of these two columns.
+    //
+    // A label check that applies to the cell colours it (labelIssues, from the last render): red when two source
+    // subjects share a destination subject, amber for a split subject or a label the destination already has, a
+    // lighter amber for a blank cell. Its title adds why.
     function destinationCell(row, which) {
         var subject = which === 'subject';
         var explicit = subject ? row.destination_subject_label : row.destination_session_label;
         var dsubj = subject ? ' bt-csv-dsubj' : '';
+        var column = subject ? 'destination_subject_label' : 'destination_session_label';
+        var cls, title, content;
         if (explicit) {
-            return '<td class="bt-mono bt-route' + dsubj + '">' + labelHtml(explicit) + '</td>';
+            cls = 'bt-mono bt-route';
+            title = 'From the manifest\'s ' + column + '. A label in the manifest is used even when Preserve source ' +
+                    'labels is ticked.';
+            content = labelHtml(explicit);
+        } else {
+            // Why this session has no label from the manifest: a subject row can't carry a session label.
+            var why = !subject && row.subject_row ? 'A subject row can\'t set ' + column + ', so'
+                                                  : 'This row leaves ' + column + ' blank, so';
+            var preserved = subject
+                ? $('#bt-preserve-subject-label').is(':checked')
+                : $('#bt-preserve-session-label').is(':checked');
+            if (preserved) {
+                cls = 'bt-mono bt-dest-inherited';
+                title = why + ' the source label is kept (Preserve source labels is ticked).';
+                content = labelHtml(subject ? row.source_subject_label : row.source_session_label);
+            } else {
+                cls = 'bt-muted';
+                title = why + ' XNAT derives the label from DICOM tags when the session is imported (Preserve source ' +
+                        'labels is not ticked).';
+                content = 'from DICOM';
+            }
         }
-        var preserved = subject
-            ? $('#bt-preserve-subject-label').is(':checked')
-            : $('#bt-preserve-session-label').is(':checked');
-        if (preserved) {
-            return '<td class="bt-mono bt-dest-inherited' + dsubj + '" title="Preserved from the source label">'
-                 + labelHtml(subject ? row.source_subject_label : row.source_session_label) + '</td>';
+        var by = labelIssues ? labelIssues.byId : null, id = row.resolved_id, flag = '';
+        if (by && subject && by.merge[id]) {
+            var merge = by.merge[id];
+            flag = ' bt-dest-conflict';
+            title += ' Source subjects ' + merge.sources.join(' and ') + ' would both go to ' + merge.label +
+                     '. Give each source subject its own destination_subject_label.';
+        } else if (by && subject && by.split[id]) {
+            var split = by.split[id];
+            flag = ' bt-dest-warn';
+            title += ' ' + split.source + '\'s sessions would go to ' + split.dests.map(subjectName).join(' and ') +
+                     '. Give every row of a subject the same destination_subject_label.';
+        } else if (by && !subject && by.taken[id]) {
+            flag = ' bt-dest-warn';
+            title += ' ' + selectedProject + ' already has a session labelled ' + by.taken[id] + ', so this session ' +
+                     'will fail, or merge into it if it is the same study.';
+        } else if (by && (subject ? by.blankSubject[id] : by.blankSession[id])) {
+            flag = ' bt-dest-blank';
         }
-        return '<td class="bt-muted" title="Derived from DICOM tags when the session is imported">'
-             + 'from DICOM</td>';
+        return '<td class="' + cls + dsubj + flag + '" title="' + escapeHtml(title) + '">' + content + '</td>';
     }
 
     function toggleManifestEntry(id) {
@@ -1805,6 +2066,14 @@ var XNAT = getObject(XNAT || {});
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // The text an HTML-escaped value stands for: "Brain Aging &amp; Memory" -> "Brain Aging & Memory". A textarea's
+    // content is raw text, so no markup in the value is parsed or run.
+    function decodeEntities(s) {
+        var t = document.createElement('textarea');
+        t.innerHTML = s == null ? '' : String(s);
+        return t.value;
+    }
+
     // -- Submit --
 
     function buildTreeItems() {
@@ -1848,9 +2117,8 @@ var XNAT = getObject(XNAT || {});
         return items;
     }
 
-    // Inline-styled confirmation body. xModalConfirm ignores width props and plugin CSS may not load
-    // inside the modal, so the wrapper sets min-width inline and every element is inline-styled. It
-    // restates the irreversible facts (cohort + exclusions, operation, anonymization, labels) with a
+    // Inline-styled confirmation body: plugin CSS may not load inside the modal, so every element is inline-styled.
+    // It restates the irreversible facts (cohort + exclusions, operation, anonymization, labels) with a
     // no-rollback caution.
     function dlgRow(k, v) {
         return '<div style="display:flex;padding:8px 12px;border-bottom:1px solid #f1f3f4;">' +
@@ -1897,12 +2165,12 @@ var XNAT = getObject(XNAT || {});
             }
             rows += dlgRow('Anonymization', anonText);
             if (script) { rows += dlgRow('Custom script', 'applied per session' + (isCsv ? ' (values from manifest)' : '')); }
-            var preserve = [];
-            if ($('#bt-preserve-subject-label').is(':checked')) { preserve.push('subject'); }
-            if ($('#bt-preserve-session-label').is(':checked')) { preserve.push('session'); }
-            var labelText = preserve.length ? 'preserve source ' + preserve.join(' + ') + ' label(s)' : 'derive from DICOM tags';
-            if (isCsv) { labelText += '; a destination_*_label in the manifest takes precedence'; }
-            rows += dlgRow('Labels', labelText);
+            var labelSrc = labelSources();
+            rows += dlgRow('Labels', escapeHtml(XNAT.plugin.batchtransfer.labelSourcesText(labelSrc.subject, labelSrc.session)));
+            var warnings = isCsv ? labelWarnings(manifestLabelIssues()) : [];
+            if (warnings.length) {
+                rows += dlgRow('Check', '<span style="color:#b06000;">' + escapeHtml(warnings.join('; ')) + '</span>');
+            }
         } else if (selectedOp === 'Clone') {
             rows += dlgRow('Storage', 'Cloned files are hard-linked; no additional storage at clone time');
             rows += dlgRow('Anonymization', 'None - Clone copies data as-is');
@@ -1942,7 +2210,7 @@ var XNAT = getObject(XNAT || {});
         }
 
         var noun = (selectedOp === 'Reimport' ? 'session' : 'item') + (count === 1 ? '' : 's');
-        xModalConfirm({
+        XNAT.plugin.batchtransfer.confirm({
             title: selectedOp + ' ' + count + ' ' + noun + '?',
             content: buildConfirmationHtml(count),
             okAction: function() {

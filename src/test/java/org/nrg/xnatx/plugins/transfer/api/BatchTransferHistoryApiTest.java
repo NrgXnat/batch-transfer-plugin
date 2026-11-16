@@ -263,28 +263,42 @@ public class BatchTransferHistoryApiTest {
 
     @Test
     public void list_withoutAProject_showsTheCallersOwnRuns() {
-        api.list(null, null, 0, 25);
+        api.list(null, null, 0, 25, false);
         verify(historyService).list(isNull(), eq("carol"), isNull(), eq("carol"), anyCollection(), eq(0), eq(25));
     }
 
     @Test
     public void list_forAProject_filtersByWhatTheCallerCanRead() {
         doReturn(Arrays.asList(SOURCE, "OTHER")).when(api).readableProjects(any());
-        api.list(SOURCE, "Running", 2, 10);
+        api.list(SOURCE, "Running", 2, 10, false);
         verify(historyService).list(SOURCE, null, BatchTransferHistory.Status.Running, "carol",
                 Arrays.asList(SOURCE, "OTHER"), 20, 10);
     }
 
     @Test
+    public void list_all_forAnAdmin_listsEveryonesRuns() {
+        doReturn(true).when(api).isSiteAdmin(any());
+        api.list(null, null, 0, 25, true);
+        verify(historyService).list(isNull(), isNull(), isNull(), isNull(), isNull(), eq(0), eq(25));
+    }
+
+    @Test
+    public void list_all_forAnyoneElse_is403() {
+        final ResponseEntity<?> resp = api.list(null, null, 0, 25, true);
+        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        verify(historyService, never()).list(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
     public void list_forAnAdmin_isNotFiltered() {
         doReturn(true).when(api).isSiteAdmin(any());
-        api.list(SOURCE, null, 0, 500);
+        api.list(SOURCE, null, 0, 500, false);
         verify(historyService).list(eq(SOURCE), isNull(), isNull(), isNull(), isNull(), eq(0), eq(200));
     }
 
     @Test
     public void list_anUnknownStatus_is400() {
-        assertEquals(HttpStatus.BAD_REQUEST, api.list(null, "Done", 0, 25).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST, api.list(null, "Done", 0, 25, false).getStatusCode());
         verify(historyService, never()).list(any(), any(), any(), any(), any(), anyInt(), anyInt());
     }
 
@@ -295,7 +309,7 @@ public class BatchTransferHistoryApiTest {
                 .thenReturn(Collections.singletonList(run));
         when(historyService.count(any(), any(), any(), any(), any())).thenReturn(31L);
 
-        final TransferRunPage page = body(api.list(null, null, 1, 25));
+        final TransferRunPage page = body(api.list(null, null, 1, 25, false));
 
         assertEquals(31L, page.getTotal());
         assertEquals(1, page.getPage());
@@ -307,7 +321,7 @@ public class BatchTransferHistoryApiTest {
     public void list_aPagePastTheLargestOffset_isEmpty() {
         when(historyService.count(any(), any(), any(), any(), any())).thenReturn(31L);
 
-        final TransferRunPage page = body(api.list(null, null, Integer.MAX_VALUE, 200));
+        final TransferRunPage page = body(api.list(null, null, Integer.MAX_VALUE, 200, false));
 
         assertTrue(page.getRuns().isEmpty());
         assertEquals(31L, page.getTotal());

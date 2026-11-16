@@ -1,0 +1,8 @@
+<!-- Sequence: 20 -->
+## Tools > Batch Transfer History: the user's transfers, with no project or search needed. historyOnly keeps a search
+## left in the session by another XNAT page from opening instead. The hash part comes from a variable so Velocity
+## doesn't read it as a directive.
+#if($user && !$user.isGuest())
+    #set($btHistoryHash = '#history')
+<li><a href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm?historyOnly=true${btHistoryHash}">Batch Transfer History</a></li>
+#end

@@ -1,8 +1,9 @@
 /*
  * Batch Transfer screen: the New transfer / History tabs, and the History panel. History lists the runs that
- * involve the screen's project (or, from search results, the user's own runs), opens a run's per-item outcomes,
- * stops a running run, and exports a run's results or its failed and stopped sessions as a manifest for a rerun.
- * Reads /xapi/transfer/history. batchTransfer.js drives New transfer.
+ * involve the screen's project (or, from search results or the History-only page, the user's own runs; a site admin
+ * can list everyone's there), opens a run's per-item outcomes, stops a running run, and exports a run's results or
+ * its failed and stopped sessions as a manifest for a rerun. The URL's hash names the view shown. Reads
+ * /xapi/transfer/history. batchTransfer.js drives New transfer.
  */
 var XNAT = getObject(XNAT || {});
 (function(factory) {
@@ -17,6 +18,56 @@ var XNAT = getObject(XNAT || {});
     XNAT.plugin = getObject(XNAT.plugin || {});
     XNAT.plugin.batchtransfer = getObject(XNAT.plugin.batchtransfer || {});
     var api = XNAT.plugin.batchtransfer.history = getObject(XNAT.plugin.batchtransfer.history || {});
+
+    // -- Shared with batchTransfer.js, which loads alongside this file on the Batch Transfer screen. The plugin
+    // settings page's Transfer History tab loads only this file. --
+
+    // One sentence on where the labels come from, for the confirmation and for History's run detail. subject and
+    // session are { manifest, source, dicom } session counts, as labelSources() in batchTransfer.js returns them.
+    XNAT.plugin.batchtransfer.labelSourcesText = function(subject, session) {
+        var kinds = function(c) { return ['manifest', 'source', 'dicom'].filter(function(k) { return c[k] > 0; }); };
+        var a = kinds(subject), b = kinds(session);
+        if (!a.length && !b.length) { return '-'; }
+        if (a.length === 1 && b.length === 1 && a[0] === b[0]) {
+            return { manifest: 'Subject and session labels from the manifest',
+                     source: 'Source subject and session labels kept',
+                     dicom: 'Subject and session labels from DICOM tags' }[a[0]];
+        }
+        var one = function(kind, c) {
+            var parts = kinds(c);
+            if (parts.length === 1) {
+                return { manifest: kind + ' label from the manifest', source: 'source ' + kind + ' label kept',
+                         dicom: kind + ' label from DICOM tags' }[parts[0]];
+            }
+            return kind + ' label ' + parts.map(function(k) {
+                return { manifest: 'from the manifest', source: 'kept from the source', dicom: 'from DICOM tags' }[k] +
+                       ' for ' + countText(c[k], 'session');
+            }).join(', ');
+        };
+        var text = one('subject', subject) + '; ' + one('session', session);
+        return text.charAt(0).toUpperCase() + text.slice(1);
+    };
+
+    // A confirmation dialog sized to its content. xModalConfirm opens every dialog at 400 x 200 and scrolls what
+    // doesn't fit. It takes width and height, but the height has to be known up front, so the dialog opens
+    // without its fade and grows to fit before it is first drawn, up to the window's height (beyond that the body
+    // scrolls). opts are xModalConfirm's; width defaults to 580.
+    XNAT.plugin.batchtransfer.confirm = function(opts) {
+        var afterShow = opts.afterShow;
+        return xModalConfirm($.extend({ width: 580, height: 200 }, opts, {
+            animation: false,
+            afterShow: function(modal) {
+                var $modal = $(modal.$modal), body = $modal.find('> .body')[0];
+                var overflow = body ? body.scrollHeight - body.clientHeight : 0;
+                if (overflow > 0) {
+                    var top = parseInt($modal.css('top'), 10) || 0;
+                    $modal.css('height', Math.min($modal.height() + overflow, window.innerHeight - 2 * top - 2));
+                    xmodal.resize($modal, modal);
+                }
+                if ($.isFunction(afterShow)) { afterShow(modal); }
+            }
+        }));
+    };
 
     var PAGE_SIZE = 25;
     var POLL_MS = 4000;          // while History shows something unfinished
@@ -42,12 +93,29 @@ var XNAT = getObject(XNAT || {});
     var showAllGroups = false;
     var expanded = {};               // item id -> its values row is open
     var pollTimer = null;
+    var scope = 'mine';              // 'mine', or 'all' for a site admin (History-only page, plugin settings page)
 
+    // config: projectContext (the screen's project, or null), historyOnly (no project and no search, so History is
+    // the whole page), siteAdmin (on that page, whether the viewer may list every transfer), settingsPage (the
+    // Transfer History tab of the plugin settings page: every transfer, for site admins).
     api.init = function(cfg) {
         config = cfg || {};
-        bindTabs();
         bindHistory();
-        loadList();
+        if (config.settingsPage) {
+            // The settings page's hash belongs to its own tabs, so the address bar is left alone there.
+            view = 'history';
+            scope = 'all';
+            render();
+            loadList();
+            return;
+        }
+        bindTabs();
+        $(window).on('hashchange', function(e) { hashChanged(e.originalEvent && e.originalEvent.newURL); });
+        if (config.historyOnly) { view = 'history'; }
+        if (!applyHash()) {
+            if (config.historyOnly) { render(); }
+            loadList();
+        }
     };
 
     // After a submit: History, the runs list, the new run highlighted.
@@ -99,6 +167,58 @@ var XNAT = getObject(XNAT || {});
             if (runId) { loadDetail(); } else { loadList(); }
         }
         if (changed || reload) { revealHeader(); }
+        syncHash();
+    }
+
+    // -- Links: #history, #history/all and #history/run/<tracking id> open that view, and the address bar follows
+    // what's shown, so it can be copied or bookmarked. replaceState adds no history entries, so the browser's Back
+    // (and the screen's Cancel) still leave the page. --
+
+    function canSeeAll() {
+        return !!(config.settingsPage || (config.historyOnly && config.siteAdmin));
+    }
+
+    // A hash naming a History view opens it, and no hash at all (Back to the page's own address) returns to New
+    // transfer. Any other hash comes from a link elsewhere on the page, such as the "#!" headings in XNAT's menus:
+    // the view stays and the address bar is put back.
+    function hashChanged(newUrl) {
+        if (applyHash()) { return; }
+        if (newUrl && newUrl.indexOf('#') < 0 && !config.historyOnly && view !== 'transfer') {
+            showView('transfer');
+        } else {
+            syncHash();
+        }
+    }
+
+    // Shows what the URL's hash names. Returns whether it named a History view.
+    function applyHash() {
+        var m = /^#history(?:\/(all)|\/run\/(.+))?$/.exec(window.location.hash || '');
+        if (!m) { return false; }
+        if (m[1] === 'all' && canSeeAll()) {
+            scope = 'all';
+        } else if (!m[2]) {
+            scope = 'mine';
+        }
+        var id = m[2] ? decodeURIComponent(m[2]) : null;
+        if (id !== runId) {
+            runId = id;
+            detailData = null;
+            detailError = null;
+            problemsOnly = false;
+            showAllGroups = false;
+            expanded = {};
+        }
+        if (!id) { page = 0; listData = null; }
+        showView('history', true);
+        return true;
+    }
+
+    function syncHash() {
+        if (config.settingsPage) { return; }
+        var hash = view !== 'history' ? '' : runId ? '#history/run/' + encodeURIComponent(runId)
+                 : scope === 'all' ? '#history/all' : '#history';
+        if (hash === (window.location.hash || '') || !window.history || !window.history.replaceState) { return; }
+        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hash);
     }
 
     function revealHeader() {
@@ -111,6 +231,7 @@ var XNAT = getObject(XNAT || {});
     function fetchRuns(p, done, fail) {
         var params = { page: p, size: PAGE_SIZE };
         if (config.projectContext) { params.project = config.projectContext; }
+        if (scope === 'all' && canSeeAll()) { params.all = true; }
         $.ajax({
             type: 'GET',
             url: XNAT.url.rootUrl('/xapi/transfer/history?' + $.param(params)),
@@ -207,6 +328,8 @@ var XNAT = getObject(XNAT || {});
     }
 
     function poll() {
+        // On the settings page another tab may be showing; look again later instead of loading.
+        if (config.settingsPage && !$('#bt-history').is(':visible')) { pollTimer = setTimeout(poll, POLL_MS); return; }
         if (view !== 'history') { loadBadge(); }
         else if (runId) { loadDetail(); }
         else { loadList(); }
@@ -248,7 +371,8 @@ var XNAT = getObject(XNAT || {});
     // -- Runs list --
 
     function listHtml() {
-        var heading = config.projectContext ? 'Transfers involving ' + esc(config.projectContext) : 'Your transfers';
+        var heading = config.projectContext ? 'Transfers involving ' + esc(config.projectContext)
+                    : scope === 'all' ? 'All transfers' : 'Your transfers';
         var meta = '';
         var body;
         if (!listData) {
@@ -257,6 +381,7 @@ var XNAT = getObject(XNAT || {});
         } else if (!(listData.runs || []).length) {
             body = '<div class="bt-h-empty">' + (listData.total ? 'No transfers on this page.'
                  : config.projectContext ? 'No transfers involve ' + esc(config.projectContext) + ' yet.'
+                 : scope === 'all' ? 'No transfers yet.'
                  : 'You have not started any transfers yet.') + '</div>';
         } else {
             meta = '<span>' + countText(listData.total || 0, 'transfer') + ', newest first</span>';
@@ -264,7 +389,19 @@ var XNAT = getObject(XNAT || {});
         }
         return '<div class="bt-panel bt-h-panel">' +
                '<div class="bt-panel-head"><div class="bt-panel-title">' + heading + '</div>' +
-               '<div class="bt-panel-meta">' + meta + '</div></div>' + body + '</div>';
+               '<div class="bt-panel-meta">' + meta + '</div>' + scopeHtml() + '</div>' + body + '</div>';
+    }
+
+    // On the History-only page, a site admin chooses between their own transfers and everyone's.
+    function scopeHtml() {
+        if (!config.historyOnly || !config.siteAdmin) { return ''; }
+        var option = function(value, label) {
+            var on = scope === value;
+            return '<button type="button" class="bt-h-scope-btn' + (on ? ' selected' : '') + '" data-act="scope" ' +
+                   'data-scope="' + value + '" aria-pressed="' + on + '">' + label + '</button>';
+        };
+        return '<div class="bt-h-scope" role="group" aria-label="Transfers to list">' +
+               option('mine', 'Your transfers') + option('all', 'All transfers') + '</div>';
     }
 
     function runsTable(runs) {
@@ -336,7 +473,7 @@ var XNAT = getObject(XNAT || {});
         return back +
                '<div class="bt-h-detailhead"><h2>' + esc(r.operation) + ' &rarr; ' + esc(r.destination_project || 'several projects') + '</h2>' +
                pill(r.status) + '<div class="bt-h-actions">' + actionsHtml(d) + '</div></div>' +
-               '<div class="bt-panel">' + factsHtml(r) + '</div>' +
+               '<div class="bt-panel">' + factsHtml(d) + '</div>' +
                (d.anon_script ? scriptPanelHtml(d.anon_script) : '') +
                '<div class="bt-panel bt-h-panel">' + itemsPanelHtml(d) + '</div>';
     }
@@ -354,7 +491,8 @@ var XNAT = getObject(XNAT || {});
                    'message and destination, for your records">Export results</button>';
     }
 
-    function factsHtml(r) {
+    function factsHtml(d) {
+        var r = d.run;
         var f = [
             ['Started', esc(when(r.created)) + ' &middot; ' + esc(r.created_by)],
             ['Finished', r.finished ? esc(when(r.finished)) : r.status === 'Queued' ? 'Not started' : 'In progress'],
@@ -363,7 +501,7 @@ var XNAT = getObject(XNAT || {});
             ['Items', countText(r.item_count, unitNoun(r))],
             ['Anonymization', anonFact(r)]
         ];
-        if (r.operation === 'Reimport') { f.push(['Labels', labelsFact(r)]); }
+        if (r.operation === 'Reimport') { f.push(['Labels', esc(labelsFact(d))]); }
         if (r.stop_requested_by) { f.push(['Stopped by', esc(r.stop_requested_by) + ' &middot; ' + esc(when(r.stop_requested_at))]); }
         f.push(['Tracking id', '<span class="bt-h-mono">' + esc(r.tracking_id) + '</span>']);
         return '<div class="bt-h-facts">' + f.map(function(x) {
@@ -381,13 +519,30 @@ var XNAT = getObject(XNAT || {});
         return '-';
     }
 
-    function labelsFact(r) {
-        var subject = r.preserve_subject_label === true;
-        var session = r.preserve_session_label === true;
-        if (subject && session) { return 'Source subject and session labels kept'; }
-        if (subject) { return 'Source subject label kept; session label from DICOM'; }
-        if (session) { return 'Source session label kept; subject label from DICOM'; }
-        return 'From DICOM';
+    // Where the run's sessions got their destination labels: each item's manifest destination_*_label, else its
+    // preserved source label, else DICOM tags. A viewer who can't read the destination doesn't get the items'
+    // labels, so for them it falls back to the run's Preserve settings, which a manifest may have overridden.
+    function labelsFact(d) {
+        var r = d.run;
+        var items = (d.items || []).filter(function(it) { return it.mode === 'Reimport'; });
+        var counts = function() { return { manifest: 0, source: 0, dicom: 0 }; };
+        var subject = counts(), session = counts();
+        var hidden = !items.length || items.some(function(it) { return it.destination_hidden; });
+        var add = function(c, explicit, preserved) {
+            c[explicit ? 'manifest' : preserved ? 'source' : 'dicom']++;
+        };
+        if (hidden) {
+            add(subject, false, r.preserve_subject_label === true);
+            add(session, false, r.preserve_session_label === true);
+        } else {
+            items.forEach(function(it) {
+                add(subject, it.destination_subject_label, it.preserve_subject_label === true);
+                add(session, it.destination_session_label, it.preserve_session_label === true);
+            });
+        }
+        var text = XNAT.plugin.batchtransfer.labelSourcesText(subject, session);
+        var fromManifest = items.some(function(it) { return it.row_number != null; });
+        return hidden && fromManifest ? text + ', unless the manifest set them' : text;
     }
 
     function scriptPanelHtml(script) {
@@ -560,8 +715,9 @@ var XNAT = getObject(XNAT || {});
             '<li>' + units + ' not started yet will be skipped.</li>' +
             '<li>Nothing already transferred is undone.</li>' +
             '</ul></div>';
-        xModalConfirm({
+        XNAT.plugin.batchtransfer.confirm({
             title: 'Stop this transfer?',
+            width: 520,
             content: content,
             okLabel: 'Stop transfer',
             cancelLabel: 'Keep running',
@@ -732,6 +888,17 @@ var XNAT = getObject(XNAT || {});
                 var id = this.getAttribute('data-id');
                 expanded[id] = !expanded[id];
                 render();
+            } else if (act === 'scope') {
+                var chosen = this.getAttribute('data-scope') === 'all' ? 'all' : 'mine';
+                if (chosen !== scope) {
+                    scope = chosen;
+                    page = 0;
+                    listData = null;
+                    listError = null;
+                    render();
+                    loadList();
+                    syncHash();
+                }
             }
         });
         $(document).on('click', '#bt-history tr.bt-h-row', function(e) {
@@ -756,6 +923,7 @@ var XNAT = getObject(XNAT || {});
         render();
         loadDetail();
         revealHeader();
+        syncHash();
         var back = document.querySelector('#bt-history [data-act="back"]');
         if (back) { back.focus(); }
     }
@@ -767,6 +935,7 @@ var XNAT = getObject(XNAT || {});
         detailError = null;
         render();
         loadList();
+        syncHash();
         var row = from && document.querySelector('#bt-history tr[data-run="' + cssEscape(from) + '"]');
         if (row) { row.focus(); }
     }
@@ -794,7 +963,7 @@ var XNAT = getObject(XNAT || {});
     }
 
     function route(r) {
-        return '<span class="bt-h-route">' + projectName(r.source_project) + '<span class="arr">&rarr;</span>' +
+        return '<span class="bt-h-route">' + projectName(r.source_project) + '<span class="arr">&rarr;</span><wbr>' +
                projectName(r.destination_project) + '</span>';
     }
 
@@ -853,4 +1022,20 @@ var XNAT = getObject(XNAT || {});
     function cssEscape(s) {
         return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&');
     }
+
+    // The plugin settings page's Transfer History tab (site-settings.yaml) has a #bt-history marked data-bt-settings
+    // and nothing that calls init, so History starts itself there. The Batch Transfer screen calls init itself.
+    function startOnSettingsPage(tries) {
+        var host = document.getElementById('bt-history');
+        if (host) {
+            if (host.hasAttribute('data-bt-settings') && !host.hasAttribute('data-bt-started')) {
+                host.setAttribute('data-bt-started', '');
+                api.init({ settingsPage: true });
+            }
+            return;
+        }
+        // The settings page builds its tabs after the page loads; wait a little for the container.
+        if (tries < 30) { setTimeout(function() { startOnSettingsPage(tries + 1); }, 200); }
+    }
+    $(function() { startOnSettingsPage(0); });
 }));

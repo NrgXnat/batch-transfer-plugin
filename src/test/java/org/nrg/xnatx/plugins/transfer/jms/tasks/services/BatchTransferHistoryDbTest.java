@@ -27,9 +27,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -219,6 +221,23 @@ public class BatchTransferHistoryDbTest {
         assertEquals(found.keySet().toString(), 2, found.size());
         assertEquals("SUBJ_1", found.get(id("S1")).getLabel());
         assertEquals("SESS_1", found.get(id("E1")).getLabel());
+    }
+
+    @Test
+    public void aLabelIsTakenByAnExperimentInTheProjectOrSharedIntoIt() {
+        final String destination = id("DEST");
+        final String other = id("OTHER");
+        session(destination, null, id("E1"), "OWNED");
+        session(other, null, id("E2"), "SHARED_SOURCE");
+        shareSession(id("E2"), destination, "SHARED_HERE");
+        session(other, null, id("E3"), "ELSEWHERE");
+
+        final Set<String> taken = xnatItems.takenExperimentLabels(destination,
+                Arrays.asList("OWNED", "SHARED_HERE", "SHARED_SOURCE", "ELSEWHERE", "owned", "NEW"));
+
+        assertEquals("an owned label and a share's label there, matched exactly",
+                new HashSet<>(Arrays.asList("OWNED", "SHARED_HERE")), taken);
+        assertTrue(xnatItems.takenExperimentLabels(destination, Collections.emptyList()).isEmpty());
     }
 
     @Test

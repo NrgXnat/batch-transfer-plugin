@@ -1,12 +1,33 @@
 ####
 #### Batch Transfer -- Site Administration settings
-#### Adds a "Batch Transfer" group with two tabs:
+#### Adds a "Batch Transfer" group with three tabs:
+####   - Transfer History               (every transfer on the site; batchTransferHistory.js renders it)
 ####   - Anonymization & Cohort Limits  (Panel A)
 ####   - JMS Queue                       (Panel B)
 #### Both forms bind to BatchTransferQueueSettingsApi (/xapi/batch_transfer/jms_queues), which reads/writes
 #### BatchTransferPrefsBean (GET returns the whole bean; POST setBatch updates whatever keys are sent).
 #### Field names must match the preference keys on the bean.
 ####
+
+#### Transfer History: the History list for site admins, all transfers. batchTransferHistory.js starts itself when it
+#### finds #bt-history marked data-bt-settings, and needs only its own script and the plugin stylesheet.
+batchTransferHistoryPanel:
+    kind: panel
+    name: batchTransferHistoryPanel
+    label: Transfer History
+    footer: false
+    contents:
+        historyDescription:
+            tag: div.message
+            contents:
+                "Every Batch Transfer on this site, newest first. Open one to see each item's outcome, stop one that is still running, or export its results. Users see their own transfers under Tools > Batch Transfer History."
+        historyContainer:
+            tag: div#bt-history.bt-h-screen|data-bt-settings="true"
+            contents: Loading transfers...
+        historyStyle:
+            tag: link|rel="stylesheet"|type="text/css"|href="~/style/xnat/plugin/batchTransfer/batchTransfer.css"
+        historyScript:
+            tag: script|src="~/scripts/xnat/plugin/batchTransfer/batchTransferHistory.js"
 
 batchTransferAnonLimitsForm:
     label: "Anonymization & Cohort Limits"
@@ -146,12 +167,20 @@ siteSettings:
             batchTransferTabGroup: Batch Transfer
     contains: tabs
     tabs:
+        batchTransferHistoryTab:
+            kind: tab
+            name: batchTransferHistoryTab
+            label: Transfer History
+            group: batchTransferTabGroup
+            active: true
+            contents:
+                ${batchTransferHistoryPanel}
         batchTransferAnonTab:
             kind: tab
             name: batchTransferAnonTab
             label: Anonymization & Cohort Limits
             group: batchTransferTabGroup
-            active: true
+            active: false
             contents:
                 ${batchTransferAnonLimitsForm}
         batchTransferQueueTab:
