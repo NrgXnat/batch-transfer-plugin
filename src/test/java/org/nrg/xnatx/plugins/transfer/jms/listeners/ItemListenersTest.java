@@ -7,11 +7,11 @@ import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnatx.plugins.transfer.jms.requests.CloneSubjectRequest;
 import org.nrg.xnatx.plugins.transfer.jms.requests.TransferItemRequest;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferProgressService.Outcome;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferProgressService.Outcome;
 import org.nrg.xnatx.plugins.transfer.model.EventInfo;
 import org.nrg.xnatx.plugins.transfer.model.TransferRequest;
-import org.nrg.xnatx.plugins.transfer.service.BatchTransferService;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferService;
 
 import java.util.Arrays;
 
