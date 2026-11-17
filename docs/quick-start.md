@@ -42,13 +42,13 @@ The screenshots were taken by `jlee`, an owner of all four projects.
 **From a project.** Open the source project and choose **Transfer** in its **Actions** box. The item appears
 for project owners, members who can edit the project's data, and site administrators.
 
-![The HA_MRI project page, with Transfer in the Actions box](quick-start/images/project-actions.png)
+![The HA_OPEN project page, with Transfer in the Actions box](quick-start/images/project-actions.png)
 
 **From a listing or search results.** In any data listing, open **Options** and choose **Transfer**. The screen
 opens with the items in that listing. If they come from more than one project, you can only select items in the tree,
 because a manifest needs a single source project.
 
-![The Options menu of HA_MRI's subject listing, with Transfer](quick-start/images/listing-options.png)
+![The Options menu of HA_OPEN's subject listing, with Transfer](quick-start/images/listing-options.png)
 
 **To look at past transfers only**, use **Tools > Transfer History** (see
 [History without a project](#9-history-without-a-project)).
