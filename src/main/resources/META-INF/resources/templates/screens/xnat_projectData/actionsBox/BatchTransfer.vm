@@ -8,6 +8,6 @@
 
 #if ($userHelper.canEdit("xnat:subjectData/project", $projectId))
     <li id="batch-transfer-action" class="yuimenuitem">
-        <a class="yuimenuitemlabel" href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm?sourceProject=${projectId}">Batch Transfer</a>
+        <a class="yuimenuitemlabel" href="${SITE_ROOT}/app/template/XDATScreen_batch_transfer.vm?sourceProject=${projectId}">Transfer</a>
     </li>
 #end

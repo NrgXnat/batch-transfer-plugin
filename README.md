@@ -32,9 +32,9 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 ## Entry points
 
-1. **Project Actions menu** — the *Batch Transfer* item appears for project owners, edit-members, and admins.
-2. **Data listings and search results** — *Options > Batch Transfer* opens the same screen with the listing's items.
-3. **Tools > Batch Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get a switch there to list every transfer.
+1. **Project Actions menu** — the *Transfer* item appears for project owners, edit-members, and admins.
+2. **Data listings and search results** — *Options > Transfer* opens the same screen with the listing's items.
+3. **Tools > Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get a switch there to list every transfer.
 4. **Administer > Plugin Settings > Batch Transfer > Transfer History** — every transfer on the site, for site admins.
 
 ---

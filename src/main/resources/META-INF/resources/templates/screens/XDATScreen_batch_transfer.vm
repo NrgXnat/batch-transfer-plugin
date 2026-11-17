@@ -19,7 +19,7 @@
         <span class="bt-pagehead-ctx">History</span>
     </div>
 </div>
-<p class="bt-summary bt-h-only-note">To start a transfer, open Batch Transfer from a project's Actions menu, or from search results.</p>
+<p class="bt-summary bt-h-only-note">To start a transfer, choose Transfer in a project's Actions menu, or in the Options menu of a data listing or search results.</p>
 <div class="bt-view" id="bt-view-history">
     <div class="bt-h-screen" id="bt-history"></div>
 </div>

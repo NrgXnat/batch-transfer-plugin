@@ -39,18 +39,18 @@ The screenshots were taken by `jlee`, an owner of all four projects.
 
 ## 2. Open Batch Transfer
 
-**From a project.** Open the source project and choose **Batch Transfer** in its **Actions** box. The item appears
+**From a project.** Open the source project and choose **Transfer** in its **Actions** box. The item appears
 for project owners, members who can edit the project's data, and site administrators.
 
-![The HA_MRI project page, with Batch Transfer in the Actions box](quick-start/images/project-actions.png)
+![The HA_MRI project page, with Transfer in the Actions box](quick-start/images/project-actions.png)
 
-**From a listing or search results.** In any data listing, open **Options** and choose **Batch Transfer**. The screen
+**From a listing or search results.** In any data listing, open **Options** and choose **Transfer**. The screen
 opens with the items in that listing. If they come from more than one project, you can only select items in the tree,
 because a manifest needs a single source project.
 
-![The Options menu of HA_MRI's subject listing, with Batch Transfer](quick-start/images/listing-options.png)
+![The Options menu of HA_MRI's subject listing, with Transfer](quick-start/images/listing-options.png)
 
-**To look at past transfers only**, use **Tools > Batch Transfer History** (see
+**To look at past transfers only**, use **Tools > Transfer History** (see
 [History without a project](#9-history-without-a-project)).
 
 ## 3. A tour of the screen
@@ -304,10 +304,10 @@ if History hides some of the details the manifest would need from you.
 
 ## 9. History without a project
 
-**Tools > Batch Transfer History** opens History by itself, with the transfers you started from anywhere, including
+**Tools > Transfer History** opens History by itself, with the transfers you started from anywhere, including
 from search results. Any logged-in user can open it.
 
-![The Tools menu, with Batch Transfer History](quick-start/images/tools-menu.png)
+![The Tools menu, with Transfer History](quick-start/images/tools-menu.png)
 
 ![Your transfers on the History page](quick-start/images/history-only.png)
 

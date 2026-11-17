@@ -64,7 +64,7 @@ public class XDATScreenBatchTransferTest {
         verify(context).put("siteAdmin", true);
     }
 
-    /** Tools > Batch Transfer History: a search another XNAT page left in the session is never looked up or run. */
+    /** Tools > Transfer History: a search another XNAT page left in the session is never looked up or run. */
     @Test
     public void historyOnlyAskedFor_ignoresASearchInTheSession() throws Exception {
         when(params.getBoolean(XDATScreen_batch_transfer.HISTORY_ONLY_PARAM)).thenReturn(true);
