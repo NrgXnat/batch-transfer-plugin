@@ -35,7 +35,8 @@ have a QC assessment. The study team moves data out of HA_MRI to three other pro
 HA_OPEN has a project anonymization script that removes the birth date, sets the institution name and marks the
 patient identity as removed.
 
-The screenshots were taken by `jlee`, an owner of all four projects.
+The screenshots were taken by `jlee`, an owner of all four projects, except the site administrator's views in
+[section 9](#9-history-without-a-project).
 
 ## 2. Open Batch Transfer
 
@@ -62,7 +63,8 @@ running transfers. New transfer has these parts, from top to bottom:
 
 - **Help** (left): a short topic for each part of the screen. Click **«** to hide the column and **»** to show it
   again; Batch Transfer remembers your choice. The **?** next to each heading scrolls the column to its topic.
-- **Summary**: one sentence saying what will happen, naming the source and destination.
+- **Summary**: what Batch Transfer can do between the source and destination it names, and a reminder that the
+  source isn't changed and that a submitted transfer runs in the background.
 - **Transfer**: the source, which is fixed by where you opened the screen, and the **Destination project** list,
   which shows each project's running title.
 - **Operation**: Share, Clone or Reimport.
