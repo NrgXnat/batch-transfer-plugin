@@ -36,7 +36,7 @@ Moves the plugin to **XNAT 1.10.2.1** and **JDK 21**. Adds transfer history with
 
 - **Breaking: requires XNAT 1.10.2.1 and JDK 21.** The plugin is compiled to Java 21 bytecode against XNAT 1.10.2.1 and does not load on XNAT 1.9.x. XNAT 1.9 sites stay on 1.1.1.
 - **DicomEdit script version 6.10 allowed** — the default allowed-version pattern is now `^6\.([0-7]|10)$`, matching DicomEdit 6.10.0 in XNAT 1.10.2.1.
-- **Menu items read Transfer** — the item in a project's **Actions** box and in a data listing's **Options** menu is now **Transfer** (it was **Batch Transfer**). The screen it opens is still titled Batch Transfer.
+- **Menu items read Transfer** — the item in a project's **Actions** box and in a data listing's **Options** menu is now **Transfer** (it was **Batch Transfer**), and a running transfer's entry in XNAT's **Activity** tab reads **Transfer (N items)**. The screen itself is still titled Batch Transfer.
 - **New transfer layout** — a column of help topics on the left, which collapses to a strip and is remembered per viewer. A setup card holds the Transfer, Operation and Anonymization rows, and the cohort mode toggle moves into the Cohort builder header. A one-sentence summary names the source and destination.
 - **Anonymization chip** — for Reimport, it lists the scripts that will run, in order: site-wide, custom, then destination. It's grey when no script is known to run, and warns when a custom script runs alongside another. The confirmation names the same scripts.
 - **`POST /xapi/transfer` checks the batch** — it returns 400 when an item has no id, the same item is listed twice, a destination label isn't a valid XNAT label, or two Reimport items are sent to the same `destination_session_label`.
