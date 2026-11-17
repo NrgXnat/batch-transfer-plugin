@@ -7,5 +7,5 @@ import org.springframework.context.annotation.ComponentScan;
         name = "Batch Transfer Plugin",
         description = "Batch Transfer Plugin",
         entityPackages = "org.nrg.xnatx.plugins.transfer.model.entity",
-        logConfigurationFile = "META-INF/resources/batch_transfer_logback.xml")
+        logConfigurationFile = "META-INF/resources/batch-transfer-logback.xml")
 public class BatchTransferPlugin { }
