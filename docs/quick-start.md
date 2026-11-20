@@ -56,7 +56,7 @@ because a manifest needs a single source project.
 
 ## 3. A tour of the screen
 
-![The Batch Transfer screen opened from HA_MRI, with HA_CONSORTIUM chosen as the destination](quick-start/images/screen-overview.png)
+![The Batch Transfer screen opened from HA_OPEN, with HA_CONSORTIUM chosen as the destination](quick-start/images/screen-overview.png)
 
 The screen has two tabs: **New transfer**, where you set up a transfer, and **History**, which lists past and
 running transfers. New transfer has these parts, from top to bottom:
