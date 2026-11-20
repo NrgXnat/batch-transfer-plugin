@@ -15,7 +15,7 @@ plugins {
 
 group = "org.nrg.xnatx.plugins"
 // The release workflows read and rewrite this line, and only in the form: version "X".
-version "2.0.0-SNAPSHOT"
+version "2.0.0-RC-SNAPSHOT"
 description = "XNAT Batch Transfer Plugin"
 
 java {
