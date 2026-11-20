@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class XDATScreen_batch_transfer extends SecureScreen {
     private static final String FIELD_ID = "BATCH_TRANSFER_ID";
-    /** Asks for History only (Tools > Batch Transfer History), whatever search the session holds. */
+    /** Asks for History only (Tools > Transfer History), whatever search the session holds. */
     static final String HISTORY_ONLY_PARAM = "historyOnly";
 
     private static final String READABLE_SUBJECTS = "SELECT field_value,read_element,field,element_name,grp.tag, xdat_user_id\n" +

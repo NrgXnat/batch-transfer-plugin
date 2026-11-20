@@ -2248,7 +2248,7 @@ var XNAT = getObject(XNAT || {});
             success: function() {
                 XNAT.ui.banner.top(3000, 'Transfer request submitted.', 'success');
                 XNAT.app.activityTab.start(
-                    'Batch Transfer (' + batchTransfer.requests.length + ' items)',
+                    'Transfer (' + batchTransfer.requests.length + ' items)',
                     batchTransfer.tracking_id,
                     'XNAT.plugin.batchtransfer.updateBatchTransferProgress'
                 );

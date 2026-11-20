@@ -19,7 +19,7 @@
         <span class="bt-pagehead-ctx">History</span>
     </div>
 </div>
-<p class="bt-summary bt-h-only-note">To start a transfer, open Batch Transfer from a project's Actions menu, or from search results.</p>
+<p class="bt-summary bt-h-only-note">To start a transfer, choose Transfer in a project's Actions menu, or in the Options menu of a data listing or search results.</p>
 <div class="bt-view" id="bt-view-history">
     <div class="bt-h-screen" id="bt-history"></div>
 </div>
@@ -100,17 +100,17 @@
                 <div class="bt-help-notes" id="bt-help-notes">
                     <section class="bt-help-note" data-help="route">
                         <h4 class="bt-help-title">Transfer</h4>
-                        <p>Data is transferred from the <b>source</b>, where it lives now, into the <b>destination</b> project. The source is set by where you opened Batch Transfer: a project, or the projects in your search results. The transfer does not change it.</p>
-                        <p>Pick the destination from the list. A locked destination was chosen by the page that opened this screen.</p>
+                        <p>Data is transferred from the <b>source</b> into the <b>destination</b> project. The source is set by: a launch project, or the projects in a data listing or search results.</p>
+                        <p>Pick the destination project from the list. A locked destination was chosen by the link that opened this screen.</p>
                     </section>
                     <section class="bt-help-note" data-help="op">
                         <h4 class="bt-help-title">Operation</h4>
                         <h5>Share</h5>
-                        <p>Makes the data visible in the destination. Nothing is copied: the source project still owns it, and changes there show in both.</p>
+                        <p>Makes the subjects, sessions and assessors visible in the destination. Nothing is copied: the source project still owns them, and changes there show in both.</p>
                         <h5>Clone</h5>
-                        <p>An independent copy you can edit separately. Files are hard-linked, so no extra disk space at clone time. Not anonymized.</p>
+                        <p>Creates an independent copy of subjects, sessions and assessors in the destination. Files are hard-linked, so no extra disk space at clone time.</p>
                         <h5>Reimport</h5>
-                        <p>Image sessions only. The DICOM is imported again into the destination and anonymized on the way in, creating new sessions.</p>
+                        <p>Imports each image session's DICOM again into the destination, anonymized on the way in, as new sessions. Subjects aren't copied: each session's destination subject comes from its subject label (see Anonymization).</p>
                     </section>
                     <section class="bt-help-note" data-help="anon">
                         <h4 class="bt-help-title">Anonymization</h4>

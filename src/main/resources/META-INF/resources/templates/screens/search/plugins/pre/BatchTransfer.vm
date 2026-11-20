@@ -13,7 +13,7 @@
 		}
 		XNAT.app.typeBasedListingOptions[type].push({
 			action: 'BatchTransferAction',
-			display: 'Batch Transfer'
+			display: 'Transfer'
 		});
 	}
 

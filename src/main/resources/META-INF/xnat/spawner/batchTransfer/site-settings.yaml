@@ -20,7 +20,7 @@ batchTransferHistoryPanel:
         historyDescription:
             tag: div.message
             contents:
-                "Every Batch Transfer on this site, newest first. Open one to see each item's outcome, stop one that is still running, or export its results. Users see their own transfers under Tools > Batch Transfer History."
+                "Every transfer on this site, newest first. Open one to see each item's outcome, stop one that is still running, or export its results. Users see their own transfers under Tools > Transfer History."
         historyContainer:
             tag: div#bt-history.bt-h-screen|data-bt-settings="true"
             contents: Loading transfers...

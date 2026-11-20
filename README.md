@@ -24,7 +24,7 @@ New to Batch Transfer? The [quick start](docs/quick-start.md) walks through each
 ### Cohort and anonymization options
 
 - **CSV manifest (Reimport)** — select sessions by uploading a CSV (`source_subject_label`, `source_session_label`; a blank session label means all of the subject's sessions) instead of ticking rows. Other columns can set destination labels (`destination_subject_label`, `destination_session_label`) or feed `${csv.<column>}` placeholders in the script. A destination label in the manifest is used even when *Preserve source labels* is ticked; a blank cell falls back to that setting. Before submit, the screen checks the labels: two source subjects sent to one destination subject block Submit, and blank cells, a subject split across destination subjects, or a session label the destination already has are warnings.
-- **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the site-wide and destination project scripts (the REST API can also make it replace them). Needs the importer's `Anon-Script` parameter (XNAT 1.10.1 and later, or 1.9.3.7 and later on the 1.9 line); on builds without it the option is hidden. Requires edit access on the destination project.
+- **Custom anonymization script (Reimport)** — a DicomEdit 6 script applied to each reimported session at ingest, in addition to the site-wide and destination project scripts (the REST API can also make it replace them). Needs the importer's `Anon-Script` parameter, which XNAT 1.10.2.1 has (it was added in 1.10.1); on a build without it the option is hidden. Requires edit access on the destination project.
 
 REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
@@ -32,9 +32,9 @@ REST details: [`docs/rest-api.md`](docs/rest-api.md).
 
 ## Entry points
 
-1. **Project Actions menu** — the *Batch Transfer* item appears for project owners, edit-members, and admins.
-2. **Data listings and search results** — *Options > Batch Transfer* opens the same screen with the listing's items.
-3. **Tools > Batch Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get a switch there to list every transfer.
+1. **Project Actions menu** — the *Transfer* item appears for project owners, edit-members, and admins.
+2. **Data listings and search results** — *Options > Transfer* opens the same screen with the listing's items.
+3. **Tools > Transfer History** — History only: the user's own transfers, for any logged-in user. Site admins also get a switch there to list every transfer.
 4. **Administer > Plugin Settings > Batch Transfer > Transfer History** — every transfer on the site, for site admins.
 
 ---
