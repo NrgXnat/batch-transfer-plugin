@@ -1,0 +1,72 @@
+package org.nrg.xnatx.plugins.transfer.services.impl;
+
+import org.nrg.framework.orm.hibernate.AbstractHibernateEntityService;
+import org.nrg.xnatx.plugins.transfer.daos.BatchTransferProgressDAO;
+import org.nrg.xnatx.plugins.transfer.model.entity.BatchTransferProgress;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferProgressService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Hibernate-backed {@link BatchTransferProgressService}. {@link #recordItemDone} does the increment,
+ * completion check, and row removal under a single pessimistic write lock, so concurrent callers across
+ * nodes serialize and exactly one is told it completed the batch.
+ *
+ * <p>{@link #register} runs once per tracking id: the run's own unique tracking id rejects a second submit of
+ * the same batch before it gets here. Should its insert still fail, the producer
+ * ({@code BatchTransferServiceImpl.batchTransfer}) fails the run.
+ */
+@Service
+public class HibernateBatchTransferProgressService
+        extends AbstractHibernateEntityService<BatchTransferProgress, BatchTransferProgressDAO>
+        implements BatchTransferProgressService {
+
+    @Override
+    @Transactional
+    public void register(final String trackingId, final Integer userId, final int total) {
+        final BatchTransferProgress existing = getDao().findByTrackingId(trackingId);
+        if (existing == null) {
+            create(new BatchTransferProgress(trackingId, userId, total));
+        } else {
+            // Reset a stale row (e.g. a tracking-id reused after a crash) to a clean start.
+            existing.setUserId(userId);
+            existing.setTotal(total);
+            existing.setCompleted(0);
+            existing.setFailed(0);
+            existing.setStopped(0);
+            getDao().update(existing);
+        }
+    }
+
+    @Override
+    @Transactional
+    public Completion recordItemDone(final String trackingId, final Outcome outcome) {
+        final BatchTransferProgress row = getDao().findByTrackingIdForUpdate(trackingId);
+        if (row == null) {
+            return null;
+        }
+        final int stopped = row.getStopped() == null ? 0 : row.getStopped();
+        row.setCompleted(row.getCompleted() + 1);
+        if (outcome == Outcome.FAILED) {
+            row.setFailed(row.getFailed() + 1);
+        } else if (outcome == Outcome.STOPPED) {
+            row.setStopped(stopped + 1);
+        }
+        if (row.getCompleted() >= row.getTotal()) {
+            // This call completed the batch. Delete under the same lock so an over-count (JMS redelivery)
+            // finds no row and cannot re-fire the terminal event; >= (not ==) so an over-count can't skip it.
+            final Completion completion = new Completion(row.getUserId(), row.getTotal(), row.getFailed(),
+                    row.getStopped() == null ? 0 : row.getStopped());
+            getDao().delete(row);
+            return completion;
+        }
+        getDao().update(row);
+        return null;
+    }
+
+    @Override
+    @Transactional
+    public BatchTransferProgress findByTrackingId(final String trackingId) {
+        return getDao().findByTrackingId(trackingId);
+    }
+}

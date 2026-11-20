@@ -1,13 +1,13 @@
 package org.nrg.xnatx.plugins.transfer.config;
 
-import org.nrg.xnatx.plugins.transfer.service.impl.BatchTransferServiceImpl;
+import org.nrg.xnatx.plugins.transfer.services.impl.BatchTransferServiceImpl;
 import org.mockito.Mockito;
 import org.nrg.framework.services.ContextService;
 import org.nrg.framework.services.NrgEventService;
 import org.nrg.xnat.helpers.merge.AnonUtils;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistoryService;
-import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferHistoryService;
+import org.nrg.xnatx.plugins.transfer.services.ScriptCompiler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;

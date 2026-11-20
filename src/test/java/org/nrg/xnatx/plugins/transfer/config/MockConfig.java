@@ -9,9 +9,9 @@ import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.DicomObjectIdentifier;
 import org.nrg.xnat.helpers.merge.AnonUtils;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.BatchTransferMonitor;
-import org.nrg.xnatx.plugins.transfer.jms.tasks.services.BatchTransferHistoryService;
-import org.nrg.xnatx.plugins.transfer.service.ScriptCompiler;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferMonitor;
+import org.nrg.xnatx.plugins.transfer.services.BatchTransferHistoryService;
+import org.nrg.xnatx.plugins.transfer.services.ScriptCompiler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
