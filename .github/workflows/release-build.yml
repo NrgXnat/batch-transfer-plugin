@@ -1,0 +1,42 @@
+name: Release Build
+
+# Builds the plugin jar on an RC branch, and on the branches the release workflows move.
+# Release - Cut RC Branch and Release - Promote RC to Main push with the workflow token,
+# whose pushes start no workflows, so they dispatch this one on each branch they push.
+
+on:
+  push:
+    branches:
+      - 'releases/**'
+  workflow_dispatch:
+    inputs:
+      # The release workflows dispatch with publish_jfrog=true, and a dispatch naming an
+      # input the workflow doesn't declare is rejected. This build publishes nowhere.
+      publish_jfrog:
+        description: 'Unused: this build does not publish to JFrog'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Plugin JAR
+        uses: ./.github/actions/build-plugin-jar
+        with:
+          java-version: '21'
+          gradle-version: '9.4.1'
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-jar
+          path: ${{ env.jar-path }}
+          retention-days: 90

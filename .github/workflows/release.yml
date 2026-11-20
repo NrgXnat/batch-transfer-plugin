@@ -1,9 +1,13 @@
 name: Release
 
+# Attaches the plugin jar to a GitHub Release when the release is published.
+# Release - Promote RC to Main pushes the release tag; publishing a GitHub Release
+# from that tag runs this on the tagged commit.
+
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  release:
+    types:
+      - published
 
 jobs:
 
@@ -23,9 +27,8 @@ jobs:
           java-version: '21'
           gradle-version: '9.4.1'
 
-      - name: Publish Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ${{ env.jar-path }}
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
-          body: The plugin JAR is attached to this release.
+      - name: Attach JAR to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" ${{ env.jar-path }} --clobber
